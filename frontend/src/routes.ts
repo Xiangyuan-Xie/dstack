@@ -127,6 +127,16 @@ export const ROUTES = {
         CREATE_DEV_ENV: '/runs/launch',
     },
 
+    GPU_REQUESTS: {
+        LIST: '/gpu-requests',
+        CREATE: '/gpu-requests/create',
+        DETAILS: {
+            TEMPLATE: `/projects/:projectName/gpu-requests/:requestId`,
+            FORMAT: (projectName: string, requestId: string) =>
+                buildRoute(ROUTES.GPU_REQUESTS.DETAILS.TEMPLATE, { projectName, requestId }),
+        },
+    },
+
     OFFERS: {
         LIST: '/offers',
     },

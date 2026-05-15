@@ -46,7 +46,7 @@ To orchestrate compute across GPU clouds or Kubernetes clusters, you need to [co
 > When using `dstack` with on-prem servers, backend configuration isn’t required. Simply create [SSH fleets](https://dstack.ai/docs/concepts/fleets#ssh-fleets) once the server is up.
 
 The server can be installed on Linux, macOS, and Windows (via WSL 2). It requires Git and
-OpenSSH.
+OpenSSH. The example below uses `uv`; you can also install it with `pip`, Conda, or Docker.
 
 ```shell
 $ uv tool install "dstack[all]" -U
@@ -72,6 +72,9 @@ The CLI can be installed on Linux, macOS, and Windows. It requires Git and OpenS
 ```shell
 $ uv tool install dstack -U
 ```
+
+You can also install the CLI with `pip` or in a Conda environment. See
+[Installation](https://dstack.ai/docs/installation) for all options.
 
 To point the CLI to the `dstack` server, configure it
 with the server address, user token, and project name:

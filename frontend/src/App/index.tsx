@@ -7,6 +7,8 @@ import AppLayout from 'layouts/AppLayout';
 import { useAppDispatch, useAppSelector } from 'hooks';
 import { useGetUserDataQuery } from 'services/user';
 
+import { isPortalPath } from 'pages/Portal/utils';
+
 import { EnterpriseLogin } from './Login/EnterpriseLogin';
 import { LoginByGithub } from './Login/LoginByGithub';
 import { ROUTES } from '../routes';
@@ -75,6 +77,10 @@ const App: React.FC = () => {
     if (!localStorageIsAvailable) return renderLocalstorageError();
     if (getUserError) return renderTokenError();
     if (!isAuthenticated) return renderNotAuthorizedError();
+
+    if (isPortalPath(pathname)) {
+        return <Outlet />;
+    }
 
     return (
         <AppLayout>

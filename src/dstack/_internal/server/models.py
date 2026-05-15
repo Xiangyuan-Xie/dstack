@@ -207,6 +207,13 @@ class PipelineModelMixin:
     lock_owner: Mapped[Optional[str]] = mapped_column(String(100))
 
 
+class GpuRequestStatus(str, enum.Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    FAILED = "failed"
+
+
 class UserModel(BaseModel):
     __tablename__ = "users"
 
@@ -500,6 +507,43 @@ class ServiceRouterWorkerSyncModel(PipelineModelMixin, BaseModel):
             postgresql_where=deleted == false(),
             sqlite_where=deleted == false(),
         ),
+    )
+
+
+class GpuRequestModel(BaseModel):
+    __tablename__ = "gpu_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType(binary=False), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    project: Mapped["ProjectModel"] = relationship()
+    applicant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    applicant: Mapped["UserModel"] = relationship(foreign_keys=[applicant_id], lazy="joined")
+    reviewer_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewer: Mapped[Optional["UserModel"]] = relationship(
+        foreign_keys=[reviewer_id], lazy="joined"
+    )
+    run_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    run: Mapped[Optional["RunModel"]] = relationship(lazy="joined")
+    created_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(NaiveDateTime, nullable=True)
+    status: Mapped[GpuRequestStatus] = mapped_column(
+        EnumAsString(GpuRequestStatus, 100), index=True
+    )
+    request: Mapped[str] = mapped_column(Text)
+    review_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_gpu_requests_project_created_at_id", project_id, created_at.desc(), id),
     )
 
 

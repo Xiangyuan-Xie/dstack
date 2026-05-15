@@ -51,6 +51,28 @@ The server can run on your laptop or any environment with access to the cloud an
     
     </div>
 
+=== "conda"
+
+    > The server can be set up in a Conda environment on Linux, macOS, and Windows (via WSL 2).
+    > It requires Git and OpenSSH.
+    > This installs the PyPI package inside Conda; `dstack` is not installed from a Conda channel.
+
+    <div class="termy">
+
+    ```shell
+    $ conda create -n dstack python=3.11 -y
+    $ conda activate dstack
+    $ python -m pip install "dstack[all]" -U
+    $ dstack server
+
+    Applying ~/.dstack/server/config.yml...
+
+    The admin token is "bbae0f28-d3dd-4820-bf61-8f4bb40815da"
+    The server is running at http://127.0.0.1:3000/
+    ```
+
+    </div>
+
 === "Docker"
 
     <div class="termy">
@@ -96,6 +118,20 @@ Once the server is up, you can access it via the `dstack` CLI.
     
     ```shell
     $ pip install dstack -U
+    ```
+
+    </div>
+
+=== "conda"
+
+    > This installs the PyPI package inside Conda; `dstack` is not installed from a Conda channel.
+
+    <div class="termy">
+
+    ```shell
+    $ conda create -n dstack python=3.11 -y
+    $ conda activate dstack
+    $ python -m pip install dstack -U
     ```
 
     </div>

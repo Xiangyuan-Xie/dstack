@@ -10,6 +10,7 @@ import { useGetServerInfoQuery } from 'services/server';
 import { GlobalUserRole } from 'types';
 
 import { selectUserName } from 'App/slice';
+import { PORTAL_ROUTES } from 'pages/Portal';
 
 export const useSideNavigation = () => {
     const { t } = useTranslation();
@@ -23,7 +24,9 @@ export const useSideNavigation = () => {
     const userProjectsUrl = ROUTES.USER.PROJECTS.FORMAT(userName);
 
     const generalLinks = [
+        { type: 'link', text: 'GPU 管理平台', href: PORTAL_ROUTES.DASHBOARD },
         { type: 'link', text: t('navigation.runs'), href: ROUTES.RUNS.LIST },
+        { type: 'link', text: t('navigation.gpu_requests'), href: ROUTES.GPU_REQUESTS.LIST },
         { type: 'link', text: t('navigation.offers'), href: ROUTES.OFFERS.LIST },
         { type: 'link', text: t('navigation.fleets'), href: ROUTES.FLEETS.LIST },
         { type: 'link', text: t('navigation.instances'), href: ROUTES.INSTANCES.LIST },
@@ -37,7 +40,7 @@ export const useSideNavigation = () => {
             text: t('navigation.users'),
             href: ROUTES.USER.LIST,
         },
-    ].filter(Boolean);
+    ].filter(Boolean) as Extract<SideNavigationProps.Item, { href: string }>[];
 
     const userSettingsLinks = [
         {
@@ -55,7 +58,7 @@ export const useSideNavigation = () => {
             text: t('navigation.billing'),
             href: billingUrl,
         },
-    ].filter(Boolean);
+    ].filter(Boolean) as Extract<SideNavigationProps.Item, { href: string }>[];
 
     const navLinks: SideNavigationProps['items'] = [
         {

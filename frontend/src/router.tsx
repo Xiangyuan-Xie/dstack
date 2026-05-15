@@ -14,12 +14,25 @@ import { FleetAdd, FleetDetails, FleetList } from 'pages/Fleets';
 import { EventsList as FleetEventsList } from 'pages/Fleets/Details/Events';
 import { FleetDetails as FleetDetailsGeneral } from 'pages/Fleets/Details/FleetDetails';
 import { FleetInspect } from 'pages/Fleets/Details/Inspect';
+import { GpuRequestCreate, GpuRequestDetails, GpuRequestsList } from 'pages/GpuRequests';
 import { InstanceDetailsPage, InstanceList } from 'pages/Instances';
 import { EventsList as InstanceEventsList } from 'pages/Instances/Details/Events';
 import { InstanceInspect } from 'pages/Instances/Details/Inspect';
 import { InstanceDetails } from 'pages/Instances/Details/InstanceDetails';
 import { ModelsList } from 'pages/Models';
 import { ModelDetails } from 'pages/Models/Details';
+import {
+    PORTAL_ROUTES,
+    PortalApprovals,
+    PortalConsole,
+    PortalContainers,
+    PortalDashboard,
+    PortalGpuRequestCreate,
+    PortalGpuRequestDetails,
+    PortalGpuRequests,
+    PortalLayout,
+    PortalServers,
+} from 'pages/Portal';
 import { CreateProjectWizard, ProjectAdd, ProjectDetails, ProjectEvents, ProjectList, ProjectSettings } from 'pages/Project';
 import { BackendAdd, BackendEdit } from 'pages/Project/Backends';
 import { AddGateway, EditGateway } from 'pages/Project/Gateways';
@@ -67,7 +80,48 @@ export const router = createBrowserRouter([
             // hubs
             {
                 path: ROUTES.BASE,
-                element: <Navigate replace to={ROUTES.RUNS.LIST} />,
+                element: <Navigate replace to={PORTAL_ROUTES.DASHBOARD} />,
+            },
+            {
+                element: <PortalLayout />,
+                children: [
+                    {
+                        path: PORTAL_ROUTES.DASHBOARD,
+                        element: <PortalDashboard />,
+                    },
+                    {
+                        path: PORTAL_ROUTES.GPU_REQUESTS,
+                        element: <PortalGpuRequests />,
+                    },
+                    {
+                        path: PORTAL_ROUTES.GPU_REQUEST_CREATE,
+                        element: <PortalGpuRequestCreate />,
+                    },
+                    {
+                        path: PORTAL_ROUTES.GPU_REQUEST_DETAILS.TEMPLATE,
+                        element: <PortalGpuRequestDetails />,
+                    },
+                    {
+                        path: PORTAL_ROUTES.GPU_CONTAINERS,
+                        element: <PortalContainers />,
+                    },
+                    {
+                        path: PORTAL_ROUTES.ADMIN_APPROVALS,
+                        element: <PortalApprovals />,
+                    },
+                    {
+                        path: PORTAL_ROUTES.ADMIN_CONTAINERS,
+                        element: <PortalContainers adminView />,
+                    },
+                    {
+                        path: PORTAL_ROUTES.ADMIN_SERVERS,
+                        element: <PortalServers />,
+                    },
+                    {
+                        path: PORTAL_ROUTES.CONSOLE,
+                        element: <PortalConsole />,
+                    },
+                ],
             },
             {
                 path: ROUTES.PROJECT.LIST,
@@ -172,6 +226,20 @@ export const router = createBrowserRouter([
             {
                 path: ROUTES.RUNS.CREATE_DEV_ENV,
                 element: <Launch />,
+            },
+
+            // GPU Requests
+            {
+                path: ROUTES.GPU_REQUESTS.LIST,
+                element: <GpuRequestsList />,
+            },
+            {
+                path: ROUTES.GPU_REQUESTS.CREATE,
+                element: <GpuRequestCreate />,
+            },
+            {
+                path: ROUTES.GPU_REQUESTS.DETAILS.TEMPLATE,
+                element: <GpuRequestDetails />,
             },
 
             // Offers

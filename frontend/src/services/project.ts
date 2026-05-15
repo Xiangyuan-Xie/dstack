@@ -219,6 +219,7 @@ export const {
     useLazyGetProjectsQuery,
     useGetOnlyNoFleetsProjectsQuery,
     useGetProjectQuery,
+    useLazyGetProjectQuery,
     useCreateProjectMutation,
     useCreateWizardProjectMutation,
     useUpdateProjectMembersMutation,
