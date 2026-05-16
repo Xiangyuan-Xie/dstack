@@ -6,6 +6,15 @@ type RunRequestStats = Record<TRunRequestStatus, number> & {
     total: number;
 };
 
+export type TNotificationCenterItem = {
+    id: string;
+    type: 'notification' | 'event';
+    tone: 'success' | 'error' | 'info' | 'warning' | 'neutral';
+    title: string;
+    description?: string;
+    recordedAt?: string;
+};
+
 const navCopy = {
     zh: {
         dashboard: '工作台',
@@ -21,6 +30,7 @@ const navCopy = {
         admin: '管理',
         approvals: '审批',
         servers: '服务器管理',
+        settings: '系统设置',
         users: '用户管理',
         events: '系统事件',
         account: '账户',
@@ -42,6 +52,7 @@ const navCopy = {
         admin: 'Admin',
         approvals: 'Approvals',
         servers: 'Servers',
+        settings: 'System settings',
         users: 'Users',
         events: 'Events',
         account: 'Account',
@@ -166,6 +177,7 @@ export const getConsoleNavSections = (role: IConsoleUserRole, locale: TLocale = 
                 { label: text.servers, href: CONSOLE_ROUTES.ADMIN_SERVERS, icon: 'MonitorCog', adminOnly: true },
                 ...(role.canUseGlobalAdmin
                     ? [
+                          { label: text.settings, href: CONSOLE_ROUTES.ADMIN_SETTINGS, icon: 'Settings', adminOnly: true },
                           { label: text.users, href: CONSOLE_ROUTES.ADMIN_USERS, icon: 'Users', adminOnly: true },
                           { label: text.events, href: CONSOLE_ROUTES.ADMIN_EVENTS, icon: 'Activity', adminOnly: true },
                       ]
@@ -217,7 +229,11 @@ export const canAccessConsoleRoute = (role: IConsoleUserRole, pathname: string, 
     if (pathname.startsWith('/resources/') || pathname.startsWith('/workspace/projects')) {
         return role.canUseGlobalAdmin;
     }
-    if (pathname.startsWith('/admin/users') || pathname === CONSOLE_ROUTES.ADMIN_EVENTS) {
+    if (
+        pathname.startsWith('/admin/users') ||
+        pathname === CONSOLE_ROUTES.ADMIN_EVENTS ||
+        pathname === CONSOLE_ROUTES.ADMIN_SETTINGS
+    ) {
         return role.canUseGlobalAdmin;
     }
     return true;
@@ -241,6 +257,119 @@ export const isConsoleNavItemActive = (pathname: string, itemHref: string): bool
     }
 
     return pathname.startsWith(`${itemHref}/`);
+};
+
+export const formatEventActor = (actor: string | null | undefined, locale: TLocale): string => {
+    return actor || (locale === 'zh' ? '系统' : 'system');
+};
+
+export const formatEventMessage = (message: string, locale: TLocale): string => {
+    if (locale !== 'zh') {
+        return message;
+    }
+    const exactMessages: Record<string, string> = {
+        'Project created': '项目已创建',
+        'Project deleted': '项目已删除',
+        'Project updated': '项目已更新',
+        'User created': '用户已创建',
+        'User updated': '用户已更新',
+        'User deleted': '用户已删除',
+        'Run submitted': '运行任务已提交',
+        'Run updated': '运行任务已更新',
+        'Run deleted': '运行任务已删除',
+        'Run stopped': '运行任务已停止',
+        'Fleet created': '集群已创建',
+        'Fleet updated': '集群已更新',
+        'Fleet deleted': '集群已删除',
+        'Instance created': '实例已创建',
+        'Instance updated': '实例已更新',
+        'Instance deleted': '实例已删除',
+        'Volume created': '存储卷已创建',
+        'Volume deleted': '存储卷已删除',
+        'Gateway created': '网关已创建',
+        'Gateway deleted': '网关已删除',
+        'Secret created': 'Secret 已创建',
+        'Secret updated': 'Secret 已更新',
+        'Secret deleted': 'Secret 已删除',
+        'Public key created': '公钥已创建',
+        'Public key deleted': '公钥已删除',
+        'Token refreshed': 'Token 已刷新',
+    };
+    if (exactMessages[message]) {
+        return exactMessages[message];
+    }
+    const patterns: Array<[RegExp, (match: RegExpMatchArray) => string]> = [
+        [/^(.+) created$/, (match) => `${translateEventSubject(match[1])}已创建`],
+        [/^(.+) updated$/, (match) => `${translateEventSubject(match[1])}已更新`],
+        [/^(.+) deleted$/, (match) => `${translateEventSubject(match[1])}已删除`],
+        [/^(.+) stopped$/, (match) => `${translateEventSubject(match[1])}已停止`],
+        [/^(.+) submitted\. Status: (.+)$/, (match) => `${translateEventSubject(match[1])}已提交。状态：${match[2]}`],
+        [/^(.+) created\. Status: (.+)$/, (match) => `${translateEventSubject(match[1])}已创建。状态：${match[2]}`],
+        [/^(.+) updated\. Updated fields: (.+)$/, (match) => `${translateEventSubject(match[1])}已更新。字段：${match[2]}`],
+        [/^(.+) updated\. Changed fields: (.+)$/, (match) => `${translateEventSubject(match[1])}已更新。字段：${match[2]}`],
+        [/^(.+) status changed (.+) -> (.+) \((.+)\)$/, (match) => `${translateEventSubject(match[1])}状态从 ${match[2]} 变为 ${match[3]}（${match[4]}）`],
+        [/^(.+) status changed (.+) -> (.+)$/, (match) => `${translateEventSubject(match[1])}状态从 ${match[2]} 变为 ${match[3]}`],
+    ];
+
+    for (const [pattern, formatter] of patterns) {
+        const match = message.match(pattern);
+        if (match) {
+            return formatter(match);
+        }
+    }
+    return message;
+};
+
+export const getNotificationCenterItems = (
+    notifications: Array<{ id?: string; type?: string; header?: unknown; content?: unknown }>,
+    events: IEvent[],
+    locale: TLocale,
+): TNotificationCenterItem[] => {
+    const notificationItems = notifications.map<TNotificationCenterItem>((notification, index) => ({
+        id: notification.id ?? `notification-${index}`,
+        type: 'notification',
+        tone: notification.type === 'success' || notification.type === 'error' || notification.type === 'warning' ? notification.type : 'info',
+        title: stringifyNotificationNode(notification.header) || (locale === 'zh' ? '通知' : 'Notification'),
+        description: stringifyNotificationNode(notification.content),
+    }));
+    const eventItems = events.map<TNotificationCenterItem>((event) => ({
+        id: event.id,
+        type: 'event',
+        tone: 'neutral',
+        title: formatEventMessage(event.message, locale),
+        description: formatEventActor(event.actor_user, locale),
+        recordedAt: event.recorded_at,
+    }));
+    return [...notificationItems, ...eventItems];
+};
+
+const translateEventSubject = (subject: string): string => {
+    const subjects: Record<string, string> = {
+        Project: '项目',
+        User: '用户',
+        Run: '运行任务',
+        Job: '任务',
+        Fleet: '集群',
+        Instance: '实例',
+        Volume: '存储卷',
+        Gateway: '网关',
+        Secret: 'Secret',
+        Repository: '代码仓库',
+        Repo: '代码仓库',
+        'Public key': '公钥',
+        Token: 'Token',
+    };
+    return subjects[subject] ?? subject;
+};
+
+const stringifyNotificationNode = (value: unknown): string | undefined => {
+    if (value === null || value === undefined || typeof value === 'boolean') {
+        return undefined;
+    }
+    if (typeof value === 'string' || typeof value === 'number') {
+        return String(value);
+    }
+    return undefined;
 };
 
 export const getRunRequestStats = (requests: IRunRequest[]): RunRequestStats => {

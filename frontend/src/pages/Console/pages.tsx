@@ -1,4 +1,4 @@
-import React, { FormEvent, useMemo, useState } from 'react';
+import React, { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { format } from 'date-fns';
 import { Activity, Plus, RefreshCcw, Save } from 'lucide-react';
@@ -33,6 +33,7 @@ import {
     useGetProjectBackendsQuery,
     useUpdateBackendViaYamlMutation,
 } from 'services/backend';
+import { useGetFeishuConfigQuery, useUpdateFeishuConfigMutation } from 'services/adminOAuth';
 import { useGetAllEventsQuery } from 'services/events';
 import { useApplyFleetMutation, useDeleteFleetMutation, useGetFleetDetailsQuery, useGetFleetsQuery } from 'services/fleet';
 import { useGetGpusListQuery } from 'services/gpu';
@@ -85,6 +86,8 @@ import { useConsoleContext } from './Layout';
 import {
     buildRunRequestCreateParams,
     canManageConsoleProject,
+    formatEventActor,
+    formatEventMessage,
     formatRunRequestResourcesText,
     getRunRequestStats,
     statusTone,
@@ -189,7 +192,7 @@ const getUnifiedRunItems = (requests: IRunRequest[], runs: IRun[]): TUnifiedRunI
 };
 
 export const DashboardPage: React.FC = () => {
-    const { role } = useConsoleContext();
+    const { role, locale } = useConsoleContext();
     const { text } = useLocaleText();
     const requests = useGetAllRunRequestsQuery({ include_all: role.canUseProjectAdmin, limit: 100 });
     const runs = useGetRunsQuery({ limit: 100, job_submissions_limit: 1 });
@@ -260,9 +263,11 @@ export const DashboardPage: React.FC = () => {
                         <div className="grid gap-3">
                             {(events.data ?? []).map((event) => (
                                 <div key={event.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
-                                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">{event.message}</div>
+                                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">
+                                        {formatEventMessage(event.message, locale)}
+                                    </div>
                                     <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                        {formatDate(event.recorded_at)} · {event.actor_user ?? 'system'}
+                                        {formatDate(event.recorded_at)} · {formatEventActor(event.actor_user, locale)}
                                     </div>
                                 </div>
                             ))}
@@ -1498,7 +1503,7 @@ export const ProjectCreatePage: React.FC = () => {
 
 export const ProjectDetailsPage: React.FC = () => {
     const { projectName = '' } = useParams();
-    const { text } = useLocaleText();
+    const { locale, text } = useLocaleText();
     const project = useGetProjectQuery({ name: projectName });
     const repos = useGetProjectReposQuery({ project_name: projectName });
     const backends = useGetProjectBackendsQuery({ projectName });
@@ -1630,8 +1635,16 @@ export const ProjectDetailsPage: React.FC = () => {
                         keyGetter={(item) => item.id}
                         columns={[
                             { id: 'time', header: text('时间', 'Time'), cell: (item) => formatDate(item.recorded_at) },
-                            { id: 'message', header: text('消息', 'Message'), cell: (item) => item.message },
-                            { id: 'actor', header: text('操作者', 'Actor'), cell: (item) => item.actor_user ?? 'system' },
+                            {
+                                id: 'message',
+                                header: text('消息', 'Message'),
+                                cell: (item) => formatEventMessage(item.message, locale),
+                            },
+                            {
+                                id: 'actor',
+                                header: text('操作者', 'Actor'),
+                                cell: (item) => formatEventActor(item.actor_user, locale),
+                            },
                         ]}
                     />
                 </Panel>
@@ -1862,8 +1875,126 @@ export const UserDetailsPage: React.FC = () => {
     );
 };
 
-export const EventsPage: React.FC = () => {
+export const AdminSettingsPage: React.FC = () => {
     const { text } = useLocaleText();
+    const [pushNotification] = useNotifications();
+    const config = useGetFeishuConfigQuery();
+    const [updateConfig, updateState] = useUpdateFeishuConfigMutation();
+    const [values, setValues] = useState({
+        enabled: false,
+        app_id: '',
+        app_secret: '',
+        scope: '',
+    });
+
+    useEffect(() => {
+        if (config.data) {
+            setValues({
+                enabled: config.data.enabled,
+                app_id: config.data.app_id ?? '',
+                app_secret: '',
+                scope: config.data.scope ?? '',
+            });
+        }
+    }, [config.data]);
+
+    const submit = async (event: FormEvent) => {
+        event.preventDefault();
+        const payload: IFeishuOAuthConfigUpdate = {
+            enabled: values.enabled,
+            app_id: values.app_id,
+            scope: values.scope,
+        };
+        if (values.app_secret.trim()) {
+            payload.app_secret = values.app_secret;
+        }
+        await updateConfig(payload).unwrap();
+        setValues((current) => ({ ...current, app_secret: '' }));
+        pushNotification({
+            type: 'success',
+            header: text('飞书 OAuth 配置已保存', 'Feishu OAuth configuration saved'),
+        });
+    };
+
+    return (
+        <>
+            <PageHeader
+                title={text('系统设置', 'System settings')}
+                description={text('配置全局登录方式和系统级能力。', 'Configure global sign-in and system-level options.')}
+            />
+            <form onSubmit={submit}>
+                <Panel
+                    title={text('飞书 OAuth', 'Feishu OAuth')}
+                    description={text(
+                        '数据库配置优先于环境变量；关闭后会明确禁用飞书登录。',
+                        'Database settings take precedence over environment variables. Disabling here explicitly turns Feishu sign-in off.',
+                    )}
+                    actions={
+                        <StatusBadge tone={config.data?.enabled ? 'success' : 'neutral'}>
+                            {config.data?.enabled ? text('已启用', 'Enabled') : text('未启用', 'Disabled')}
+                        </StatusBadge>
+                    }
+                >
+                    <div className="grid gap-4 lg:grid-cols-2">
+                        <Field label={text('启用状态', 'Enabled')}>
+                            <SelectInput
+                                value={values.enabled ? 'enabled' : 'disabled'}
+                                onChange={(event) =>
+                                    setValues((current) => ({ ...current, enabled: event.target.value === 'enabled' }))
+                                }
+                            >
+                                <option value="enabled">{text('启用飞书登录', 'Enable Feishu sign-in')}</option>
+                                <option value="disabled">{text('禁用飞书登录', 'Disable Feishu sign-in')}</option>
+                            </SelectInput>
+                        </Field>
+                        <Field label={text('配置来源', 'Source')}>
+                            <TextInput value={config.data?.source ?? 'none'} readOnly />
+                        </Field>
+                        <Field label="App ID">
+                            <TextInput
+                                value={values.app_id}
+                                onChange={(event) => setValues((current) => ({ ...current, app_id: event.target.value }))}
+                                placeholder="cli_xxx"
+                            />
+                        </Field>
+                        <Field
+                            label="App Secret"
+                            hint={
+                                config.data?.has_app_secret
+                                    ? text('Secret 已配置；留空表示保持不变。', 'A secret is configured. Leave empty to keep it unchanged.')
+                                    : text('尚未配置 Secret。', 'No secret is configured.')
+                            }
+                        >
+                            <TextInput
+                                type="password"
+                                value={values.app_secret}
+                                onChange={(event) =>
+                                    setValues((current) => ({ ...current, app_secret: event.target.value }))
+                                }
+                                placeholder={config.data?.has_app_secret ? '••••••••' : 'app secret'}
+                            />
+                        </Field>
+                        <Field label="Scope" hint={text('多个 scope 使用空格分隔。', 'Separate multiple scopes with spaces.')}>
+                            <TextInput
+                                value={values.scope}
+                                onChange={(event) => setValues((current) => ({ ...current, scope: event.target.value }))}
+                                placeholder="contact:user.base:readonly"
+                            />
+                        </Field>
+                    </div>
+                    <div className="mt-5 flex justify-end">
+                        <Button type="submit" variant="primary" loading={updateState.isLoading || config.isLoading}>
+                            {text('保存设置', 'Save settings')}
+                        </Button>
+                    </div>
+                </Panel>
+            </form>
+        </>
+    );
+};
+
+export const EventsPage: React.FC = () => {
+    const { locale, text } = useLocaleText();
     const events = useGetAllEventsQuery({ limit: 500 });
     return (
         <>
@@ -1875,8 +2006,16 @@ export const EventsPage: React.FC = () => {
                     keyGetter={(item) => item.id}
                     columns={[
                         { id: 'time', header: text('时间', 'Time'), cell: (item) => formatDate(item.recorded_at) },
-                        { id: 'message', header: text('消息', 'Message'), cell: (item) => item.message },
-                        { id: 'actor', header: text('操作者', 'Actor'), cell: (item) => item.actor_user ?? 'system' },
+                        {
+                            id: 'message',
+                            header: text('消息', 'Message'),
+                            cell: (item) => formatEventMessage(item.message, locale),
+                        },
+                        {
+                            id: 'actor',
+                            header: text('操作者', 'Actor'),
+                            cell: (item) => formatEventActor(item.actor_user, locale),
+                        },
                     ]}
                 />
             </Panel>

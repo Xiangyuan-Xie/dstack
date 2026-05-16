@@ -11,6 +11,7 @@ import {
     AccountKeysPage,
     AccountProfilePage,
     AccountProjectsPage,
+    AdminSettingsPage,
     BackendPage,
     DashboardPage,
     EventsPage,
@@ -46,7 +47,7 @@ export const router = createBrowserRouter([
         element: <App />,
         errorElement: <AuthErrorPage title="Not Found" text="Page not found" />,
         children: [
-            { path: ROUTES.AUTH.GITHUB_CALLBACK, element: <OAuthCallbackPage provider="github" /> },
+            { path: ROUTES.AUTH.FEISHU_CALLBACK, element: <OAuthCallbackPage provider="feishu" /> },
             { path: ROUTES.AUTH.OKTA_CALLBACK, element: <OAuthCallbackPage provider="okta" /> },
             { path: ROUTES.AUTH.ENTRA_CALLBACK, element: <OAuthCallbackPage provider="entra" /> },
             { path: ROUTES.AUTH.GOOGLE_CALLBACK, element: <OAuthCallbackPage provider="google" /> },
@@ -204,6 +205,14 @@ export const router = createBrowserRouter([
                             <ProjectAdminRoute>
                                 <FleetsPage servers />
                             </ProjectAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.ADMIN_SETTINGS,
+                        element: (
+                            <GlobalAdminRoute>
+                                <AdminSettingsPage />
+                            </GlobalAdminRoute>
                         ),
                     },
                     {

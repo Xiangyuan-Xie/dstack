@@ -13,7 +13,7 @@
         "refresh": "Refresh",
         "sign_out": "Sign out",
         "login": "Sign in",
-        "login_github": "Sign in with GitHub",
+        "login_feishu": "Sign in with Feishu",
         "login_okta": "Sign in with Okta",
         "login_entra": "Sign in with Entra ID",
         "login_google": "Sign in with Google",
@@ -28,6 +28,7 @@
         "sign_in_to_dstack": "Welcome to dstack Sky",
         "sign_in_to_dstack_enterprise": "Welcome to dstack",
         "authorization_failed": "Authorization failed",
+        "feishu_not_configured": "Feishu login is not configured. Ask an administrator to configure Feishu OAuth.",
         "try_again": "Please try again",
         "login_by_token": "Sign in with a token",
         "another_login_methods": "Other sign-in options"
@@ -39,6 +40,7 @@
         "fleets": "Fleets",
         "instances": "Instances",
         "projects": "Projects",
+        "settings": "System settings",
         "users": "Users",
         "events": "Events",
         "not_found": "The page does not exist in the new console."

@@ -4,7 +4,7 @@ export const ROUTES = {
     BASE: '/',
     LOGOUT: '/logout',
     AUTH: {
-        GITHUB_CALLBACK: '/auth/github/callback',
+        FEISHU_CALLBACK: '/auth/feishu/callback',
         OKTA_CALLBACK: '/auth/okta/callback',
         ENTRA_CALLBACK: '/auth/entra/callback',
         GOOGLE_CALLBACK: '/auth/google/callback',

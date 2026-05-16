@@ -7,10 +7,11 @@ export const API = {
         BASE: () => `${API.BASE()}/auth`,
         NEXT_REDIRECT: () => `${API.AUTH.BASE()}/get_next_redirect`,
         TEST_USERS: () => `${API.AUTH.BASE()}/test_users`,
-        GITHUB: {
-            BASE: () => `${API.AUTH.BASE()}/github`,
-            AUTHORIZE: () => `${API.AUTH.GITHUB.BASE()}/authorize`,
-            CALLBACK: () => `${API.AUTH.GITHUB.BASE()}/callback`,
+        FEISHU: {
+            BASE: () => `${API.AUTH.BASE()}/feishu`,
+            INFO: () => `${API.AUTH.FEISHU.BASE()}/info`,
+            AUTHORIZE: () => `${API.AUTH.FEISHU.BASE()}/authorize`,
+            CALLBACK: () => `${API.AUTH.FEISHU.BASE()}/callback`,
         },
         OKTA: {
             BASE: () => `${API.AUTH.BASE()}/okta`,
@@ -59,6 +60,15 @@ export const API = {
     EVENTS: {
         BASE: () => `${API.BASE()}/events`,
         LIST: () => `${API.EVENTS.BASE()}/list`,
+    },
+
+    ADMIN_OAUTH: {
+        BASE: () => `${API.BASE()}/admin/oauth`,
+        FEISHU: {
+            BASE: () => `${API.ADMIN_OAUTH.BASE()}/feishu`,
+            GET: () => `${API.ADMIN_OAUTH.FEISHU.BASE()}/get`,
+            UPDATE: () => `${API.ADMIN_OAUTH.FEISHU.BASE()}/update`,
+        },
     },
 
     PROJECTS: {

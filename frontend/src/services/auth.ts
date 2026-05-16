@@ -29,16 +29,23 @@ export const authApi = createApi({
             }),
         }),
 
-        githubAuthorize: builder.mutation<{ authorization_url: string }, void>({
+        getFeishuInfo: builder.query<{ enabled: boolean }, void>({
             query: () => ({
-                url: API.AUTH.GITHUB.AUTHORIZE(),
+                url: API.AUTH.FEISHU.INFO(),
                 method: 'POST',
             }),
         }),
 
-        githubCallback: builder.mutation<IUserWithCreds, { code: string; state: string }>({
+        feishuAuthorize: builder.mutation<{ authorization_url: string }, void>({
+            query: () => ({
+                url: API.AUTH.FEISHU.AUTHORIZE(),
+                method: 'POST',
+            }),
+        }),
+
+        feishuCallback: builder.mutation<IUserWithCreds, { code: string; state: string }>({
             query: (body) => ({
-                url: API.AUTH.GITHUB.CALLBACK(),
+                url: API.AUTH.FEISHU.CALLBACK(),
                 method: 'POST',
                 body,
             }),
@@ -122,8 +129,9 @@ export const authApi = createApi({
 export const {
     useGetServerTestUsersQuery,
     useGetNextRedirectMutation,
-    useGithubAuthorizeMutation,
-    useGithubCallbackMutation,
+    useGetFeishuInfoQuery,
+    useFeishuAuthorizeMutation,
+    useFeishuCallbackMutation,
     useGetOktaInfoQuery,
     useOktaAuthorizeMutation,
     useOktaCallbackMutation,

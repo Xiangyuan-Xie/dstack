@@ -1,8 +1,11 @@
 import {
     buildRunRequestCreateParams,
     canAccessConsoleRoute,
+    formatEventActor,
+    formatEventMessage,
     getConsoleNavSections,
     getConsoleUserRole,
+    getNotificationCenterItems,
     getRunSummariesFromRequests,
     getRunRequestStats,
     getPreferredLocale,
@@ -82,6 +85,7 @@ describe('Console utils', () => {
         expect(resources?.items.map((item) => item.label)).toEqual(['运行任务']);
         expect(labels).not.toContain('审批');
         expect(labels).not.toContain('项目');
+        expect(labels).not.toContain('系统设置');
         expect(labels).not.toContain('用户管理');
         expect(labels).not.toContain('系统事件');
         expect(labels).not.toContain('高级控制台');
@@ -98,6 +102,7 @@ describe('Console utils', () => {
         expect(resources?.items.map((item) => item.label)).toEqual(['运行任务']);
         expect(adminSection?.items.map((item) => item.label)).toEqual(['审批', '服务器管理']);
         expect(labels).not.toContain('项目');
+        expect(labels).not.toContain('系统设置');
         expect(labels).not.toContain('用户管理');
         expect(labels).not.toContain('系统事件');
     });
@@ -111,6 +116,7 @@ describe('Console utils', () => {
         expect(labels).toEqual(expect.arrayContaining(['工作台', '运行任务', '审批', '服务器管理']));
         expect(adminSection?.items.map((item) => item.label)).toEqual(['审批', '服务器管理']);
         expect(labels).not.toContain('项目');
+        expect(labels).not.toContain('系统设置');
         expect(labels).not.toContain('用户管理');
         expect(labels).not.toContain('系统事件');
     });
@@ -126,7 +132,7 @@ describe('Console utils', () => {
             expect.arrayContaining(['运行任务', '集群', '实例', '项目', '审批', '服务器管理', '用户管理', '系统事件']),
         );
         expect(resources?.items.map((item) => item.label)).toEqual(['运行任务', '集群', '实例', '资源报价', '模型服务', '存储卷']);
-        expect(adminSection?.items.map((item) => item.label)).toEqual(['审批', '服务器管理', '用户管理', '系统事件']);
+        expect(adminSection?.items.map((item) => item.label)).toEqual(['审批', '服务器管理', '系统设置', '用户管理', '系统事件']);
         expect(labels).not.toContain('高级控制台');
     });
 
@@ -159,6 +165,7 @@ describe('Console utils', () => {
         expect(canAccessConsoleRoute(role, '/account/profile')).toBe(true);
         expect(canAccessConsoleRoute(role, '/resources/fleets')).toBe(false);
         expect(canAccessConsoleRoute(role, '/workspace/projects')).toBe(false);
+        expect(canAccessConsoleRoute(role, '/admin/settings')).toBe(false);
         expect(canAccessConsoleRoute(role, '/admin/users')).toBe(false);
         expect(canAccessConsoleRoute(role, '/admin/events')).toBe(false);
     });
@@ -169,10 +176,12 @@ describe('Console utils', () => {
 
         expect(canAccessConsoleRoute(projectRole, '/admin/approvals')).toBe(true);
         expect(canAccessConsoleRoute(projectRole, '/admin/servers')).toBe(true);
+        expect(canAccessConsoleRoute(projectRole, '/admin/settings')).toBe(false);
         expect(canAccessConsoleRoute(projectRole, '/admin/users')).toBe(false);
         expect(canAccessConsoleRoute(projectRole, '/resources/runs')).toBe(true);
         expect(canAccessConsoleRoute(projectRole, '/resources/fleets')).toBe(false);
         expect(canAccessConsoleRoute(globalRole, '/admin/users')).toBe(true);
+        expect(canAccessConsoleRoute(globalRole, '/admin/settings')).toBe(true);
         expect(canAccessConsoleRoute(globalRole, '/resources/runs')).toBe(true);
         expect(canAccessConsoleRoute(globalRole, '/resources/fleets')).toBe(true);
     });
@@ -199,6 +208,57 @@ describe('Console utils', () => {
         expect(isConsoleNavItemActive('/resources/runs/new', '/resources/runs')).toBe(true);
         expect(isConsoleNavItemActive('/resources/runs/requests/research/req-1', '/resources/runs')).toBe(true);
         expect(isConsoleNavItemActive('/resources/runs/research/run-1', '/resources/runs')).toBe(true);
+    });
+
+    test('formats known event messages in Chinese and leaves English untouched', () => {
+        expect(formatEventMessage('Project created', 'zh')).toBe('项目已创建');
+        expect(formatEventMessage('Run submitted. Status: PENDING', 'zh')).toBe('运行任务已提交。状态：PENDING');
+        expect(formatEventMessage('Run status changed PENDING -> RUNNING (submitted)', 'zh')).toBe(
+            '运行任务状态从 PENDING 变为 RUNNING（submitted）',
+        );
+        expect(formatEventMessage('Run submitted. Status: PENDING', 'en')).toBe('Run submitted. Status: PENDING');
+        expect(formatEventMessage('A custom backend event', 'zh')).toBe('A custom backend event');
+    });
+
+    test('localizes system event actor labels', () => {
+        expect(formatEventActor(null, 'zh')).toBe('系统');
+        expect(formatEventActor(null, 'en')).toBe('system');
+        expect(formatEventActor('alice', 'zh')).toBe('alice');
+    });
+
+    test('builds notification center items from toasts and events', () => {
+        const items = getNotificationCenterItems(
+            [{ id: 'toast-1', type: 'success', header: '保存成功', content: '配置已更新' }],
+            [
+                {
+                    id: 'event-1',
+                    recorded_at: '2026-05-16T00:00:00Z',
+                    message: 'Project created',
+                    actor_user_id: null,
+                    actor_user: null,
+                    targets: [],
+                },
+            ],
+            'zh',
+        );
+
+        expect(items).toEqual([
+            {
+                id: 'toast-1',
+                type: 'notification',
+                tone: 'success',
+                title: '保存成功',
+                description: '配置已更新',
+            },
+            {
+                id: 'event-1',
+                type: 'event',
+                tone: 'neutral',
+                title: '项目已创建',
+                description: '系统',
+                recordedAt: '2026-05-16T00:00:00Z',
+            },
+        ]);
     });
 
     test('prefers Chinese and persists explicit locale choices', () => {

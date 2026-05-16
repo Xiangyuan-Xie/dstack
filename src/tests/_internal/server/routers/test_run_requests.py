@@ -56,7 +56,9 @@ async def _create_project_with_users(session: AsyncSession):
     member = await create_user(session=session, name="member", global_role=GlobalRole.USER)
     outsider = await create_user(session=session, name="outsider", global_role=GlobalRole.USER)
     project = await create_project(session=session, owner=owner, name="main")
-    await add_project_member(session=session, project=project, user=owner, project_role=ProjectRole.ADMIN)
+    await add_project_member(
+        session=session, project=project, user=owner, project_role=ProjectRole.ADMIN
+    )
     await add_project_member(
         session=session, project=project, user=applicant, project_role=ProjectRole.USER
     )

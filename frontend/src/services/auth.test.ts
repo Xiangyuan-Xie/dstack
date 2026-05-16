@@ -10,6 +10,12 @@ describe('auth service', () => {
         });
     });
 
+    test('builds Feishu auth endpoint paths', () => {
+        expect(API.AUTH.FEISHU.INFO()).toBe(`${API.AUTH.BASE()}/feishu/info`);
+        expect(API.AUTH.FEISHU.AUTHORIZE()).toBe(`${API.AUTH.BASE()}/feishu/authorize`);
+        expect(API.AUTH.FEISHU.CALLBACK()).toBe(`${API.AUTH.BASE()}/feishu/callback`);
+    });
+
     test('supports the three test login roles', () => {
         const roles: TServerTestUserRole[] = ['global_admin', 'project_manager', 'user'];
 

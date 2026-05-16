@@ -1,6 +1,7 @@
 import secrets
 import urllib.parse
 from base64 import b64decode, b64encode
+from collections.abc import Callable
 from typing import Optional
 
 from fastapi import Request, Response
@@ -16,6 +17,7 @@ logger = get_logger(__name__)
 _OAUTH_STATE_COOKIE_KEY = "oauth-state"
 
 _OAUTH_PROVIDERS: list[OAuthProviderInfo] = []
+_OAUTH_PROVIDER_ENABLED_GETTERS: dict[str, Callable[[], bool]] = {}
 
 
 def register_provider(provider_info: OAuthProviderInfo):
@@ -25,11 +27,30 @@ def register_provider(provider_info: OAuthProviderInfo):
     The provider must register endpoints `/api/auth/{provider}/authorize` and `/api/auth/{provider}/callback`
     as defined by the client (see `dstack.api.server._auth.AuthAPIClient`).
     """
+    for i, provider in enumerate(_OAUTH_PROVIDERS):
+        if provider.name == provider_info.name:
+            _OAUTH_PROVIDERS[i] = provider_info
+            return
     _OAUTH_PROVIDERS.append(provider_info)
 
 
+def register_provider_enabled_getter(
+    provider_name: str, enabled_getter: Callable[[], bool]
+) -> None:
+    _OAUTH_PROVIDER_ENABLED_GETTERS[provider_name] = enabled_getter
+
+
 def list_providers() -> list[OAuthProviderInfo]:
-    return _OAUTH_PROVIDERS
+    return [
+        provider.copy(
+            update={
+                "enabled": _OAUTH_PROVIDER_ENABLED_GETTERS.get(
+                    provider.name, lambda: provider.enabled
+                )()
+            }
+        )
+        for provider in _OAUTH_PROVIDERS
+    ]
 
 
 def generate_oauth_state(local_port: Optional[int] = None) -> str:

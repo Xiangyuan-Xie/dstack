@@ -245,9 +245,34 @@ class UserModel(BaseModel):
     """
 
     email: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, index=True)
+    external_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True, unique=True)
+    """`external_id` stores the stable identity from an OAuth provider, e.g. `feishu:<open_id>`."""
 
     projects_quota: Mapped[int] = mapped_column(
         Integer, default=settings.USER_PROJECT_DEFAULT_QUOTA
+    )
+
+
+class OAuthConfigModel(BaseModel):
+    __tablename__ = "oauth_configs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType(binary=False), primary_key=True, default=uuid.uuid4
+    )
+    provider: Mapped[str] = mapped_column(String(50), unique=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    app_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    app_secret: Mapped[Optional[DecryptedString]] = mapped_column(
+        EncryptedString(2000), nullable=True
+    )
+    scope: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
+    updated_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
+    updated_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by: Mapped[Optional[UserModel]] = relationship(
+        "UserModel", foreign_keys=[updated_by_id]
     )
 
 

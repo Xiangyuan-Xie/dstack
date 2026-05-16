@@ -4,6 +4,7 @@ import { configureStore } from '@reduxjs/toolkit';
 
 import { artifactApi } from 'services/artifact';
 import { authApi } from 'services/auth';
+import { adminOAuthApi } from 'services/adminOAuth';
 import { eventApi } from 'services/events';
 import { fleetApi } from 'services/fleet';
 import { gatewayApi } from 'services/gateway';
@@ -37,6 +38,7 @@ export const store = configureStore({
         [userApi.reducerPath]: userApi.reducer,
         [gatewayApi.reducerPath]: gatewayApi.reducer,
         [authApi.reducerPath]: authApi.reducer,
+        [adminOAuthApi.reducerPath]: adminOAuthApi.reducer,
         [serverApi.reducerPath]: serverApi.reducer,
         [volumeApi.reducerPath]: volumeApi.reducer,
         [secretApi.reducerPath]: secretApi.reducer,
@@ -61,6 +63,7 @@ export const store = configureStore({
             .concat(gatewayApi.middleware)
             .concat(userApi.middleware)
             .concat(authApi.middleware)
+            .concat(adminOAuthApi.middleware)
             .concat(serverApi.middleware)
             .concat(volumeApi.middleware)
             .concat(secretApi.middleware)

@@ -69,6 +69,7 @@ export const CONSOLE_ROUTES = {
             buildRoute(CONSOLE_ROUTES.WORKSPACE_GATEWAY_DETAILS.TEMPLATE, { projectName, gatewayName }),
     },
     ADMIN_SERVERS: '/admin/servers',
+    ADMIN_SETTINGS: '/admin/settings',
     ADMIN_USERS: '/admin/users',
     ADMIN_USER_CREATE: '/admin/users/new',
     ADMIN_USER_DETAILS: {

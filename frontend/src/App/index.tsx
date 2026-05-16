@@ -12,7 +12,8 @@ import { selectAuthToken, setUserData } from './slice';
 const localStorageIsAvailable = 'localStorage' in window;
 
 const IGNORED_AUTH_PATHS = [
-    ROUTES.AUTH.GITHUB_CALLBACK,
+    '/auth/github/callback',
+    ROUTES.AUTH.FEISHU_CALLBACK,
     ROUTES.AUTH.OKTA_CALLBACK,
     ROUTES.AUTH.ENTRA_CALLBACK,
     ROUTES.AUTH.GOOGLE_CALLBACK,

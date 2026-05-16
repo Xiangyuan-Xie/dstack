@@ -1,9 +1,10 @@
 import React, { FormEvent, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
-import { GitBranch, KeyRound, Loader2, LockKeyhole, Server, ShieldCheck, UsersRound } from 'lucide-react';
+import { KeyRound, Loader2, LockKeyhole, Server, ShieldCheck, UsersRound } from 'lucide-react';
 import { Button, Field, TextInput } from 'ui';
 
+import { ReactComponent as FeishuIcon } from 'assets/icons/feishu.svg';
 import { useAppDispatch } from 'hooks';
 import { goToUrl } from 'libs';
 import { ROUTES } from 'routes';
@@ -15,8 +16,9 @@ import {
     useGetNextRedirectMutation,
     useGetServerTestUsersQuery,
     useGetOktaInfoQuery,
-    useGithubAuthorizeMutation,
-    useGithubCallbackMutation,
+    useFeishuAuthorizeMutation,
+    useFeishuCallbackMutation,
+    useGetFeishuInfoQuery,
     useGoogleAuthorizeMutation,
     useGoogleCallbackMutation,
     useOktaAuthorizeMutation,
@@ -88,21 +90,23 @@ export const LoginPage: React.FC<{ tokenOnly?: boolean }> = ({ tokenOnly }) => {
     const [token, setToken] = useState('');
     const [error, setError] = useState('');
     const [checkAuthToken, checkState] = useCheckAuthTokenMutation();
-    const [githubAuthorize, githubState] = useGithubAuthorizeMutation();
+    const [feishuAuthorize, feishuState] = useFeishuAuthorizeMutation();
     const [oktaAuthorize, oktaState] = useOktaAuthorizeMutation();
     const [entraAuthorize, entraState] = useEntraAuthorizeMutation();
     const [googleAuthorize, googleState] = useGoogleAuthorizeMutation();
     const testUsers = useGetServerTestUsersQuery();
+    const feishuInfo = useGetFeishuInfoQuery();
     const oktaInfo = useGetOktaInfoQuery(undefined, { skip: process.env.UI_VERSION !== 'enterprise' });
     const entraInfo = useGetEntraInfoQuery(undefined, { skip: process.env.UI_VERSION !== 'enterprise' });
     const googleInfo = useGetGoogleInfoQuery(undefined, { skip: process.env.UI_VERSION !== 'enterprise' });
+    const feishuEnabled = feishuInfo.data?.enabled === true;
 
-    const authorize = async (provider: 'github' | 'okta' | 'entra' | 'google') => {
+    const authorize = async (provider: 'feishu' | 'okta' | 'entra' | 'google') => {
         setError('');
         try {
             const result =
-                provider === 'github'
-                    ? await githubAuthorize().unwrap()
+                provider === 'feishu'
+                    ? await feishuAuthorize().unwrap()
                     : provider === 'okta'
                       ? await oktaAuthorize().unwrap()
                       : provider === 'entra'
@@ -130,7 +134,7 @@ export const LoginPage: React.FC<{ tokenOnly?: boolean }> = ({ tokenOnly }) => {
         await loginWithToken(token);
     };
 
-    const loading = githubState.isLoading || oktaState.isLoading || entraState.isLoading || googleState.isLoading;
+    const loading = feishuState.isLoading || oktaState.isLoading || entraState.isLoading || googleState.isLoading;
 
     return (
         <AuthShell>
@@ -143,16 +147,24 @@ export const LoginPage: React.FC<{ tokenOnly?: boolean }> = ({ tokenOnly }) => {
                     <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{t('auth.contact_to_administrator')}</p>
                 </div>
 
-                {!tokenOnly && process.env.UI_VERSION !== 'enterprise' && (
-                    <Button
-                        className="mb-3 w-full"
-                        variant="primary"
-                        loading={githubState.isLoading}
-                        icon={<GitBranch className="h-4 w-4" />}
-                        onClick={() => authorize('github')}
-                    >
-                        {t('common.login_github')}
-                    </Button>
+                {!tokenOnly && (
+                    <div className="mb-5">
+                        <Button
+                            className="w-full"
+                            variant="primary"
+                            loading={feishuState.isLoading || feishuInfo.isLoading}
+                            disabled={!feishuEnabled}
+                            icon={<FeishuIcon className="h-4 w-4" />}
+                            onClick={() => authorize('feishu')}
+                        >
+                            {t('common.login_feishu')}
+                        </Button>
+                        {!feishuEnabled && !feishuInfo.isLoading && (
+                            <p className="mt-2 text-xs leading-5 text-amber-600 dark:text-amber-300">
+                                {t('auth.feishu_not_configured')}
+                            </p>
+                        )}
+                    </div>
                 )}
 
                 {!tokenOnly && process.env.UI_VERSION === 'enterprise' && (
@@ -248,7 +260,7 @@ export const LoginPage: React.FC<{ tokenOnly?: boolean }> = ({ tokenOnly }) => {
     );
 };
 
-export const OAuthCallbackPage: React.FC<{ provider: 'github' | 'okta' | 'entra' | 'google' }> = ({ provider }) => {
+export const OAuthCallbackPage: React.FC<{ provider: 'feishu' | 'okta' | 'entra' | 'google' }> = ({ provider }) => {
     const { t } = useTranslation();
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
@@ -257,7 +269,7 @@ export const OAuthCallbackPage: React.FC<{ provider: 'github' | 'okta' | 'entra'
     const state = searchParams.get('state');
     const [error, setError] = useState(false);
     const [getNextRedirect] = useGetNextRedirectMutation();
-    const [githubCallback] = useGithubCallbackMutation();
+    const [feishuCallback] = useFeishuCallbackMutation();
     const [oktaCallback] = useOktaCallbackMutation();
     const [entraCallback] = useEntraCallbackMutation();
     const [googleCallback] = useGoogleCallbackMutation();
@@ -278,8 +290,8 @@ export const OAuthCallbackPage: React.FC<{ provider: 'github' | 'okta' | 'entra'
                 }
 
                 const response =
-                    provider === 'github'
-                        ? await githubCallback({ code, state }).unwrap()
+                    provider === 'feishu'
+                        ? await feishuCallback({ code, state }).unwrap()
                         : provider === 'okta'
                           ? await oktaCallback({ code, state }).unwrap()
                           : provider === 'entra'
@@ -288,7 +300,7 @@ export const OAuthCallbackPage: React.FC<{ provider: 'github' | 'okta' | 'entra'
 
                 dispatch(setAuthData({ token: response.creds.token }));
 
-                if (process.env.UI_VERSION === 'sky' && provider === 'github') {
+                if (process.env.UI_VERSION === 'sky' && provider === 'feishu') {
                     const projects = await getProjects({}).unwrap();
                     if ('data' in projects && projects.data.length === 0) {
                         navigate(CONSOLE_ROUTES.WORKSPACE_PROJECT_CREATE);

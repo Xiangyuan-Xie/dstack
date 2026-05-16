@@ -5,15 +5,23 @@ import classNames from 'classnames';
 import * as Icons from 'lucide-react';
 import { Bell, Languages, LogOut, Menu, Moon, Sun, X } from 'lucide-react';
 import { Button, ConfirmationDialogViewport, IconButton, ToastViewport } from 'ui';
+import { markAllRead, selectNotificationUnreadCount, selectNotifications } from 'ui/notifications/slice';
 
 import { useAppDispatch, useAppSelector } from 'hooks';
 import { ROUTES } from 'routes';
+import { useGetAllEventsQuery } from 'services/events';
 import { useGetProjectsQuery } from 'services/project';
 
 import { selectSystemMode, selectUserData, setSystemMode } from 'App/slice';
 
 import { CONSOLE_ROUTES, LOCALE_STORAGE_KEY } from './constants';
-import { canAccessConsoleRoute, getConsoleNavSections, getConsoleUserRole, isConsoleNavItemActive } from './utils';
+import {
+    canAccessConsoleRoute,
+    getConsoleNavSections,
+    getConsoleUserRole,
+    getNotificationCenterItems,
+    isConsoleNavItemActive,
+} from './utils';
 
 type ConsoleContextValue = {
     projects: IProject[];
@@ -126,12 +134,18 @@ export const ConsoleLayout: React.FC = () => {
     const dispatch = useAppDispatch();
     const user = useAppSelector(selectUserData);
     const systemMode = useAppSelector(selectSystemMode);
+    const notifications = useAppSelector(selectNotifications);
+    const unreadCount = useAppSelector(selectNotificationUnreadCount);
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [notificationsOpen, setNotificationsOpen] = useState(false);
     const projectsQuery = useGetProjectsQuery({ include_not_joined: false });
     const projects = projectsQuery.data?.data ?? [];
     const locale = (i18n.language?.startsWith('en') ? 'en' : 'zh') as TLocale;
     const role = useMemo(() => getConsoleUserRole(projects, user), [projects, user]);
     const contextValue = useMemo(() => ({ projects, role, user: user ?? null, locale }), [locale, projects, role, user]);
+    const events = useGetAllEventsQuery({ limit: 8 }, { skip: !notificationsOpen });
+    const notificationItems = getNotificationCenterItems(notifications, notificationsOpen ? events.data ?? [] : [], locale);
+    const notificationBadgeCount = unreadCount;
 
     const activeTitle = useMemo(() => {
         const sections = getConsoleNavSections(role, locale);
@@ -145,12 +159,22 @@ export const ConsoleLayout: React.FC = () => {
         localStorage.setItem(LOCALE_STORAGE_KEY, nextLocale);
     };
 
+    const toggleNotifications = () => {
+        setNotificationsOpen((open) => {
+            const nextOpen = !open;
+            if (nextOpen) {
+                dispatch(markAllRead());
+            }
+            return nextOpen;
+        });
+    };
+
     return (
         <ConsoleContext.Provider value={contextValue}>
             <div className="flex min-h-screen bg-[var(--console-bg)] text-[var(--console-text)]">
                 <Sidebar role={role} locale={locale} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
                 <div className="min-w-0 flex-1">
-                    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white/85 px-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80 sm:px-6">
+                    <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-200 bg-white/85 px-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/80 sm:px-6">
                         <div className="flex min-w-0 items-center gap-3">
                             <IconButton
                                 className="lg:hidden"
@@ -168,7 +192,26 @@ export const ConsoleLayout: React.FC = () => {
                             </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
-                            <IconButton label="Notifications" icon={<Bell className="h-4 w-4" />} />
+                            <div className="relative">
+                                <IconButton
+                                    label={locale === 'zh' ? '通知' : 'Notifications'}
+                                    icon={<Bell className="h-4 w-4" />}
+                                    onClick={toggleNotifications}
+                                />
+                                {notificationBadgeCount > 0 && (
+                                    <span className="absolute -right-1 -top-1 flex min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 text-[10px] font-bold leading-5 text-white shadow-sm">
+                                        {notificationBadgeCount > 99 ? '99+' : notificationBadgeCount}
+                                    </span>
+                                )}
+                                {notificationsOpen && (
+                                    <NotificationCenterPanel
+                                        locale={locale}
+                                        items={notificationItems}
+                                        loading={events.isLoading}
+                                        onClose={() => setNotificationsOpen(false)}
+                                    />
+                                )}
+                            </div>
                             <Button
                                 className="hidden min-w-20 px-3 sm:inline-flex"
                                 variant="ghost"
@@ -202,6 +245,87 @@ export const ConsoleLayout: React.FC = () => {
         </ConsoleContext.Provider>
     );
 };
+
+const formatNotificationTime = (value?: string) => {
+    if (!value) {
+        return undefined;
+    }
+    try {
+        return new Date(value).toLocaleString();
+    } catch {
+        return value;
+    }
+};
+
+const NotificationCenterPanel: React.FC<{
+    locale: TLocale;
+    items: ReturnType<typeof getNotificationCenterItems>;
+    loading: boolean;
+    onClose: () => void;
+}> = ({ locale, items, loading, onClose }) => (
+    <div className="absolute right-0 top-12 z-50 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-slate-200 bg-white text-left shadow-xl shadow-slate-900/10 dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+            <div>
+                <div className="text-sm font-bold text-slate-950 dark:text-slate-50">
+                    {locale === 'zh' ? '通知中心' : 'Notification center'}
+                </div>
+                <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                    {locale === 'zh' ? '最近通知和系统事件' : 'Recent notifications and events'}
+                </div>
+            </div>
+            <IconButton
+                className="h-8 w-8"
+                label={locale === 'zh' ? '关闭' : 'Close'}
+                icon={<X className="h-4 w-4" />}
+                onClick={onClose}
+            />
+        </div>
+        <div className="console-scrollbar max-h-96 overflow-y-auto p-3">
+            {items.length ? (
+                <div className="grid gap-2">
+                    {items.map((item) => (
+                        <div
+                            key={`${item.type}-${item.id}`}
+                            className="rounded-lg border border-slate-200 p-3 dark:border-slate-800"
+                        >
+                            <div className="flex items-start gap-2">
+                                <span
+                                    className={classNames(
+                                        'mt-1 h-2 w-2 shrink-0 rounded-full',
+                                        item.tone === 'success' && 'bg-emerald-500',
+                                        item.tone === 'error' && 'bg-red-500',
+                                        item.tone === 'warning' && 'bg-amber-500',
+                                        item.tone === 'info' && 'bg-blue-500',
+                                        item.tone === 'neutral' && 'bg-slate-400',
+                                    )}
+                                />
+                                <div className="min-w-0 flex-1">
+                                    <div className="break-words text-sm font-semibold text-slate-900 dark:text-slate-50">
+                                        {item.title}
+                                    </div>
+                                    {item.description && (
+                                        <div className="mt-1 break-words text-xs text-slate-500 dark:text-slate-400">
+                                            {item.description}
+                                        </div>
+                                    )}
+                                    {item.recordedAt && (
+                                        <div className="mt-1 text-xs text-slate-400">
+                                            {formatNotificationTime(item.recordedAt)}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            ) : (
+                <div className="flex min-h-32 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-400">
+                    {loading ? (locale === 'zh' ? '加载中...' : 'Loading...') : locale === 'zh' ? '暂无通知' : 'No notifications'}
+                </div>
+            )}
+        </div>
+    </div>
+);
 
 const AccessDenied: React.FC<{ locale: TLocale }> = ({ locale }) => (
     <div className="rounded-xl border border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">

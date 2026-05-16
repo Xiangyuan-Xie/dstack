@@ -13,7 +13,7 @@
         "refresh": "刷新",
         "sign_out": "退出",
         "login": "登录",
-        "login_github": "使用 GitHub 登录",
+        "login_feishu": "使用飞书登录",
         "login_okta": "使用 Okta 登录",
         "login_entra": "使用 Entra ID 登录",
         "login_google": "使用 Google 登录",
@@ -28,6 +28,7 @@
         "sign_in_to_dstack": "欢迎使用 dstack Sky",
         "sign_in_to_dstack_enterprise": "欢迎使用 dstack",
         "authorization_failed": "授权失败",
+        "feishu_not_configured": "飞书登录未配置，请管理员配置飞书 OAuth。",
         "try_again": "请重试",
         "login_by_token": "使用 Token 登录",
         "another_login_methods": "其他登录方式"
@@ -39,6 +40,7 @@
         "fleets": "集群",
         "instances": "实例",
         "projects": "项目",
+        "settings": "系统设置",
         "users": "用户",
         "events": "事件",
         "not_found": "该页面在新控制台中不存在。"

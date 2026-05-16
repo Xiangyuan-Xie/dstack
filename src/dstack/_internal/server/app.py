@@ -27,10 +27,12 @@ from dstack._internal.server.background.scheduled_tasks import start_scheduled_t
 from dstack._internal.server.background.scheduled_tasks.probes import PROBES_SCHEDULER
 from dstack._internal.server.db import get_db, get_session_ctx, migrate
 from dstack._internal.server.routers import (
+    admin_oauth,
     auth,
     backends,
     events,
     exports,
+    feishu,
     files,
     fleets,
     gateways,
@@ -245,6 +247,8 @@ def register_routes(app: FastAPI, ui: bool = True):
     app.include_router(server.router)
     app.include_router(users.router)
     app.include_router(auth.router)
+    app.include_router(admin_oauth.router)
+    app.include_router(feishu.router)
     app.include_router(projects.router)
     app.include_router(backends.root_router)
     app.include_router(backends.project_router)
