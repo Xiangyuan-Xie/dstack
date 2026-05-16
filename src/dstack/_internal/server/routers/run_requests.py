@@ -5,17 +5,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dstack._internal.server.db import get_session
 from dstack._internal.server.models import ProjectModel, UserModel
-from dstack._internal.server.schemas.gpu_requests import (
-    ApproveGpuRequestRequest,
-    CreateGpuRequestRequest,
-    GetGpuRequestRequest,
-    GpuRequest,
-    ListAllGpuRequestsRequest,
-    ListGpuRequestsRequest,
-    RejectGpuRequestRequest,
+from dstack._internal.server.schemas.run_requests import (
+    ApproveRunRequestRequest,
+    CreateRunRequestRequest,
+    GetRunRequestRequest,
+    ListAllRunRequestsRequest,
+    ListRunRequestsRequest,
+    RejectRunRequestRequest,
+    RunRequest,
 )
 from dstack._internal.server.security.permissions import Authenticated, ProjectMember
-from dstack._internal.server.services import gpu_requests as gpu_requests_services
+from dstack._internal.server.services import run_requests as run_requests_services
 from dstack._internal.server.services.pipelines import PipelineHinterProtocol, get_pipeline_hinter
 from dstack._internal.server.utils.routers import (
     CustomORJSONResponse,
@@ -23,25 +23,25 @@ from dstack._internal.server.utils.routers import (
 )
 
 root_router = APIRouter(
-    prefix="/api/gpu_requests",
-    tags=["gpu_requests"],
+    prefix="/api/run_requests",
+    tags=["run_requests"],
     responses=get_base_api_additional_responses(),
 )
 
 router = APIRouter(
-    prefix="/api/project/{project_name}/gpu_requests",
-    tags=["gpu_requests"],
+    prefix="/api/project/{project_name}/run_requests",
+    tags=["run_requests"],
     responses=get_base_api_additional_responses(),
 )
 
 
-@root_router.post("/list", summary="List visible GPU requests", response_model=list[GpuRequest])
-async def list_all_gpu_requests(
-    body: ListAllGpuRequestsRequest,
+@root_router.post("/list", summary="List visible run requests", response_model=list[RunRequest])
+async def list_all_run_requests(
+    body: ListAllRunRequestsRequest,
     session: AsyncSession = Depends(get_session),
     user: UserModel = Depends(Authenticated()),
 ):
-    requests = await gpu_requests_services.list_all_gpu_requests(
+    requests = await run_requests_services.list_all_run_requests(
         session=session,
         user=user,
         status=body.status,
@@ -54,14 +54,14 @@ async def list_all_gpu_requests(
     return CustomORJSONResponse(requests)
 
 
-@router.post("/create", summary="Create GPU request", response_model=GpuRequest)
-async def create_gpu_request(
-    body: CreateGpuRequestRequest,
+@router.post("/create", summary="Create run request", response_model=RunRequest)
+async def create_run_request(
+    body: CreateRunRequestRequest,
     session: AsyncSession = Depends(get_session),
     user_project: Tuple[UserModel, ProjectModel] = Depends(ProjectMember()),
 ):
     user, project = user_project
-    request = await gpu_requests_services.create_gpu_request(
+    request = await run_requests_services.create_run_request(
         session=session,
         project=project,
         applicant=user,
@@ -70,14 +70,14 @@ async def create_gpu_request(
     return CustomORJSONResponse(request)
 
 
-@router.post("/list", summary="List GPU requests", response_model=list[GpuRequest])
-async def list_gpu_requests(
-    body: ListGpuRequestsRequest,
+@router.post("/list", summary="List run requests", response_model=list[RunRequest])
+async def list_run_requests(
+    body: ListRunRequestsRequest,
     session: AsyncSession = Depends(get_session),
     user_project: Tuple[UserModel, ProjectModel] = Depends(ProjectMember()),
 ):
     user, project = user_project
-    requests = await gpu_requests_services.list_gpu_requests(
+    requests = await run_requests_services.list_run_requests(
         session=session,
         project=project,
         user=user,
@@ -91,14 +91,14 @@ async def list_gpu_requests(
     return CustomORJSONResponse(requests)
 
 
-@router.post("/get", summary="Get GPU request", response_model=GpuRequest)
-async def get_gpu_request(
-    body: GetGpuRequestRequest,
+@router.post("/get", summary="Get run request", response_model=RunRequest)
+async def get_run_request(
+    body: GetRunRequestRequest,
     session: AsyncSession = Depends(get_session),
     user_project: Tuple[UserModel, ProjectModel] = Depends(ProjectMember()),
 ):
     user, project = user_project
-    request = await gpu_requests_services.get_gpu_request(
+    request = await run_requests_services.get_run_request(
         session=session,
         project=project,
         user=user,
@@ -107,15 +107,15 @@ async def get_gpu_request(
     return CustomORJSONResponse(request)
 
 
-@router.post("/approve", summary="Approve GPU request", response_model=GpuRequest)
-async def approve_gpu_request(
-    body: ApproveGpuRequestRequest,
+@router.post("/approve", summary="Approve run request", response_model=RunRequest)
+async def approve_run_request(
+    body: ApproveRunRequestRequest,
     session: AsyncSession = Depends(get_session),
     user_project: Tuple[UserModel, ProjectModel] = Depends(ProjectMember()),
     pipeline_hinter: PipelineHinterProtocol = Depends(get_pipeline_hinter),
 ):
     user, project = user_project
-    request = await gpu_requests_services.approve_gpu_request(
+    request = await run_requests_services.approve_run_request(
         session=session,
         project=project,
         reviewer=user,
@@ -125,14 +125,14 @@ async def approve_gpu_request(
     return CustomORJSONResponse(request)
 
 
-@router.post("/reject", summary="Reject GPU request", response_model=GpuRequest)
-async def reject_gpu_request(
-    body: RejectGpuRequestRequest,
+@router.post("/reject", summary="Reject run request", response_model=RunRequest)
+async def reject_run_request(
+    body: RejectRunRequestRequest,
     session: AsyncSession = Depends(get_session),
     user_project: Tuple[UserModel, ProjectModel] = Depends(ProjectMember()),
 ):
     user, project = user_project
-    request = await gpu_requests_services.reject_gpu_request(
+    request = await run_requests_services.reject_run_request(
         session=session,
         project=project,
         reviewer=user,
@@ -142,15 +142,15 @@ async def reject_gpu_request(
     return CustomORJSONResponse(request)
 
 
-@router.post("/retry", summary="Retry failed GPU request", response_model=GpuRequest)
-async def retry_gpu_request(
-    body: ApproveGpuRequestRequest,
+@router.post("/retry", summary="Retry failed run request", response_model=RunRequest)
+async def retry_run_request(
+    body: ApproveRunRequestRequest,
     session: AsyncSession = Depends(get_session),
     user_project: Tuple[UserModel, ProjectModel] = Depends(ProjectMember()),
     pipeline_hinter: PipelineHinterProtocol = Depends(get_pipeline_hinter),
 ):
     user, project = user_project
-    request = await gpu_requests_services.retry_gpu_request(
+    request = await run_requests_services.retry_run_request(
         session=session,
         project=project,
         reviewer=user,

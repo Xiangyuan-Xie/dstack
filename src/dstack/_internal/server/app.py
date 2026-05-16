@@ -34,7 +34,6 @@ from dstack._internal.server.routers import (
     files,
     fleets,
     gateways,
-    gpu_requests,
     gpus,
     imports,
     instances,
@@ -44,6 +43,7 @@ from dstack._internal.server.routers import (
     prometheus,
     public_keys,
     repos,
+    run_requests,
     runs,
     secrets,
     server,
@@ -250,8 +250,8 @@ def register_routes(app: FastAPI, ui: bool = True):
     app.include_router(backends.project_router)
     app.include_router(fleets.root_router)
     app.include_router(fleets.project_router)
-    app.include_router(gpu_requests.root_router)
-    app.include_router(gpu_requests.router)
+    app.include_router(run_requests.root_router)
+    app.include_router(run_requests.router)
     app.include_router(instances.root_router)
     app.include_router(instances.project_router)
     app.include_router(repos.router)

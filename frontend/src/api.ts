@@ -121,15 +121,15 @@ export const API = {
         // GPUS
         GPUS_LIST: (projectName: IProject['project_name']) => `${API.BASE()}/project/${projectName}/gpus/list`,
 
-        // GPU Requests
-        GPU_REQUESTS_LIST_ALL: () => `${API.BASE()}/gpu_requests/list`,
-        GPU_REQUESTS: (projectName: IProject['project_name']) => `${API.BASE()}/project/${projectName}/gpu_requests`,
-        GPU_REQUESTS_CREATE: (projectName: IProject['project_name']) => `${API.PROJECTS.GPU_REQUESTS(projectName)}/create`,
-        GPU_REQUESTS_LIST: (projectName: IProject['project_name']) => `${API.PROJECTS.GPU_REQUESTS(projectName)}/list`,
-        GPU_REQUESTS_GET: (projectName: IProject['project_name']) => `${API.PROJECTS.GPU_REQUESTS(projectName)}/get`,
-        GPU_REQUESTS_APPROVE: (projectName: IProject['project_name']) => `${API.PROJECTS.GPU_REQUESTS(projectName)}/approve`,
-        GPU_REQUESTS_REJECT: (projectName: IProject['project_name']) => `${API.PROJECTS.GPU_REQUESTS(projectName)}/reject`,
-        GPU_REQUESTS_RETRY: (projectName: IProject['project_name']) => `${API.PROJECTS.GPU_REQUESTS(projectName)}/retry`,
+        // Run Requests
+        RUN_REQUESTS_LIST_ALL: () => `${API.BASE()}/run_requests/list`,
+        RUN_REQUESTS: (projectName: IProject['project_name']) => `${API.BASE()}/project/${projectName}/run_requests`,
+        RUN_REQUESTS_CREATE: (projectName: IProject['project_name']) => `${API.PROJECTS.RUN_REQUESTS(projectName)}/create`,
+        RUN_REQUESTS_LIST: (projectName: IProject['project_name']) => `${API.PROJECTS.RUN_REQUESTS(projectName)}/list`,
+        RUN_REQUESTS_GET: (projectName: IProject['project_name']) => `${API.PROJECTS.RUN_REQUESTS(projectName)}/get`,
+        RUN_REQUESTS_APPROVE: (projectName: IProject['project_name']) => `${API.PROJECTS.RUN_REQUESTS(projectName)}/approve`,
+        RUN_REQUESTS_REJECT: (projectName: IProject['project_name']) => `${API.PROJECTS.RUN_REQUESTS(projectName)}/reject`,
+        RUN_REQUESTS_RETRY: (projectName: IProject['project_name']) => `${API.PROJECTS.RUN_REQUESTS(projectName)}/retry`,
         // GPUS
         TEMPLATES_LIST: (projectName: IProject['project_name']) => `${API.BASE()}/project/${projectName}/templates/list`,
     },

@@ -1,6 +1,6 @@
 import React, { createContext, ReactNode, useContext, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, Outlet, useLocation } from 'react-router-dom';
 import classNames from 'classnames';
 import * as Icons from 'lucide-react';
 import { Bell, Languages, LogOut, Menu, Moon, Sun, X } from 'lucide-react';
@@ -13,7 +13,7 @@ import { useGetProjectsQuery } from 'services/project';
 import { selectSystemMode, selectUserData, setSystemMode } from 'App/slice';
 
 import { CONSOLE_ROUTES, LOCALE_STORAGE_KEY } from './constants';
-import { canAccessConsoleRoute, getConsoleNavSections, getConsoleUserRole } from './utils';
+import { canAccessConsoleRoute, getConsoleNavSections, getConsoleUserRole, isConsoleNavItemActive } from './utils';
 
 type ConsoleContextValue = {
     projects: IProject[];
@@ -49,6 +49,7 @@ const Sidebar: React.FC<{
     onClose: () => void;
 }> = ({ role, locale, open, onClose }) => {
     const navSections = getConsoleNavSections(role, locale);
+    const location = useLocation();
 
     return (
         <>
@@ -89,24 +90,27 @@ const Sidebar: React.FC<{
                                 {section.title}
                             </div>
                             <div className="grid gap-1">
-                                {section.items.map((item) => (
-                                    <NavLink
-                                        key={item.href}
-                                        to={item.href}
-                                        onClick={onClose}
-                                        className={({ isActive }) =>
-                                            classNames(
+                                {section.items.map((item) => {
+                                    const active = isConsoleNavItemActive(location.pathname, item.href);
+
+                                    return (
+                                        <Link
+                                            key={item.href}
+                                            to={item.href}
+                                            onClick={onClose}
+                                            aria-current={active ? 'page' : undefined}
+                                            className={classNames(
                                                 'group flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-semibold transition',
-                                                isActive
+                                                active
                                                     ? 'bg-gradient-to-r from-blue-500 to-teal-400 text-white shadow-lg shadow-blue-500/20'
                                                     : 'text-slate-300 hover:bg-white/8 hover:text-white',
-                                            )
-                                        }
-                                    >
-                                        <IconForName name={item.icon} className="h-4 w-4" />
-                                        <span className="truncate">{item.label}</span>
-                                    </NavLink>
-                                ))}
+                                            )}
+                                        >
+                                            <IconForName name={item.icon} className="h-4 w-4" />
+                                            <span className="truncate">{item.label}</span>
+                                        </Link>
+                                    );
+                                })}
                             </div>
                         </div>
                     ))}
@@ -133,7 +137,7 @@ export const ConsoleLayout: React.FC = () => {
         const sections = getConsoleNavSections(role, locale);
         return sections
             .flatMap((section) => section.items)
-            .find((item) => location.pathname === item.href || location.pathname.startsWith(`${item.href}/`))?.label;
+            .find((item) => isConsoleNavItemActive(location.pathname, item.href))?.label;
     }, [locale, location.pathname, role]);
 
     const changeLocale = async (nextLocale: TLocale) => {

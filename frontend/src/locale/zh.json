@@ -34,8 +34,7 @@
     },
     "console": {
         "dashboard": "工作台",
-        "requests": "GPU 申请",
-        "containers": "容器",
+        "requests": "审批",
         "runs": "运行任务",
         "fleets": "集群",
         "instances": "实例",

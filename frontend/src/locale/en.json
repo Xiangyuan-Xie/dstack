@@ -34,8 +34,7 @@
     },
     "console": {
         "dashboard": "Dashboard",
-        "requests": "GPU Requests",
-        "containers": "Containers",
+        "requests": "Approvals",
         "runs": "Runs",
         "fleets": "Fleets",
         "instances": "Instances",

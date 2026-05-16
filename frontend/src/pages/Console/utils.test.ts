@@ -1,12 +1,13 @@
 import {
-    buildGpuRequestCreateParams,
+    buildRunRequestCreateParams,
     canAccessConsoleRoute,
     getConsoleNavSections,
     getConsoleUserRole,
-    getContainerSummaries,
-    getGpuRequestStats,
+    getRunSummariesFromRequests,
+    getRunRequestStats,
     getPreferredLocale,
     getPreferredThemeMode,
+    isConsoleNavItemActive,
     isLegacyConsolePath,
 } from './utils';
 
@@ -68,17 +69,19 @@ const request = {
             memory: '32GB',
         },
     },
-} as IGpuRequest;
+} as IRunRequest;
 
 describe('Console utils', () => {
     test('builds member navigation without admin or legacy console links', () => {
         const role = getConsoleUserRole([project], user);
-        const labels = getConsoleNavSections(role, 'zh').flatMap((section) => section.items.map((item) => item.label));
+        const sections = getConsoleNavSections(role, 'zh');
+        const labels = sections.flatMap((section) => section.items.map((item) => item.label));
+        const resources = sections.find((section) => section.title === '资源');
 
-        expect(labels).toEqual(expect.arrayContaining(['工作台', 'GPU 申请', '我的容器', '个人资料', 'SSH 公钥']));
-        expect(labels).not.toContain('运行任务');
+        expect(labels).toEqual(expect.arrayContaining(['工作台', '运行任务', '个人资料', 'SSH 公钥']));
+        expect(resources?.items.map((item) => item.label)).toEqual(['运行任务']);
+        expect(labels).not.toContain('审批');
         expect(labels).not.toContain('项目');
-        expect(labels).not.toContain('审批中心');
         expect(labels).not.toContain('用户管理');
         expect(labels).not.toContain('系统事件');
         expect(labels).not.toContain('高级控制台');
@@ -86,10 +89,14 @@ describe('Console utils', () => {
 
     test('builds project admin navigation from current user role without global admin links', () => {
         const role = getConsoleUserRole([project, roleOnlyManagedProject], user);
-        const labels = getConsoleNavSections(role, 'zh').flatMap((section) => section.items.map((item) => item.label));
+        const sections = getConsoleNavSections(role, 'zh');
+        const labels = sections.flatMap((section) => section.items.map((item) => item.label));
+        const resources = sections.find((section) => section.title === '资源');
+        const adminSection = sections.find((section) => section.title === '管理');
 
-        expect(labels).toEqual(expect.arrayContaining(['工作台', 'GPU 申请', '我的容器', '审批中心', '容器管理', '服务器管理']));
-        expect(labels).not.toContain('运行任务');
+        expect(labels).toEqual(expect.arrayContaining(['工作台', '运行任务', '审批', '服务器管理']));
+        expect(resources?.items.map((item) => item.label)).toEqual(['运行任务']);
+        expect(adminSection?.items.map((item) => item.label)).toEqual(['审批', '服务器管理']);
         expect(labels).not.toContain('项目');
         expect(labels).not.toContain('用户管理');
         expect(labels).not.toContain('系统事件');
@@ -97,10 +104,12 @@ describe('Console utils', () => {
 
     test('builds project admin navigation from members fallback without global admin links', () => {
         const role = getConsoleUserRole([project, managedProject], user);
-        const labels = getConsoleNavSections(role, 'zh').flatMap((section) => section.items.map((item) => item.label));
+        const sections = getConsoleNavSections(role, 'zh');
+        const labels = sections.flatMap((section) => section.items.map((item) => item.label));
+        const adminSection = sections.find((section) => section.title === '管理');
 
-        expect(labels).toEqual(expect.arrayContaining(['工作台', 'GPU 申请', '我的容器', '审批中心', '容器管理', '服务器管理']));
-        expect(labels).not.toContain('运行任务');
+        expect(labels).toEqual(expect.arrayContaining(['工作台', '运行任务', '审批', '服务器管理']));
+        expect(adminSection?.items.map((item) => item.label)).toEqual(['审批', '服务器管理']);
         expect(labels).not.toContain('项目');
         expect(labels).not.toContain('用户管理');
         expect(labels).not.toContain('系统事件');
@@ -108,11 +117,16 @@ describe('Console utils', () => {
 
     test('builds global admin navigation with resource and global admin links', () => {
         const role = getConsoleUserRole([project], admin);
-        const labels = getConsoleNavSections(role, 'zh').flatMap((section) => section.items.map((item) => item.label));
+        const sections = getConsoleNavSections(role, 'zh');
+        const labels = sections.flatMap((section) => section.items.map((item) => item.label));
+        const resources = sections.find((section) => section.title === '资源');
+        const adminSection = sections.find((section) => section.title === '管理');
 
         expect(labels).toEqual(
-            expect.arrayContaining(['运行任务', '集群', '实例', '项目', '审批中心', '容器管理', '服务器管理', '用户管理', '系统事件']),
+            expect.arrayContaining(['运行任务', '集群', '实例', '项目', '审批', '服务器管理', '用户管理', '系统事件']),
         );
+        expect(resources?.items.map((item) => item.label)).toEqual(['运行任务', '集群', '实例', '资源报价', '模型服务', '存储卷']);
+        expect(adminSection?.items.map((item) => item.label)).toEqual(['审批', '服务器管理', '用户管理', '系统事件']);
         expect(labels).not.toContain('高级控制台');
     });
 
@@ -134,14 +148,16 @@ describe('Console utils', () => {
         expect(role.manageableProjectNames).toEqual(['training']);
     });
 
-    test('allows regular users only into the GPU portal and account pages', () => {
+    test('allows regular users only into runs and account pages', () => {
         const role = getConsoleUserRole([project], user);
 
         expect(canAccessConsoleRoute(role, '/dashboard')).toBe(true);
-        expect(canAccessConsoleRoute(role, '/gpu/requests/research/req-1')).toBe(true);
-        expect(canAccessConsoleRoute(role, '/gpu/containers')).toBe(true);
+        expect(canAccessConsoleRoute(role, '/resources/runs')).toBe(true);
+        expect(canAccessConsoleRoute(role, '/resources/runs/new')).toBe(true);
+        expect(canAccessConsoleRoute(role, '/resources/runs/requests/research/req-1')).toBe(true);
+        expect(canAccessConsoleRoute(role, '/resources/runs/research/run-1')).toBe(true);
         expect(canAccessConsoleRoute(role, '/account/profile')).toBe(true);
-        expect(canAccessConsoleRoute(role, '/resources/runs')).toBe(false);
+        expect(canAccessConsoleRoute(role, '/resources/fleets')).toBe(false);
         expect(canAccessConsoleRoute(role, '/workspace/projects')).toBe(false);
         expect(canAccessConsoleRoute(role, '/admin/users')).toBe(false);
         expect(canAccessConsoleRoute(role, '/admin/events')).toBe(false);
@@ -152,12 +168,13 @@ describe('Console utils', () => {
         const globalRole = getConsoleUserRole([project], admin);
 
         expect(canAccessConsoleRoute(projectRole, '/admin/approvals')).toBe(true);
-        expect(canAccessConsoleRoute(projectRole, '/admin/containers')).toBe(true);
         expect(canAccessConsoleRoute(projectRole, '/admin/servers')).toBe(true);
         expect(canAccessConsoleRoute(projectRole, '/admin/users')).toBe(false);
-        expect(canAccessConsoleRoute(projectRole, '/resources/runs')).toBe(false);
+        expect(canAccessConsoleRoute(projectRole, '/resources/runs')).toBe(true);
+        expect(canAccessConsoleRoute(projectRole, '/resources/fleets')).toBe(false);
         expect(canAccessConsoleRoute(globalRole, '/admin/users')).toBe(true);
         expect(canAccessConsoleRoute(globalRole, '/resources/runs')).toBe(true);
+        expect(canAccessConsoleRoute(globalRole, '/resources/fleets')).toBe(true);
     });
 
     test('leaves legacy URLs to the Not Found route instead of permission blocking them', () => {
@@ -169,11 +186,19 @@ describe('Console utils', () => {
 
     test('keeps old top-level console URLs out of the new router', () => {
         expect(isLegacyConsolePath('/runs')).toBe(true);
+        expect(isLegacyConsolePath('/resources/runs')).toBe(false);
         expect(isLegacyConsolePath('/projects')).toBe(true);
         expect(isLegacyConsolePath('/fleets')).toBe(true);
         expect(isLegacyConsolePath('/users')).toBe(true);
         expect(isLegacyConsolePath('/dashboard')).toBe(false);
-        expect(isLegacyConsolePath('/resources/runs')).toBe(false);
+    });
+
+    test('keeps run approvals from highlighting the run list item', () => {
+        expect(isConsoleNavItemActive('/admin/approvals', '/resources/runs')).toBe(false);
+        expect(isConsoleNavItemActive('/admin/approvals', '/admin/approvals')).toBe(true);
+        expect(isConsoleNavItemActive('/resources/runs/new', '/resources/runs')).toBe(true);
+        expect(isConsoleNavItemActive('/resources/runs/requests/research/req-1', '/resources/runs')).toBe(true);
+        expect(isConsoleNavItemActive('/resources/runs/research/run-1', '/resources/runs')).toBe(true);
     });
 
     test('prefers Chinese and persists explicit locale choices', () => {
@@ -188,9 +213,9 @@ describe('Console utils', () => {
         expect(getPreferredThemeMode(null, true)).toBe('dark');
     });
 
-    test('converts the GPU request form into the API shape', () => {
+    test('converts the run form into the approval API shape', () => {
         expect(
-            buildGpuRequestCreateParams({
+            buildRunRequestCreateParams({
                 project_name: 'research',
                 name: 'train-a',
                 image: 'pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime',
@@ -231,7 +256,7 @@ describe('Console utils', () => {
 
     test('summarizes request statuses for dashboards', () => {
         expect(
-            getGpuRequestStats([
+            getRunRequestStats([
                 { ...request, status: 'pending' },
                 { ...request, id: 'req-2', status: 'approved' },
                 { ...request, id: 'req-3', status: 'failed' },
@@ -245,8 +270,8 @@ describe('Console utils', () => {
         });
     });
 
-    test('maps approved GPU requests to user-facing container summaries', () => {
-        const summaries = getContainerSummaries(
+    test('maps approved submitted runs to user-facing run summaries', () => {
+        const summaries = getRunSummariesFromRequests(
             [request],
             [
                 {
@@ -276,7 +301,7 @@ describe('Console utils', () => {
                 image: 'pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime',
                 resources: 'cpu=8 mem=32GB gpu=1',
                 url: 'https://notebook.example.com',
-                requestDetailsPath: '/gpu/requests/research/req-1',
+                requestDetailsPath: '/resources/runs/requests/research/req-1',
                 runDetailsPath: '/resources/runs/research/run-1',
                 logsPath: '/resources/runs/research/run-1#logs',
             },

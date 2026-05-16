@@ -2,19 +2,15 @@ import { GlobalUserRole, ProjectUserRole } from 'types';
 
 import { CONSOLE_ROUTES, LEGACY_CONSOLE_PATHS } from './constants';
 
-type GpuRequestStats = Record<TGpuRequestStatus, number> & {
+type RunRequestStats = Record<TRunRequestStatus, number> & {
     total: number;
 };
 
 const navCopy = {
     zh: {
         dashboard: '工作台',
-        gpu: 'GPU',
-        requests: 'GPU 申请',
-        containersMine: '我的容器',
-        containersAdmin: '容器管理',
-        resources: '资源',
         runs: '运行任务',
+        resources: '资源',
         fleets: '集群',
         instances: '实例',
         offers: '资源报价',
@@ -23,7 +19,7 @@ const navCopy = {
         workspace: '工作区',
         projects: '项目',
         admin: '管理',
-        approvals: '审批中心',
+        approvals: '审批',
         servers: '服务器管理',
         users: '用户管理',
         events: '系统事件',
@@ -34,12 +30,8 @@ const navCopy = {
     },
     en: {
         dashboard: 'Dashboard',
-        gpu: 'GPU',
-        requests: 'GPU Requests',
-        containersMine: 'My Containers',
-        containersAdmin: 'Container Management',
-        resources: 'Resources',
         runs: 'Runs',
+        resources: 'Resources',
         fleets: 'Fleets',
         instances: 'Instances',
         offers: 'Offers',
@@ -142,13 +134,6 @@ export const canManageConsoleProject = (role: IConsoleUserRole, projectName: str
 
 export const getConsoleNavSections = (role: IConsoleUserRole, locale: TLocale = 'zh'): IConsoleNavSection[] => {
     const text = navCopy[locale] ?? navCopy.zh;
-    const gpuItems: IConsoleNavItem[] = [
-        { label: text.requests, href: CONSOLE_ROUTES.GPU_REQUESTS, icon: 'Gpu' },
-        { label: text.containersMine, href: CONSOLE_ROUTES.GPU_CONTAINERS, icon: 'Box' },
-    ];
-    if (role.canUseProjectAdmin) {
-        gpuItems.push({ label: text.containersAdmin, href: CONSOLE_ROUTES.ADMIN_CONTAINERS, icon: 'Boxes', adminOnly: true });
-    }
 
     return [
         {
@@ -156,18 +141,18 @@ export const getConsoleNavSections = (role: IConsoleUserRole, locale: TLocale = 
             items: [{ label: text.dashboard, href: CONSOLE_ROUTES.DASHBOARD, icon: 'LayoutDashboard' }],
         },
         {
-            title: text.gpu,
-            items: gpuItems,
-        },
-        role.canUseGlobalAdmin && {
             title: text.resources,
             items: [
-                { label: text.runs, href: CONSOLE_ROUTES.RESOURCES_RUNS, icon: 'PlayCircle' },
-                { label: text.fleets, href: CONSOLE_ROUTES.RESOURCES_FLEETS, icon: 'Server' },
-                { label: text.instances, href: CONSOLE_ROUTES.RESOURCES_INSTANCES, icon: 'Cpu' },
-                { label: text.offers, href: CONSOLE_ROUTES.RESOURCES_OFFERS, icon: 'Tags' },
-                { label: text.models, href: CONSOLE_ROUTES.RESOURCES_MODELS, icon: 'BrainCircuit' },
-                { label: text.volumes, href: CONSOLE_ROUTES.RESOURCES_VOLUMES, icon: 'HardDrive' },
+                { label: text.runs, href: CONSOLE_ROUTES.RUNS, icon: 'PlayCircle' },
+                ...(role.canUseGlobalAdmin
+                    ? [
+                          { label: text.fleets, href: CONSOLE_ROUTES.RESOURCES_FLEETS, icon: 'Server' },
+                          { label: text.instances, href: CONSOLE_ROUTES.RESOURCES_INSTANCES, icon: 'Cpu' },
+                          { label: text.offers, href: CONSOLE_ROUTES.RESOURCES_OFFERS, icon: 'Tags' },
+                          { label: text.models, href: CONSOLE_ROUTES.RESOURCES_MODELS, icon: 'BrainCircuit' },
+                          { label: text.volumes, href: CONSOLE_ROUTES.RESOURCES_VOLUMES, icon: 'HardDrive' },
+                      ]
+                    : []),
             ],
         },
         role.canUseGlobalAdmin && {
@@ -177,7 +162,7 @@ export const getConsoleNavSections = (role: IConsoleUserRole, locale: TLocale = 
         role.canUseProjectAdmin && {
             title: text.admin,
             items: [
-                { label: text.approvals, href: CONSOLE_ROUTES.ADMIN_APPROVALS, icon: 'ClipboardCheck', adminOnly: true },
+                { label: text.approvals, href: CONSOLE_ROUTES.RUN_APPROVALS, icon: 'ClipboardCheck', adminOnly: true },
                 { label: text.servers, href: CONSOLE_ROUTES.ADMIN_SERVERS, icon: 'MonitorCog', adminOnly: true },
                 ...(role.canUseGlobalAdmin
                     ? [
@@ -209,10 +194,10 @@ export const canAccessConsoleRoute = (role: IConsoleUserRole, pathname: string, 
         return true;
     }
     if (
-        pathname === CONSOLE_ROUTES.GPU_REQUESTS ||
-        pathname === CONSOLE_ROUTES.GPU_REQUEST_CREATE ||
-        pathname === CONSOLE_ROUTES.GPU_CONTAINERS ||
-        pathname.startsWith('/gpu/requests/')
+        pathname === CONSOLE_ROUTES.RUNS ||
+        pathname === CONSOLE_ROUTES.RUN_CREATE ||
+        pathname.startsWith('/resources/runs/requests/') ||
+        /^\/resources\/runs\/[^/]+\/[^/]+/.test(pathname)
     ) {
         return true;
     }
@@ -226,11 +211,7 @@ export const canAccessConsoleRoute = (role: IConsoleUserRole, pathname: string, 
     if (pathname === CONSOLE_ROUTES.ACCOUNT_BILLING) {
         return uiVersion === 'sky';
     }
-    if (
-        pathname === CONSOLE_ROUTES.ADMIN_APPROVALS ||
-        pathname === CONSOLE_ROUTES.ADMIN_CONTAINERS ||
-        pathname === CONSOLE_ROUTES.ADMIN_SERVERS
-    ) {
+    if (pathname === CONSOLE_ROUTES.RUN_APPROVALS || pathname === CONSOLE_ROUTES.ADMIN_SERVERS) {
         return role.canUseProjectAdmin;
     }
     if (pathname.startsWith('/resources/') || pathname.startsWith('/workspace/projects')) {
@@ -246,8 +227,24 @@ export const isLegacyConsolePath = (pathname: string): boolean => {
     return LEGACY_CONSOLE_PATHS.some((legacyPath) => pathname === legacyPath || pathname.startsWith(`${legacyPath}/`));
 };
 
-export const getGpuRequestStats = (requests: IGpuRequest[]): GpuRequestStats => {
-    return requests.reduce<GpuRequestStats>(
+export const isConsoleNavItemActive = (pathname: string, itemHref: string): boolean => {
+    if (pathname === itemHref) {
+        return true;
+    }
+
+    if (itemHref === CONSOLE_ROUTES.RUNS) {
+        return (
+            pathname === CONSOLE_ROUTES.RUN_CREATE ||
+            pathname.startsWith('/resources/runs/requests/') ||
+            /^\/resources\/runs\/[^/]+\/[^/]+/.test(pathname)
+        );
+    }
+
+    return pathname.startsWith(`${itemHref}/`);
+};
+
+export const getRunRequestStats = (requests: IRunRequest[]): RunRequestStats => {
+    return requests.reduce<RunRequestStats>(
         (result, request) => {
             result.total += 1;
             result[request.status] += 1;
@@ -263,8 +260,8 @@ export const getGpuRequestStats = (requests: IGpuRequest[]): GpuRequestStats => 
     );
 };
 
-export const buildGpuRequestCreateParams = (values: IGpuRequestFormValues): TGpuRequestCreateParams => {
-    const resources: TGpuRequestResources = {};
+export const buildRunRequestCreateParams = (values: IRunRequestFormValues): TRunRequestCreateParams => {
+    const resources: TRunRequestResources = {};
     if (values.cpu.trim()) resources.cpu = values.cpu.trim();
     if (values.memory.trim()) resources.memory = values.memory.trim();
     if (values.gpu.trim()) resources.gpu = values.gpu.trim();
@@ -288,7 +285,7 @@ export const buildGpuRequestCreateParams = (values: IGpuRequestFormValues): TGpu
     };
 };
 
-export const formatGpuRequestResourcesText = (request: IGpuRequestSpec): string => {
+export const formatRunRequestResourcesText = (request: IRunRequestSpec): string => {
     const resources = request.resources ?? {};
     const parts: string[] = [];
 
@@ -312,7 +309,7 @@ export const formatGpuRequestResourcesText = (request: IGpuRequestSpec): string 
     return parts.join(' ') || '-';
 };
 
-export const getContainerSummaries = (requests: IGpuRequest[], runs: IRun[] = []): IContainerSummary[] => {
+export const getRunSummariesFromRequests = (requests: IRunRequest[], runs: IRun[] = []): IRunSummary[] => {
     return requests
         .filter((request) => request.status === 'approved' && request.run_id)
         .map((request) => {
@@ -326,11 +323,11 @@ export const getContainerSummaries = (requests: IGpuRequest[], runs: IRun[] = []
                 applicant: request.applicant,
                 status: run?.status ?? request.status,
                 image: request.request.image,
-                resources: formatGpuRequestResourcesText(request.request),
+                resources: formatRunRequestResourcesText(request.request),
                 url: run?.service?.url,
-                requestDetailsPath: CONSOLE_ROUTES.GPU_REQUEST_DETAILS.FORMAT(request.project_name, request.id),
-                runDetailsPath: CONSOLE_ROUTES.RESOURCES_RUN_DETAILS.FORMAT(request.project_name, runId),
-                logsPath: `${CONSOLE_ROUTES.RESOURCES_RUN_DETAILS.FORMAT(request.project_name, runId)}#logs`,
+                requestDetailsPath: CONSOLE_ROUTES.RUN_REQUEST_DETAILS.FORMAT(request.project_name, request.id),
+                runDetailsPath: CONSOLE_ROUTES.RUN_DETAILS.FORMAT(request.project_name, runId),
+                logsPath: `${CONSOLE_ROUTES.RUN_DETAILS.FORMAT(request.project_name, runId)}#logs`,
             };
         });
 };

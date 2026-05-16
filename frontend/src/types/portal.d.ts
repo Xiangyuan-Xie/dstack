@@ -41,12 +41,12 @@ declare interface IConsoleUserRole {
 
 declare interface IPortalUserRole extends IConsoleUserRole {}
 
-declare interface IContainerSummary {
+declare interface IRunSummary {
     id: string;
     name: string;
     projectName: string;
     applicant: string;
-    status: TJobStatus | TGpuRequestStatus;
+    status: TJobStatus | TRunRequestStatus;
     image: string;
     resources: string;
     url?: string | null;
@@ -55,7 +55,7 @@ declare interface IContainerSummary {
     logsPath?: string;
 }
 
-declare interface IGpuRequestFormValues {
+declare interface IRunRequestFormValues {
     project_name: string;
     name: string;
     image: string;

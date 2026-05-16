@@ -1,4 +1,4 @@
-"""Add GPU requests
+"""Add run requests
 
 Revision ID: a34b4b74a5fd
 Revises: 201cb7ccd0d3
@@ -21,7 +21,7 @@ depends_on = None
 
 def upgrade() -> None:
     op.create_table(
-        "gpu_requests",
+        "run_requests",
         sa.Column("id", sqlalchemy_utils.types.uuid.UUIDType(binary=False), nullable=False),
         sa.Column(
             "project_id", sqlalchemy_utils.types.uuid.UUIDType(binary=False), nullable=False
@@ -41,46 +41,46 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["applicant_id"],
             ["users.id"],
-            name=op.f("fk_gpu_requests_applicant_id_users"),
+            name=op.f("fk_run_requests_applicant_id_users"),
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
             ["project_id"],
             ["projects.id"],
-            name=op.f("fk_gpu_requests_project_id_projects"),
+            name=op.f("fk_run_requests_project_id_projects"),
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
             ["reviewer_id"],
             ["users.id"],
-            name=op.f("fk_gpu_requests_reviewer_id_users"),
+            name=op.f("fk_run_requests_reviewer_id_users"),
             ondelete="SET NULL",
         ),
         sa.ForeignKeyConstraint(
             ["run_id"],
             ["runs.id"],
-            name=op.f("fk_gpu_requests_run_id_runs"),
+            name=op.f("fk_run_requests_run_id_runs"),
             ondelete="SET NULL",
         ),
-        sa.PrimaryKeyConstraint("id", name=op.f("pk_gpu_requests")),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_run_requests")),
     )
-    with op.batch_alter_table("gpu_requests", schema=None) as batch_op:
-        batch_op.create_index(batch_op.f("ix_gpu_requests_applicant_id"), ["applicant_id"])
-        batch_op.create_index(batch_op.f("ix_gpu_requests_project_id"), ["project_id"])
+    with op.batch_alter_table("run_requests", schema=None) as batch_op:
+        batch_op.create_index(batch_op.f("ix_run_requests_applicant_id"), ["applicant_id"])
+        batch_op.create_index(batch_op.f("ix_run_requests_project_id"), ["project_id"])
         batch_op.create_index(
-            "ix_gpu_requests_project_created_at_id",
+            "ix_run_requests_project_created_at_id",
             ["project_id", sa.literal_column("created_at DESC"), "id"],
             unique=False,
         )
-        batch_op.create_index(batch_op.f("ix_gpu_requests_run_id"), ["run_id"])
-        batch_op.create_index(batch_op.f("ix_gpu_requests_status"), ["status"])
+        batch_op.create_index(batch_op.f("ix_run_requests_run_id"), ["run_id"])
+        batch_op.create_index(batch_op.f("ix_run_requests_status"), ["status"])
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("gpu_requests", schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f("ix_gpu_requests_status"))
-        batch_op.drop_index(batch_op.f("ix_gpu_requests_run_id"))
-        batch_op.drop_index("ix_gpu_requests_project_created_at_id")
-        batch_op.drop_index(batch_op.f("ix_gpu_requests_project_id"))
-        batch_op.drop_index(batch_op.f("ix_gpu_requests_applicant_id"))
-    op.drop_table("gpu_requests")
+    with op.batch_alter_table("run_requests", schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f("ix_run_requests_status"))
+        batch_op.drop_index(batch_op.f("ix_run_requests_run_id"))
+        batch_op.drop_index("ix_run_requests_project_created_at_id")
+        batch_op.drop_index(batch_op.f("ix_run_requests_project_id"))
+        batch_op.drop_index(batch_op.f("ix_run_requests_applicant_id"))
+    op.drop_table("run_requests")

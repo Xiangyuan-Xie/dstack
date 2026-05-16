@@ -39,16 +39,16 @@ const AuthShell: React.FC<{ children: React.ReactNode }> = ({ children }) => (
                 </div>
                 <div>
                     <div className="text-lg font-bold">dstack Console</div>
-                    <div className="text-sm text-slate-300">GPU resource platform</div>
+                    <div className="text-sm text-slate-300">Run management platform</div>
                 </div>
             </div>
             <div className="max-w-xl">
                 <div className="mb-5 inline-flex rounded-full border border-white/10 bg-white/10 px-3 py-1 text-sm text-blue-100">
-                    GPU 申请、审批、运行与运维统一入口
+                    运行任务、审批与运维统一入口
                 </div>
-                <h1 className="text-5xl font-bold leading-tight tracking-normal">让团队用一个控制台管理 GPU 工作负载。</h1>
+                <h1 className="text-5xl font-bold leading-tight tracking-normal">让团队用一个控制台管理运行任务。</h1>
                 <p className="mt-5 text-base leading-7 text-slate-300">
-                    普通用户提交申请和查看容器，项目管理员审批资源，最高管理员管理集群、项目、运行任务和用户。
+                    普通用户提交运行任务，项目管理员审批资源，最高管理员管理集群、项目、运行任务和用户。
                 </p>
             </div>
             <div className="grid grid-cols-3 gap-4 text-sm text-slate-300">

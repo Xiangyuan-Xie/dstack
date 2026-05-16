@@ -6,10 +6,10 @@ from pydantic import Field, validator
 
 from dstack._internal.core.models.common import CoreModel
 from dstack._internal.core.models.resources import ResourcesSpec
-from dstack._internal.server.models import GpuRequestStatus
+from dstack._internal.server.models import RunRequestStatus
 
 
-class GpuRequestSpec(CoreModel):
+class RunRequestSpec(CoreModel):
     name: Annotated[
         Optional[str],
         Field(description="The run name. If not specified, a random name is generated."),
@@ -41,12 +41,12 @@ class GpuRequestSpec(CoreModel):
         return v
 
 
-class CreateGpuRequestRequest(CoreModel):
-    request: GpuRequestSpec
+class CreateRunRequestRequest(CoreModel):
+    request: RunRequestSpec
 
 
-class ListGpuRequestsRequest(CoreModel):
-    status: Optional[GpuRequestStatus] = None
+class ListRunRequestsRequest(CoreModel):
+    status: Optional[RunRequestStatus] = None
     include_all: bool = False
     prev_created_at: Optional[datetime] = None
     prev_id: Optional[UUID] = None
@@ -54,29 +54,29 @@ class ListGpuRequestsRequest(CoreModel):
     ascending: bool = False
 
 
-class ListAllGpuRequestsRequest(ListGpuRequestsRequest):
+class ListAllRunRequestsRequest(ListRunRequestsRequest):
     pass
 
 
-class GetGpuRequestRequest(CoreModel):
+class GetRunRequestRequest(CoreModel):
     id: UUID
 
 
-class ApproveGpuRequestRequest(CoreModel):
+class ApproveRunRequestRequest(CoreModel):
     id: UUID
 
 
-class RejectGpuRequestRequest(CoreModel):
+class RejectRunRequestRequest(CoreModel):
     id: UUID
     reason: Annotated[str, Field(min_length=1, max_length=2000)]
 
 
-class GpuRequest(CoreModel):
+class RunRequest(CoreModel):
     id: UUID
     project_name: str
     applicant: str
-    status: GpuRequestStatus
-    request: GpuRequestSpec
+    status: RunRequestStatus
+    request: RunRequestSpec
     created_at: datetime
     reviewed_by: Optional[str] = None
     reviewed_at: Optional[datetime] = None

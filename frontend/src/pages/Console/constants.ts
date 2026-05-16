@@ -5,25 +5,23 @@ export const THEME_STORAGE_KEY = 'dstack_console_theme';
 
 export const CONSOLE_ROUTES = {
     DASHBOARD: '/dashboard',
-    GPU_REQUESTS: '/gpu/requests',
-    GPU_REQUEST_CREATE: '/gpu/requests/new',
-    GPU_REQUEST_DETAILS: {
-        TEMPLATE: '/gpu/requests/:projectName/:requestId',
+    RUNS: '/resources/runs',
+    RUN_CREATE: '/resources/runs/new',
+    RUN_APPROVALS: '/admin/approvals',
+    RUN_REQUEST_DETAILS: {
+        TEMPLATE: '/resources/runs/requests/:projectName/:requestId',
         FORMAT: (projectName: string, requestId: string) =>
-            buildRoute(CONSOLE_ROUTES.GPU_REQUEST_DETAILS.TEMPLATE, { projectName, requestId }),
+            buildRoute(CONSOLE_ROUTES.RUN_REQUEST_DETAILS.TEMPLATE, { projectName, requestId }),
     },
-    GPU_CONTAINERS: '/gpu/containers',
-    RESOURCES_RUNS: '/resources/runs',
-    RESOURCES_RUN_CREATE: '/resources/runs/new',
-    RESOURCES_RUN_DETAILS: {
+    RUN_DETAILS: {
         TEMPLATE: '/resources/runs/:projectName/:runId',
         FORMAT: (projectName: string, runId: string) =>
-            buildRoute(CONSOLE_ROUTES.RESOURCES_RUN_DETAILS.TEMPLATE, { projectName, runId }),
+            buildRoute(CONSOLE_ROUTES.RUN_DETAILS.TEMPLATE, { projectName, runId }),
     },
-    RESOURCES_JOB_DETAILS: {
+    JOB_DETAILS: {
         TEMPLATE: '/resources/runs/:projectName/:runId/jobs/:jobName',
         FORMAT: (projectName: string, runId: string, jobName: string) =>
-            buildRoute(CONSOLE_ROUTES.RESOURCES_JOB_DETAILS.TEMPLATE, { projectName, runId, jobName }),
+            buildRoute(CONSOLE_ROUTES.JOB_DETAILS.TEMPLATE, { projectName, runId, jobName }),
     },
     RESOURCES_FLEETS: '/resources/fleets',
     RESOURCES_FLEET_CREATE: '/resources/fleets/new',
@@ -70,8 +68,6 @@ export const CONSOLE_ROUTES = {
         FORMAT: (projectName: string, gatewayName: string) =>
             buildRoute(CONSOLE_ROUTES.WORKSPACE_GATEWAY_DETAILS.TEMPLATE, { projectName, gatewayName }),
     },
-    ADMIN_APPROVALS: '/admin/approvals',
-    ADMIN_CONTAINERS: '/admin/containers',
     ADMIN_SERVERS: '/admin/servers',
     ADMIN_USERS: '/admin/users',
     ADMIN_USER_CREATE: '/admin/users/new',
@@ -88,7 +84,6 @@ export const CONSOLE_ROUTES = {
 
 export const LEGACY_CONSOLE_PATHS = [
     '/runs',
-    '/gpu-requests',
     '/offers',
     '/models',
     '/fleets',

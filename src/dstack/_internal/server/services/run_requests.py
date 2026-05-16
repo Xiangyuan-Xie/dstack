@@ -12,13 +12,13 @@ from dstack._internal.core.models.profiles import Profile
 from dstack._internal.core.models.runs import ApplyRunPlanInput, RunSpec
 from dstack._internal.core.models.users import GlobalRole, ProjectRole
 from dstack._internal.server.models import (
-    GpuRequestModel,
-    GpuRequestStatus,
     MemberModel,
     ProjectModel,
+    RunRequestModel,
+    RunRequestStatus,
     UserModel,
 )
-from dstack._internal.server.schemas.gpu_requests import GpuRequest, GpuRequestSpec
+from dstack._internal.server.schemas.run_requests import RunRequest, RunRequestSpec
 from dstack._internal.server.services import runs as runs_services
 from dstack._internal.server.services.pipelines import PipelineHinterProtocol
 from dstack._internal.server.services.projects import get_user_project_role
@@ -26,171 +26,171 @@ from dstack._internal.server.services.users import refresh_ssh_key
 from dstack._internal.utils.common import get_current_datetime
 
 
-async def create_gpu_request(
+async def create_run_request(
     session: AsyncSession,
     project: ProjectModel,
     applicant: UserModel,
-    request: GpuRequestSpec,
-) -> GpuRequest:
-    request_model = GpuRequestModel(
+    request: RunRequestSpec,
+) -> RunRequest:
+    request_model = RunRequestModel(
         project_id=project.id,
         project=project,
         applicant_id=applicant.id,
         applicant=applicant,
-        status=GpuRequestStatus.PENDING,
+        status=RunRequestStatus.PENDING,
         request=request.json(),
     )
     session.add(request_model)
     await session.commit()
-    request_model = await _get_gpu_request_model(
+    request_model = await _get_run_request_model(
         session=session,
         project=project,
         request_id=request_model.id,
     )
-    return gpu_request_model_to_schema(request_model)
+    return run_request_model_to_schema(request_model)
 
 
-async def list_gpu_requests(
+async def list_run_requests(
     session: AsyncSession,
     project: ProjectModel,
     user: UserModel,
-    status: Optional[GpuRequestStatus],
+    status: Optional[RunRequestStatus],
     include_all: bool,
     prev_created_at: Optional[datetime],
     prev_id: Optional[uuid.UUID],
     limit: int,
     ascending: bool,
-) -> list[GpuRequest]:
-    filters = [GpuRequestModel.project_id == project.id]
+) -> list[RunRequest]:
+    filters = [RunRequestModel.project_id == project.id]
     if status is not None:
-        filters.append(GpuRequestModel.status == status)
-    if not _can_review_gpu_requests(user=user, project=project):
-        filters.append(GpuRequestModel.applicant_id == user.id)
+        filters.append(RunRequestModel.status == status)
+    if not _can_review_run_requests(user=user, project=project):
+        filters.append(RunRequestModel.applicant_id == user.id)
     if prev_created_at is not None:
         if ascending:
             if prev_id is None:
-                filters.append(GpuRequestModel.created_at > prev_created_at)
+                filters.append(RunRequestModel.created_at > prev_created_at)
             else:
                 filters.append(
                     or_(
-                        GpuRequestModel.created_at > prev_created_at,
+                        RunRequestModel.created_at > prev_created_at,
                         and_(
-                            GpuRequestModel.created_at == prev_created_at,
-                            GpuRequestModel.id < prev_id,
+                            RunRequestModel.created_at == prev_created_at,
+                            RunRequestModel.id < prev_id,
                         ),
                     )
                 )
         elif prev_id is None:
-            filters.append(GpuRequestModel.created_at < prev_created_at)
+            filters.append(RunRequestModel.created_at < prev_created_at)
         else:
             filters.append(
                 or_(
-                    GpuRequestModel.created_at < prev_created_at,
+                    RunRequestModel.created_at < prev_created_at,
                     and_(
-                        GpuRequestModel.created_at == prev_created_at,
-                        GpuRequestModel.id > prev_id,
+                        RunRequestModel.created_at == prev_created_at,
+                        RunRequestModel.id > prev_id,
                     ),
                 )
             )
-    order_by = (GpuRequestModel.created_at.desc(), GpuRequestModel.id)
+    order_by = (RunRequestModel.created_at.desc(), RunRequestModel.id)
     if ascending:
-        order_by = (GpuRequestModel.created_at.asc(), GpuRequestModel.id.desc())
+        order_by = (RunRequestModel.created_at.asc(), RunRequestModel.id.desc())
     res = await session.execute(
-        select(GpuRequestModel)
+        select(RunRequestModel)
         .where(*filters)
         .order_by(*order_by)
         .limit(limit)
-        .options(joinedload(GpuRequestModel.project))
-        .options(joinedload(GpuRequestModel.applicant))
-        .options(joinedload(GpuRequestModel.reviewer))
-        .options(joinedload(GpuRequestModel.run))
+        .options(joinedload(RunRequestModel.project))
+        .options(joinedload(RunRequestModel.applicant))
+        .options(joinedload(RunRequestModel.reviewer))
+        .options(joinedload(RunRequestModel.run))
     )
-    return [gpu_request_model_to_schema(model) for model in res.scalars().all()]
+    return [run_request_model_to_schema(model) for model in res.scalars().all()]
 
 
-async def list_all_gpu_requests(
+async def list_all_run_requests(
     session: AsyncSession,
     user: UserModel,
-    status: Optional[GpuRequestStatus],
+    status: Optional[RunRequestStatus],
     include_all: bool,
     prev_created_at: Optional[datetime],
     prev_id: Optional[uuid.UUID],
     limit: int,
     ascending: bool,
-) -> list[GpuRequest]:
-    filters = _get_visible_gpu_request_filters(user=user, include_all=include_all)
+) -> list[RunRequest]:
+    filters = _get_visible_run_request_filters(user=user, include_all=include_all)
     if status is not None:
-        filters.append(GpuRequestModel.status == status)
+        filters.append(RunRequestModel.status == status)
     if prev_created_at is not None:
         if ascending:
             if prev_id is None:
-                filters.append(GpuRequestModel.created_at > prev_created_at)
+                filters.append(RunRequestModel.created_at > prev_created_at)
             else:
                 filters.append(
                     or_(
-                        GpuRequestModel.created_at > prev_created_at,
+                        RunRequestModel.created_at > prev_created_at,
                         and_(
-                            GpuRequestModel.created_at == prev_created_at,
-                            GpuRequestModel.id < prev_id,
+                            RunRequestModel.created_at == prev_created_at,
+                            RunRequestModel.id < prev_id,
                         ),
                     )
                 )
         elif prev_id is None:
-            filters.append(GpuRequestModel.created_at < prev_created_at)
+            filters.append(RunRequestModel.created_at < prev_created_at)
         else:
             filters.append(
                 or_(
-                    GpuRequestModel.created_at < prev_created_at,
+                    RunRequestModel.created_at < prev_created_at,
                     and_(
-                        GpuRequestModel.created_at == prev_created_at,
-                        GpuRequestModel.id > prev_id,
+                        RunRequestModel.created_at == prev_created_at,
+                        RunRequestModel.id > prev_id,
                     ),
                 )
             )
-    order_by = (GpuRequestModel.created_at.desc(), GpuRequestModel.id)
+    order_by = (RunRequestModel.created_at.desc(), RunRequestModel.id)
     if ascending:
-        order_by = (GpuRequestModel.created_at.asc(), GpuRequestModel.id.desc())
+        order_by = (RunRequestModel.created_at.asc(), RunRequestModel.id.desc())
     res = await session.execute(
-        select(GpuRequestModel)
+        select(RunRequestModel)
         .where(*filters)
         .order_by(*order_by)
         .limit(limit)
-        .options(joinedload(GpuRequestModel.project))
-        .options(joinedload(GpuRequestModel.applicant))
-        .options(joinedload(GpuRequestModel.reviewer))
-        .options(joinedload(GpuRequestModel.run))
+        .options(joinedload(RunRequestModel.project))
+        .options(joinedload(RunRequestModel.applicant))
+        .options(joinedload(RunRequestModel.reviewer))
+        .options(joinedload(RunRequestModel.run))
     )
-    return [gpu_request_model_to_schema(model) for model in res.scalars().all()]
+    return [run_request_model_to_schema(model) for model in res.scalars().all()]
 
 
-async def get_gpu_request(
+async def get_run_request(
     session: AsyncSession,
     project: ProjectModel,
     user: UserModel,
     request_id: uuid.UUID,
-) -> GpuRequest:
-    model = await _get_gpu_request_model(session=session, project=project, request_id=request_id)
-    if not _can_access_gpu_request(user=user, project=project, request_model=model):
-        raise ResourceNotExistsError("GPU request not found")
-    return gpu_request_model_to_schema(model)
+) -> RunRequest:
+    model = await _get_run_request_model(session=session, project=project, request_id=request_id)
+    if not _can_access_run_request(user=user, project=project, request_model=model):
+        raise ResourceNotExistsError("run request not found")
+    return run_request_model_to_schema(model)
 
 
-async def approve_gpu_request(
+async def approve_run_request(
     session: AsyncSession,
     project: ProjectModel,
     reviewer: UserModel,
     request_id: uuid.UUID,
     pipeline_hinter: Optional[PipelineHinterProtocol],
-) -> GpuRequest:
-    _check_can_review_gpu_requests(user=reviewer, project=project)
-    request_model = await _get_gpu_request_model(
+) -> RunRequest:
+    _check_can_review_run_requests(user=reviewer, project=project)
+    request_model = await _get_run_request_model(
         session=session,
         project=project,
         request_id=request_id,
         for_update=True,
     )
-    if request_model.status != GpuRequestStatus.PENDING:
-        raise ServerClientError("Only pending GPU requests can be approved")
+    if request_model.status != RunRequestStatus.PENDING:
+        raise ServerClientError("Only pending run requests can be approved")
     return await _submit_request_run(
         session=session,
         project=project,
@@ -200,55 +200,55 @@ async def approve_gpu_request(
     )
 
 
-async def reject_gpu_request(
+async def reject_run_request(
     session: AsyncSession,
     project: ProjectModel,
     reviewer: UserModel,
     request_id: uuid.UUID,
     reason: str,
-) -> GpuRequest:
-    _check_can_review_gpu_requests(user=reviewer, project=project)
-    request_model = await _get_gpu_request_model(
+) -> RunRequest:
+    _check_can_review_run_requests(user=reviewer, project=project)
+    request_model = await _get_run_request_model(
         session=session,
         project=project,
         request_id=request_id,
         for_update=True,
     )
-    if request_model.status != GpuRequestStatus.PENDING:
-        raise ServerClientError("Only pending GPU requests can be rejected")
+    if request_model.status != RunRequestStatus.PENDING:
+        raise ServerClientError("Only pending run requests can be rejected")
     reason = reason.strip()
     if not reason:
         raise ServerClientError("Reject reason is required")
-    request_model.status = GpuRequestStatus.REJECTED
+    request_model.status = RunRequestStatus.REJECTED
     request_model.reviewer_id = reviewer.id
     request_model.reviewer = reviewer
     request_model.reviewed_at = get_current_datetime()
     request_model.review_message = reason
     await session.commit()
-    request_model = await _get_gpu_request_model(
+    request_model = await _get_run_request_model(
         session=session,
         project=project,
         request_id=request_model.id,
     )
-    return gpu_request_model_to_schema(request_model)
+    return run_request_model_to_schema(request_model)
 
 
-async def retry_gpu_request(
+async def retry_run_request(
     session: AsyncSession,
     project: ProjectModel,
     reviewer: UserModel,
     request_id: uuid.UUID,
     pipeline_hinter: Optional[PipelineHinterProtocol],
-) -> GpuRequest:
-    _check_can_review_gpu_requests(user=reviewer, project=project)
-    request_model = await _get_gpu_request_model(
+) -> RunRequest:
+    _check_can_review_run_requests(user=reviewer, project=project)
+    request_model = await _get_run_request_model(
         session=session,
         project=project,
         request_id=request_id,
         for_update=True,
     )
-    if request_model.status != GpuRequestStatus.FAILED:
-        raise ServerClientError("Only failed GPU requests can be retried")
+    if request_model.status != RunRequestStatus.FAILED:
+        raise ServerClientError("Only failed run requests can be retried")
     return await _submit_request_run(
         session=session,
         project=project,
@@ -258,10 +258,10 @@ async def retry_gpu_request(
     )
 
 
-def gpu_request_model_to_schema(request_model: GpuRequestModel) -> GpuRequest:
-    request = GpuRequestSpec.parse_raw(request_model.request)
-    run_name = request_model.run.run_name if request_model.run is not None else None
-    return GpuRequest(
+def run_request_model_to_schema(request_model: RunRequestModel) -> RunRequest:
+    request = RunRequestSpec.parse_raw(request_model.request)
+    run_name = request_model.run.run_name if request_model.run is not None else request.name
+    return RunRequest(
         id=request_model.id,
         project_name=request_model.project.name,
         applicant=request_model.applicant.name,
@@ -280,22 +280,24 @@ async def _submit_request_run(
     session: AsyncSession,
     project: ProjectModel,
     reviewer: UserModel,
-    request_model: GpuRequestModel,
+    request_model: RunRequestModel,
     pipeline_hinter: Optional[PipelineHinterProtocol],
-) -> GpuRequest:
+) -> RunRequest:
     request_id = request_model.id
+    project_id = project.id
+    reviewer_id = reviewer.id
     applicant = request_model.applicant
     if applicant.ssh_public_key is None:
         await refresh_ssh_key(session=session, actor=applicant)
-        request_model = await _get_gpu_request_model(
+        request_model = await _get_run_request_model(
             session=session,
-            project=project,
+            project_id=project_id,
             request_id=request_id,
             for_update=True,
         )
         applicant = request_model.applicant
     run_spec = _build_run_spec(
-        request=GpuRequestSpec.parse_raw(request_model.request), applicant=applicant
+        request=RunRequestSpec.parse_raw(request_model.request), applicant=applicant
     )
     try:
         run = await runs_services.apply_plan(
@@ -308,47 +310,46 @@ async def _submit_request_run(
         )
     except Exception as exc:
         await session.rollback()
-        request_model = await _get_gpu_request_model(
+        request_model = await _get_run_request_model(
             session=session,
-            project=project,
+            project_id=project_id,
             request_id=request_id,
             for_update=True,
         )
-        request_model.status = GpuRequestStatus.FAILED
-        request_model.reviewer_id = reviewer.id
-        request_model.reviewer = reviewer
+        request_model.status = RunRequestStatus.FAILED
+        request_model.reviewer_id = reviewer_id
         request_model.reviewed_at = get_current_datetime()
         request_model.review_message = str(exc) or exc.__class__.__name__
         await session.commit()
-        request_model = await _get_gpu_request_model(
+        request_model = await _get_run_request_model(
             session=session,
-            project=project,
+            project_id=project_id,
             request_id=request_id,
         )
-        return gpu_request_model_to_schema(request_model)
+        return run_request_model_to_schema(request_model)
 
-    request_model = await _get_gpu_request_model(
+    request_model = await _get_run_request_model(
         session=session,
-        project=project,
+        project_id=project_id,
         request_id=request_id,
         for_update=True,
     )
-    request_model.status = GpuRequestStatus.APPROVED
-    request_model.reviewer_id = reviewer.id
-    request_model.reviewer = reviewer
+    request_model.status = RunRequestStatus.APPROVED
+    request_model.reviewer_id = reviewer_id
     request_model.reviewed_at = get_current_datetime()
     request_model.review_message = None
     request_model.run_id = run.id
     await session.commit()
-    request_model = await _get_gpu_request_model(
+    session.expire(request_model, ["reviewer"])
+    request_model = await _get_run_request_model(
         session=session,
-        project=project,
+        project_id=project_id,
         request_id=request_id,
     )
-    return gpu_request_model_to_schema(request_model)
+    return run_request_model_to_schema(request_model)
 
 
-def _build_run_spec(request: GpuRequestSpec, applicant: UserModel) -> RunSpec:
+def _build_run_spec(request: RunRequestSpec, applicant: UserModel) -> RunSpec:
     configuration = TaskConfiguration(
         name=request.name,
         image=request.image,
@@ -368,46 +369,51 @@ def _build_run_spec(request: GpuRequestSpec, applicant: UserModel) -> RunSpec:
     )
 
 
-async def _get_gpu_request_model(
+async def _get_run_request_model(
     session: AsyncSession,
-    project: ProjectModel,
     request_id: uuid.UUID,
+    project: Optional[ProjectModel] = None,
+    project_id: Optional[uuid.UUID] = None,
     for_update: bool = False,
-) -> GpuRequestModel:
+) -> RunRequestModel:
+    if project_id is None:
+        if project is None:
+            raise ValueError("project or project_id is required")
+        project_id = project.id
     query = (
-        select(GpuRequestModel)
+        select(RunRequestModel)
         .where(
-            GpuRequestModel.project_id == project.id,
-            GpuRequestModel.id == request_id,
+            RunRequestModel.project_id == project_id,
+            RunRequestModel.id == request_id,
         )
-        .options(joinedload(GpuRequestModel.project))
-        .options(joinedload(GpuRequestModel.applicant))
-        .options(joinedload(GpuRequestModel.reviewer))
-        .options(joinedload(GpuRequestModel.run))
+        .options(joinedload(RunRequestModel.project))
+        .options(joinedload(RunRequestModel.applicant))
+        .options(joinedload(RunRequestModel.reviewer))
+        .options(joinedload(RunRequestModel.run))
     )
     if for_update:
         query = query.with_for_update()
     res = await session.execute(query)
     request_model = res.scalar()
     if request_model is None:
-        raise ResourceNotExistsError("GPU request not found")
+        raise ResourceNotExistsError("run request not found")
     return request_model
 
 
-def _can_access_gpu_request(
-    user: UserModel, project: ProjectModel, request_model: GpuRequestModel
+def _can_access_run_request(
+    user: UserModel, project: ProjectModel, request_model: RunRequestModel
 ) -> bool:
-    if _can_review_gpu_requests(user=user, project=project):
+    if _can_review_run_requests(user=user, project=project):
         return True
     return request_model.applicant_id == user.id
 
 
-def _check_can_review_gpu_requests(user: UserModel, project: ProjectModel) -> None:
-    if not _can_review_gpu_requests(user=user, project=project):
-        raise ForbiddenError("Only project admins and highest admins can review GPU requests")
+def _check_can_review_run_requests(user: UserModel, project: ProjectModel) -> None:
+    if not _can_review_run_requests(user=user, project=project):
+        raise ForbiddenError("Only project admins and highest admins can review run requests")
 
 
-def _can_review_gpu_requests(user: UserModel, project: ProjectModel) -> bool:
+def _can_review_run_requests(user: UserModel, project: ProjectModel) -> bool:
     if user.global_role == GlobalRole.ADMIN:
         return True
     return get_user_project_role(user=user, project=project) in {
@@ -416,7 +422,7 @@ def _can_review_gpu_requests(user: UserModel, project: ProjectModel) -> bool:
     }
 
 
-def _get_visible_gpu_request_filters(user: UserModel, include_all: bool) -> list:
+def _get_visible_run_request_filters(user: UserModel, include_all: bool) -> list:
     if user.global_role == GlobalRole.ADMIN:
         return []
     if include_all:
@@ -426,8 +432,8 @@ def _get_visible_gpu_request_filters(user: UserModel, include_all: bool) -> list
         )
         return [
             or_(
-                GpuRequestModel.applicant_id == user.id,
-                GpuRequestModel.project_id.in_(manageable_project_ids),
+                RunRequestModel.applicant_id == user.id,
+                RunRequestModel.project_id.in_(manageable_project_ids),
             )
         ]
-    return [GpuRequestModel.applicant_id == user.id]
+    return [RunRequestModel.applicant_id == user.id]

@@ -56,6 +56,7 @@ async def _create_project_with_users(session: AsyncSession):
     member = await create_user(session=session, name="member", global_role=GlobalRole.USER)
     outsider = await create_user(session=session, name="outsider", global_role=GlobalRole.USER)
     project = await create_project(session=session, owner=owner, name="main")
+    await add_project_member(session=session, project=project, user=owner, project_role=ProjectRole.ADMIN)
     await add_project_member(
         session=session, project=project, user=applicant, project_role=ProjectRole.USER
     )
@@ -68,14 +69,14 @@ async def _create_project_with_users(session: AsyncSession):
     return project, applicant, manager, member, outsider
 
 
-async def _create_gpu_request(
+async def _create_run_request(
     client: AsyncClient,
     project_name: str,
     user,
     name: str,
 ) -> dict:
     response = await client.post(
-        f"/api/project/{project_name}/gpu_requests/create",
+        f"/api/project/{project_name}/run_requests/create",
         headers=get_auth_headers(user.token),
         json=_request_body(name),
     )
@@ -83,7 +84,7 @@ async def _create_gpu_request(
     return response.json()
 
 
-class TestGpuRequests:
+class TestRunRequests:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
     async def test_member_can_create_and_list_own_requests(
@@ -93,7 +94,7 @@ class TestGpuRequests:
 
         with freeze_time(datetime(2026, 5, 15, 10, 0, tzinfo=timezone.utc)):
             response = await client.post(
-                f"/api/project/{project.name}/gpu_requests/create",
+                f"/api/project/{project.name}/run_requests/create",
                 headers=get_auth_headers(applicant.token),
                 json=_request_body(),
             )
@@ -107,7 +108,7 @@ class TestGpuRequests:
         assert created["run_id"] is None
 
         member_list = await client.post(
-            f"/api/project/{project.name}/gpu_requests/list",
+            f"/api/project/{project.name}/run_requests/list",
             headers=get_auth_headers(applicant.token),
             json={},
         )
@@ -115,7 +116,7 @@ class TestGpuRequests:
         assert [item["id"] for item in member_list.json()] == [created["id"]]
 
         manager_list = await client.post(
-            f"/api/project/{project.name}/gpu_requests/list",
+            f"/api/project/{project.name}/run_requests/list",
             headers=get_auth_headers(manager.token),
             json={},
         )
@@ -129,20 +130,20 @@ class TestGpuRequests:
     ):
         project, applicant, _, member, _ = await _create_project_with_users(session)
         applicant_response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/create",
+            f"/api/project/{project.name}/run_requests/create",
             headers=get_auth_headers(applicant.token),
             json=_request_body("applicant-job"),
         )
         assert applicant_response.status_code == 200, applicant_response.json()
         member_response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/create",
+            f"/api/project/{project.name}/run_requests/create",
             headers=get_auth_headers(member.token),
             json=_request_body("member-job"),
         )
         assert member_response.status_code == 200, member_response.json()
 
         response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/list",
+            f"/api/project/{project.name}/run_requests/list",
             headers=get_auth_headers(member.token),
             json={"include_all": True},
         )
@@ -158,19 +159,25 @@ class TestGpuRequests:
         project, applicant, _, member, _ = await _create_project_with_users(session)
         other_project = await create_project(session=session, owner=applicant, name="secondary")
         await add_project_member(
+            session=session,
+            project=other_project,
+            user=applicant,
+            project_role=ProjectRole.ADMIN,
+        )
+        await add_project_member(
             session=session, project=other_project, user=member, project_role=ProjectRole.USER
         )
         with freeze_time(datetime(2026, 5, 15, 10, 0, tzinfo=timezone.utc)):
-            own_main = await _create_gpu_request(client, project.name, applicant, "own-main")
+            own_main = await _create_run_request(client, project.name, applicant, "own-main")
         with freeze_time(datetime(2026, 5, 15, 10, 1, tzinfo=timezone.utc)):
-            own_secondary = await _create_gpu_request(
+            own_secondary = await _create_run_request(
                 client, other_project.name, applicant, "own-secondary"
             )
         with freeze_time(datetime(2026, 5, 15, 10, 2, tzinfo=timezone.utc)):
-            await _create_gpu_request(client, project.name, member, "member-main")
+            await _create_run_request(client, project.name, member, "member-main")
 
         response = await client.post(
-            "/api/gpu_requests/list",
+            "/api/run_requests/list",
             headers=get_auth_headers(applicant.token),
             json={"include_all": True},
         )
@@ -189,22 +196,31 @@ class TestGpuRequests:
         project, applicant, manager, member, _ = await _create_project_with_users(session)
         managed_project = await create_project(session=session, owner=member, name="managed")
         await add_project_member(
+            session=session, project=managed_project, user=member, project_role=ProjectRole.ADMIN
+        )
+        await add_project_member(
             session=session, project=managed_project, user=manager, project_role=ProjectRole.ADMIN
         )
         unmanaged_project = await create_project(
             session=session, owner=applicant, name="unmanaged"
         )
+        await add_project_member(
+            session=session,
+            project=unmanaged_project,
+            user=applicant,
+            project_role=ProjectRole.ADMIN,
+        )
         with freeze_time(datetime(2026, 5, 15, 10, 0, tzinfo=timezone.utc)):
-            main_request = await _create_gpu_request(client, project.name, applicant, "main")
+            main_request = await _create_run_request(client, project.name, applicant, "main")
         with freeze_time(datetime(2026, 5, 15, 10, 1, tzinfo=timezone.utc)):
-            managed_request = await _create_gpu_request(
+            managed_request = await _create_run_request(
                 client, managed_project.name, member, "managed"
             )
         with freeze_time(datetime(2026, 5, 15, 10, 2, tzinfo=timezone.utc)):
-            await _create_gpu_request(client, unmanaged_project.name, applicant, "unmanaged")
+            await _create_run_request(client, unmanaged_project.name, applicant, "unmanaged")
 
         response = await client.post(
-            "/api/gpu_requests/list",
+            "/api/run_requests/list",
             headers=get_auth_headers(manager.token),
             json={"include_all": True},
         )
@@ -222,6 +238,9 @@ class TestGpuRequests:
     ):
         project, applicant, _, member, _ = await _create_project_with_users(session)
         second_project = await create_project(session=session, owner=member, name="global-second")
+        await add_project_member(
+            session=session, project=second_project, user=member, project_role=ProjectRole.ADMIN
+        )
         global_admin = await create_user(
             session=session,
             name="global-list-admin",
@@ -229,18 +248,18 @@ class TestGpuRequests:
             ssh_public_key="ssh-ed25519 global-list-admin",
         )
         with freeze_time(datetime(2026, 5, 15, 10, 0, tzinfo=timezone.utc)):
-            first = await _create_gpu_request(client, project.name, applicant, "first")
+            first = await _create_run_request(client, project.name, applicant, "first")
         with freeze_time(datetime(2026, 5, 15, 10, 1, tzinfo=timezone.utc)):
-            second = await _create_gpu_request(client, second_project.name, member, "second")
+            second = await _create_run_request(client, second_project.name, member, "second")
         reject = await client.post(
-            f"/api/project/{project.name}/gpu_requests/reject",
+            f"/api/project/{project.name}/run_requests/reject",
             headers=get_auth_headers(global_admin.token),
             json={"id": first["id"], "reason": "not now"},
         )
         assert reject.status_code == 200, reject.json()
 
         response = await client.post(
-            "/api/gpu_requests/list",
+            "/api/run_requests/list",
             headers=get_auth_headers(global_admin.token),
             json={"status": "pending", "limit": 1},
         )
@@ -255,14 +274,14 @@ class TestGpuRequests:
     ):
         project, applicant, _, _, outsider = await _create_project_with_users(session)
         response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/create",
+            f"/api/project/{project.name}/run_requests/create",
             headers=get_auth_headers(applicant.token),
             json=_request_body(),
         )
         assert response.status_code == 200, response.json()
 
         response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/list",
+            f"/api/project/{project.name}/run_requests/list",
             headers=get_auth_headers(outsider.token),
             json={},
         )
@@ -276,14 +295,14 @@ class TestGpuRequests:
     ):
         project, applicant, _, member, _ = await _create_project_with_users(session)
         create_response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/create",
+            f"/api/project/{project.name}/run_requests/create",
             headers=get_auth_headers(applicant.token),
             json=_request_body(),
         )
         assert create_response.status_code == 200, create_response.json()
 
         response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/approve",
+            f"/api/project/{project.name}/run_requests/approve",
             headers=get_auth_headers(member.token),
             json={"id": create_response.json()["id"]},
         )
@@ -297,14 +316,14 @@ class TestGpuRequests:
     ):
         project, applicant, manager, *_ = await _create_project_with_users(session)
         create_response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/create",
+            f"/api/project/{project.name}/run_requests/create",
             headers=get_auth_headers(applicant.token),
             json=_request_body(),
         )
         assert create_response.status_code == 200, create_response.json()
 
         response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/approve",
+            f"/api/project/{project.name}/run_requests/approve",
             headers=get_auth_headers(manager.token),
             json={"id": create_response.json()["id"]},
         )
@@ -335,14 +354,14 @@ class TestGpuRequests:
             ssh_public_key="ssh-ed25519 global-admin",
         )
         create_response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/create",
+            f"/api/project/{project.name}/run_requests/create",
             headers=get_auth_headers(applicant.token),
             json=_request_body(),
         )
         assert create_response.status_code == 200, create_response.json()
 
         response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/approve",
+            f"/api/project/{project.name}/run_requests/approve",
             headers=get_auth_headers(global_admin.token),
             json={"id": create_response.json()["id"]},
         )
@@ -363,20 +382,20 @@ class TestGpuRequests:
     ):
         project, applicant, manager, *_ = await _create_project_with_users(session)
         create_response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/create",
+            f"/api/project/{project.name}/run_requests/create",
             headers=get_auth_headers(applicant.token),
             json=_request_body(),
         )
         assert create_response.status_code == 200, create_response.json()
         first = await client.post(
-            f"/api/project/{project.name}/gpu_requests/approve",
+            f"/api/project/{project.name}/run_requests/approve",
             headers=get_auth_headers(manager.token),
             json={"id": create_response.json()["id"]},
         )
         assert first.status_code == 200, first.json()
 
         second = await client.post(
-            f"/api/project/{project.name}/gpu_requests/approve",
+            f"/api/project/{project.name}/run_requests/approve",
             headers=get_auth_headers(manager.token),
             json={"id": create_response.json()["id"]},
         )
@@ -390,14 +409,14 @@ class TestGpuRequests:
     ):
         project, applicant, manager, *_ = await _create_project_with_users(session)
         create_response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/create",
+            f"/api/project/{project.name}/run_requests/create",
             headers=get_auth_headers(applicant.token),
             json=_request_body(),
         )
         assert create_response.status_code == 200, create_response.json()
 
         response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/reject",
+            f"/api/project/{project.name}/run_requests/reject",
             headers=get_auth_headers(manager.token),
             json={"id": create_response.json()["id"], "reason": "Need more detail"},
         )
@@ -415,14 +434,14 @@ class TestGpuRequests:
     ):
         project, applicant, manager, *_ = await _create_project_with_users(session)
         create_response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/create",
+            f"/api/project/{project.name}/run_requests/create",
             headers=get_auth_headers(applicant.token),
             json=_request_body(),
         )
         assert create_response.status_code == 200, create_response.json()
 
         response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/reject",
+            f"/api/project/{project.name}/run_requests/reject",
             headers=get_auth_headers(manager.token),
             json={"id": create_response.json()["id"], "reason": ""},
         )
@@ -436,18 +455,18 @@ class TestGpuRequests:
     ):
         project, applicant, manager, *_ = await _create_project_with_users(session)
         create_response = await client.post(
-            f"/api/project/{project.name}/gpu_requests/create",
+            f"/api/project/{project.name}/run_requests/create",
             headers=get_auth_headers(applicant.token),
             json=_request_body(),
         )
         assert create_response.status_code == 200, create_response.json()
 
         with patch(
-            "dstack._internal.server.services.gpu_requests.runs_services.apply_plan",
+            "dstack._internal.server.services.run_requests.runs_services.apply_plan",
             side_effect=RuntimeError("boom"),
         ):
             failed = await client.post(
-                f"/api/project/{project.name}/gpu_requests/approve",
+                f"/api/project/{project.name}/run_requests/approve",
                 headers=get_auth_headers(manager.token),
                 json={"id": create_response.json()["id"]},
             )
@@ -456,7 +475,7 @@ class TestGpuRequests:
             assert failed.json()["review_message"] == "boom"
 
         retry = await client.post(
-            f"/api/project/{project.name}/gpu_requests/retry",
+            f"/api/project/{project.name}/run_requests/retry",
             headers=get_auth_headers(manager.token),
             json={"id": create_response.json()["id"]},
         )

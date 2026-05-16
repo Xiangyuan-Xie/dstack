@@ -1319,7 +1319,7 @@ Slurm uses OS-level authentication. Users authenticate via SSH to login nodes us
 | Role | Permissions |
 |------|-------------|
 | **Admin** | Can manage project settings, including backends, gateways, and members |
-| **Project admin** | Can review GPU requests and manage project runtime resources |
+| **Project admin** | Can review run requests and manage project runtime resources |
 | **User** | Can manage project resources including runs, fleets, and volumes |
 
 `dstack` manages SSH keys on the server for secure access to runs and instances. User SSH keys are automatically generated and used when attaching to runs via `dstack attach` or `dstack apply`. Project SSH keys are used by the server to establish SSH connections to provisioned instances.

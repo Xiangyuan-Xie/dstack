@@ -12,16 +12,15 @@ import {
     AccountProfilePage,
     AccountProjectsPage,
     BackendPage,
-    ContainersPage,
     DashboardPage,
     EventsPage,
     FleetCreatePage,
     FleetDetailsPage,
     FleetsPage,
     GatewayPage,
-    GpuRequestCreatePage,
-    GpuRequestDetailsPage,
-    GpuRequestsPage,
+    RunApprovalsPage,
+    RunRequestCreatePage,
+    RunRequestDetailsPage,
     InstanceDetailsPage,
     InstancesPage,
     ModelDetailsPage,
@@ -31,7 +30,6 @@ import {
     ProjectCreatePage,
     ProjectDetailsPage,
     ProjectsPage,
-    RunCreatePage,
     RunDetailsPage,
     RunsPage,
     UserCreatePage,
@@ -59,40 +57,17 @@ export const router = createBrowserRouter([
                 children: [
                     { index: true, element: <Navigate replace to={C.DASHBOARD} /> },
                     { path: C.DASHBOARD, element: <DashboardPage /> },
-                    { path: C.GPU_REQUESTS, element: <GpuRequestsPage /> },
-                    { path: C.GPU_REQUEST_CREATE, element: <GpuRequestCreatePage /> },
-                    { path: C.GPU_REQUEST_DETAILS.TEMPLATE, element: <GpuRequestDetailsPage /> },
-                    { path: C.GPU_CONTAINERS, element: <ContainersPage /> },
+                    { path: C.RUNS, element: <RunsPage /> },
+                    { path: C.RUN_CREATE, element: <RunRequestCreatePage /> },
+                    { path: C.RUN_REQUEST_DETAILS.TEMPLATE, element: <RunRequestDetailsPage /> },
+                    { path: C.RUN_DETAILS.TEMPLATE, element: <RunDetailsPage /> },
+                    { path: C.JOB_DETAILS.TEMPLATE, element: <RunDetailsPage /> },
                     {
-                        path: C.RESOURCES_RUNS,
+                        path: C.RUN_APPROVALS,
                         element: (
-                            <GlobalAdminRoute>
-                                <RunsPage />
-                            </GlobalAdminRoute>
-                        ),
-                    },
-                    {
-                        path: C.RESOURCES_RUN_CREATE,
-                        element: (
-                            <GlobalAdminRoute>
-                                <RunCreatePage />
-                            </GlobalAdminRoute>
-                        ),
-                    },
-                    {
-                        path: C.RESOURCES_RUN_DETAILS.TEMPLATE,
-                        element: (
-                            <GlobalAdminRoute>
-                                <RunDetailsPage />
-                            </GlobalAdminRoute>
-                        ),
-                    },
-                    {
-                        path: C.RESOURCES_JOB_DETAILS.TEMPLATE,
-                        element: (
-                            <GlobalAdminRoute>
-                                <RunDetailsPage />
-                            </GlobalAdminRoute>
+                            <ProjectAdminRoute>
+                                <RunApprovalsPage />
+                            </ProjectAdminRoute>
                         ),
                     },
                     {
@@ -221,22 +196,6 @@ export const router = createBrowserRouter([
                             <GlobalAdminRoute>
                                 <GatewayPage />
                             </GlobalAdminRoute>
-                        ),
-                    },
-                    {
-                        path: C.ADMIN_APPROVALS,
-                        element: (
-                            <ProjectAdminRoute>
-                                <GpuRequestsPage approvals />
-                            </ProjectAdminRoute>
-                        ),
-                    },
-                    {
-                        path: C.ADMIN_CONTAINERS,
-                        element: (
-                            <ProjectAdminRoute>
-                                <ContainersPage adminView />
-                            </ProjectAdminRoute>
                         ),
                     },
                     {

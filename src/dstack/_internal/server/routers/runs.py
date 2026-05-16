@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dstack._internal.core.errors import ResourceNotExistsError
 from dstack._internal.core.models.runs import Run, RunPlan
+from dstack._internal.core.models.users import GlobalRole, ProjectRole
 from dstack._internal.server.compatibility.runs import patch_run, patch_run_plan
 from dstack._internal.server.db import get_session
 from dstack._internal.server.models import ProjectModel, UserModel
@@ -18,9 +19,14 @@ from dstack._internal.server.schemas.runs import (
     StopRunsRequest,
     SubmitRunRequest,
 )
-from dstack._internal.server.security.permissions import Authenticated, ProjectMember
+from dstack._internal.server.security.permissions import (
+    Authenticated,
+    ProjectManager,
+    ProjectMember,
+)
 from dstack._internal.server.services import runs, users
 from dstack._internal.server.services.pipelines import PipelineHinterProtocol, get_pipeline_hinter
+from dstack._internal.server.services.projects import get_user_project_role
 from dstack._internal.server.utils.routers import (
     CustomORJSONResponse,
     get_base_api_additional_responses,
@@ -96,7 +102,7 @@ async def get_run(
     If given `run_name`, does not return deleted runs.
     If given `id`, returns deleted runs.
     """
-    _, project = user_project
+    user, project = user_project
     run = await runs.get_run(
         session=session,
         project=project,
@@ -104,6 +110,11 @@ async def get_run(
         run_id=body.id,
     )
     if run is None:
+        raise ResourceNotExistsError("Run not found")
+    can_manage_project = user.global_role == GlobalRole.ADMIN or get_user_project_role(
+        user=user, project=project
+    ) in {ProjectRole.ADMIN, ProjectRole.MANAGER}
+    if run.user != user.name and not can_manage_project:
         raise ResourceNotExistsError("Run not found")
     patch_run(run, client_version)
     return CustomORJSONResponse(run)
@@ -144,7 +155,7 @@ async def get_plan(
 async def apply_plan(
     body: ApplyRunPlanRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
-    user_project: Annotated[tuple[UserModel, ProjectModel], Depends(ProjectMember())],
+    user_project: Annotated[tuple[UserModel, ProjectModel], Depends(ProjectManager())],
     pipeline_hinter: Annotated[PipelineHinterProtocol, Depends(get_pipeline_hinter)],
     legacy_repo_dir: Annotated[bool, Depends(use_legacy_repo_dir)],
     client_version: Annotated[Optional[Version], Depends(get_client_version)],

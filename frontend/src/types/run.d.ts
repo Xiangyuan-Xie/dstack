@@ -75,7 +75,7 @@ declare type TBaseConfiguration = {
     python?: string;
     nvcc?: boolean;
     single_branch?: boolean;
-    env?: string[];
+    env?: string[] | Record<string, string>;
     shell?: string;
     resources?: TResourceRequest;
     priority?: number;

@@ -653,10 +653,14 @@ class TestListRuns:
     @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
     async def test_lists_runs(self, test_db, session: AsyncSession, client: AsyncClient):
         user = await create_user(session=session, global_role=GlobalRole.USER)
+        other_user = await create_user(session=session, name="other")
         project = await create_project(session=session, owner=user)
         fleet = await create_fleet(session=session, project=project)
         await add_project_member(
             session=session, project=project, user=user, project_role=ProjectRole.USER
+        )
+        await add_project_member(
+            session=session, project=project, user=other_user, project_role=ProjectRole.USER
         )
         repo = await create_repo(
             session=session,
@@ -687,6 +691,14 @@ class TestListRuns:
             user=user,
             fleet=fleet,
             submitted_at=run2_submitted_at,
+        )
+        await create_run(
+            session=session,
+            project=project,
+            repo=repo,
+            user=other_user,
+            fleet=fleet,
+            submitted_at=datetime(2023, 1, 3, 3, 4, tzinfo=timezone.utc),
         )
         run2_spec = RunSpec.parse_raw(run2.run_spec)
         response = await client.post(
@@ -787,6 +799,32 @@ class TestListRuns:
                 "next_triggered_at": None,
             },
         ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_project_manager_lists_managed_project_runs(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        manager = await create_user(session=session, global_role=GlobalRole.USER)
+        member = await create_user(session=session, name="member")
+        project = await create_project(session=session, owner=manager)
+        await add_project_member(
+            session=session, project=project, user=manager, project_role=ProjectRole.MANAGER
+        )
+        await add_project_member(
+            session=session, project=project, user=member, project_role=ProjectRole.USER
+        )
+        repo = await create_repo(session=session, project_id=project.id)
+        run = await create_run(session=session, project=project, repo=repo, user=member)
+
+        response = await client.post(
+            "/api/runs/list",
+            headers=get_auth_headers(manager.token),
+            json={},
+        )
+
+        assert response.status_code == 200, response.json()
+        assert [item["id"] for item in response.json()] == [str(run.id)]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
@@ -978,6 +1016,9 @@ class TestListRuns:
     ) -> None:
         user = await create_user(session=session)
         project = await create_project(session=session, owner=user)
+        await add_project_member(
+            session=session, project=project, user=user, project_role=ProjectRole.MANAGER
+        )
         repo = await create_repo(session=session, project_id=project.id)
 
         service_conf = ServiceConfiguration(
@@ -1020,6 +1061,57 @@ class TestGetRun:
             json={"run_name": "myrun"},
         )
         assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_regular_member_cannot_get_another_users_run(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        user = await create_user(session=session, global_role=GlobalRole.USER)
+        other_user = await create_user(session=session, name="other-run-owner")
+        project = await create_project(session=session, owner=user)
+        await add_project_member(
+            session=session, project=project, user=user, project_role=ProjectRole.USER
+        )
+        await add_project_member(
+            session=session, project=project, user=other_user, project_role=ProjectRole.USER
+        )
+        repo = await create_repo(session=session, project_id=project.id)
+        run = await create_run(session=session, project=project, repo=repo, user=other_user)
+
+        response = await client.post(
+            f"/api/project/{project.name}/runs/get",
+            headers=get_auth_headers(user.token),
+            json={"id": str(run.id)},
+        )
+
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_project_manager_can_get_managed_project_run(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        manager = await create_user(session=session, global_role=GlobalRole.USER)
+        member = await create_user(session=session, name="managed-run-owner")
+        project = await create_project(session=session, owner=manager)
+        await add_project_member(
+            session=session, project=project, user=manager, project_role=ProjectRole.MANAGER
+        )
+        await add_project_member(
+            session=session, project=project, user=member, project_role=ProjectRole.USER
+        )
+        repo = await create_repo(session=session, project_id=project.id)
+        run = await create_run(session=session, project=project, repo=repo, user=member)
+
+        response = await client.post(
+            f"/api/project/{project.name}/runs/get",
+            headers=get_auth_headers(manager.token),
+            json={"id": str(run.id)},
+        )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["id"] == str(run.id)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
@@ -2659,13 +2751,67 @@ class TestApplyPlan:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
-    async def test_submits_new_run_if_no_current_resource(
+    async def test_returns_403_if_regular_project_member(
         self, test_db, session: AsyncSession, client: AsyncClient
     ):
         user = await create_user(session=session, global_role=GlobalRole.USER)
         project = await create_project(session=session, owner=user)
         await add_project_member(
             session=session, project=project, user=user, project_role=ProjectRole.USER
+        )
+        repo = await create_repo(session=session, project_id=project.id)
+        run_spec = get_run_spec(run_name="test-run", repo_id=repo.name)
+
+        response = await client.post(
+            f"/api/project/{project.name}/runs/apply",
+            headers=get_auth_headers(user.token),
+            json={
+                "plan": {
+                    "run_spec": run_spec.dict(),
+                    "current_resource": None,
+                },
+                "force": False,
+            },
+        )
+
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_global_admin_can_apply_run_plan(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        owner = await create_user(session=session, global_role=GlobalRole.USER)
+        admin = await create_user(
+            session=session, name="global-apply-admin", global_role=GlobalRole.ADMIN
+        )
+        project = await create_project(session=session, owner=owner)
+        repo = await create_repo(session=session, project_id=project.id)
+        run_spec = get_run_spec(run_name="test-run", repo_id=repo.name)
+
+        response = await client.post(
+            f"/api/project/{project.name}/runs/apply",
+            headers=get_auth_headers(admin.token),
+            json={
+                "plan": {
+                    "run_spec": run_spec.dict(),
+                    "current_resource": None,
+                },
+                "force": False,
+            },
+        )
+
+        assert response.status_code == 200, response.json()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_submits_new_run_if_no_current_resource(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        user = await create_user(session=session, global_role=GlobalRole.USER)
+        project = await create_project(session=session, owner=user)
+        await add_project_member(
+            session=session, project=project, user=user, project_role=ProjectRole.MANAGER
         )
         submitted_at = datetime(2023, 1, 2, 3, 4, tzinfo=timezone.utc)
         submitted_at_formatted = "2023-01-02T03:04:00+00:00"
@@ -2710,7 +2856,7 @@ class TestApplyPlan:
         user = await create_user(session=session, global_role=GlobalRole.USER)
         project = await create_project(session=session, owner=user)
         await add_project_member(
-            session=session, project=project, user=user, project_role=ProjectRole.USER
+            session=session, project=project, user=user, project_role=ProjectRole.MANAGER
         )
         repo = await create_repo(session=session, project_id=project.id)
         run_spec = get_run_spec(
@@ -2774,7 +2920,7 @@ class TestApplyPlan:
         user = await create_user(session=session, global_role=GlobalRole.USER)
         project = await create_project(session=session, owner=user)
         await add_project_member(
-            session=session, project=project, user=user, project_role=ProjectRole.USER
+            session=session, project=project, user=user, project_role=ProjectRole.MANAGER
         )
         repo = await create_repo(session=session, project_id=project.id)
         run_spec = get_run_spec(
@@ -2809,7 +2955,7 @@ class TestApplyPlan:
         )
         project = await create_project(session=session, owner=user)
         await add_project_member(
-            session=session, project=project, user=user, project_role=ProjectRole.USER
+            session=session, project=project, user=user, project_role=ProjectRole.MANAGER
         )
         repo = await create_repo(session=session, project_id=project.id)
         run_spec = get_run_spec(run_name="test-run", repo_id=repo.name, ssh_key_pub=None)

@@ -70,14 +70,14 @@ class TestListTestUsers:
                     "label": "项目管理员",
                     "role": "project_manager",
                     "token": "dstack-test-manager-token",
-                    "description": "可审批 GPU 申请并管理项目内容器和服务器。",
+                    "description": "可审批运行任务并管理项目内服务器。",
                 },
                 {
                     "username": "test-user",
                     "label": "普通用户",
                     "role": "user",
                     "token": "dstack-test-user-token",
-                    "description": "只能提交 GPU 申请、查看自己的容器和个人中心。",
+                    "description": "只能提交运行任务、查看自己的任务和个人中心。",
                 },
             ],
         }

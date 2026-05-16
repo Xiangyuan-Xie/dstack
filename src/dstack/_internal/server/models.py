@@ -207,7 +207,7 @@ class PipelineModelMixin:
     lock_owner: Mapped[Optional[str]] = mapped_column(String(100))
 
 
-class GpuRequestStatus(str, enum.Enum):
+class RunRequestStatus(str, enum.Enum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
@@ -510,8 +510,8 @@ class ServiceRouterWorkerSyncModel(PipelineModelMixin, BaseModel):
     )
 
 
-class GpuRequestModel(BaseModel):
-    __tablename__ = "gpu_requests"
+class RunRequestModel(BaseModel):
+    __tablename__ = "run_requests"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUIDType(binary=False), primary_key=True, default=uuid.uuid4
@@ -536,14 +536,14 @@ class GpuRequestModel(BaseModel):
     run: Mapped[Optional["RunModel"]] = relationship(lazy="joined")
     created_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(NaiveDateTime, nullable=True)
-    status: Mapped[GpuRequestStatus] = mapped_column(
-        EnumAsString(GpuRequestStatus, 100), index=True
+    status: Mapped[RunRequestStatus] = mapped_column(
+        EnumAsString(RunRequestStatus, 100), index=True
     )
     request: Mapped[str] = mapped_column(Text)
     review_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
-        Index("ix_gpu_requests_project_created_at_id", project_id, created_at.desc(), id),
+        Index("ix_run_requests_project_created_at_id", project_id, created_at.desc(), id),
     )
 
 

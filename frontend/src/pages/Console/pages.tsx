@@ -37,13 +37,13 @@ import { useGetAllEventsQuery } from 'services/events';
 import { useApplyFleetMutation, useDeleteFleetMutation, useGetFleetDetailsQuery, useGetFleetsQuery } from 'services/fleet';
 import { useGetGpusListQuery } from 'services/gpu';
 import {
-    useApproveGpuRequestMutation,
-    useCreateGpuRequestMutation,
-    useGetAllGpuRequestsQuery,
-    useGetGpuRequestQuery,
-    useRejectGpuRequestMutation,
-    useRetryGpuRequestMutation,
-} from 'services/gpuRequest';
+    useApproveRunRequestMutation,
+    useCreateRunRequestMutation,
+    useGetAllRunRequestsQuery,
+    useGetRunRequestQuery,
+    useRejectRunRequestMutation,
+    useRetryRunRequestMutation,
+} from 'services/runRequest';
 import { useDeleteInstancesMutation, useGetInstanceDetailsQuery, useGetInstancesQuery } from 'services/instance';
 import {
     useAddProjectMemberMutation,
@@ -83,11 +83,10 @@ import { selectUserData } from 'App/slice';
 import { CONSOLE_ROUTES } from './constants';
 import { useConsoleContext } from './Layout';
 import {
-    buildGpuRequestCreateParams,
+    buildRunRequestCreateParams,
     canManageConsoleProject,
-    formatGpuRequestResourcesText,
-    getContainerSummaries,
-    getGpuRequestStats,
+    formatRunRequestResourcesText,
+    getRunRequestStats,
     statusTone,
 } from './utils';
 
@@ -119,21 +118,86 @@ const useFilteredItems = <T,>(items: T[], query: string, fields: Array<(item: T)
     }, [fields, items, query]);
 };
 
-const RequestStatus = ({ status }: { status?: TGpuRequestStatus | TJobStatus | string | null }) => (
+const RequestStatus = ({ status }: { status?: TRunRequestStatus | TJobStatus | string | null }) => (
     <StatusBadge tone={statusTone(status)}>{status ?? '-'}</StatusBadge>
 );
+
+type TUnifiedRunItem = {
+    id: string;
+    project_name: string;
+    name: string;
+    applicant: string;
+    request_status?: TRunRequestStatus;
+    run_status?: TJobStatus;
+    resources: string;
+    image?: string;
+    service_url?: string | null;
+    created_at?: string;
+    submitted_at?: string;
+    request?: IRunRequest;
+    run?: IRun;
+};
+
+const getRunResourcesText = (run: IRun): string => {
+    const resources = run.latest_job_submission?.job_provisioning_data?.instance_type?.resources;
+    if (resources) {
+        return formatResources(resources);
+    }
+    return '-';
+};
+
+const getUnifiedRunItems = (requests: IRunRequest[], runs: IRun[]): TUnifiedRunItem[] => {
+    const runsById = new Map(runs.map((run) => [run.id, run]));
+    const requestRunIds = new Set(requests.map((request) => request.run_id).filter(Boolean));
+    const requestItems: TUnifiedRunItem[] = requests.map((request) => {
+        const run = request.run_id ? runsById.get(request.run_id) : undefined;
+        return {
+            id: request.run_id ?? request.id,
+            project_name: request.project_name,
+            name: request.run_name ?? request.request.name ?? request.id,
+            applicant: request.applicant,
+            request_status: request.status,
+            run_status: run?.status,
+            resources: formatRunRequestResourcesText(request.request),
+            image: request.request.image,
+            service_url: run?.service?.url,
+            created_at: request.created_at,
+            submitted_at: run?.submitted_at,
+            request,
+            run,
+        };
+    });
+    const directRunItems = runs
+        .filter((run) => !requestRunIds.has(run.id))
+        .map<TUnifiedRunItem>((run) => ({
+            id: run.id,
+            project_name: run.project_name,
+            name: run.run_spec.run_name ?? run.id,
+            applicant: run.user,
+            request_status: 'approved',
+            run_status: run.status,
+            resources: getRunResourcesText(run),
+            service_url: run.service?.url,
+            submitted_at: run.submitted_at,
+            run,
+        }));
+    return [...requestItems, ...directRunItems].sort((a, b) => {
+        const aTime = new Date(a.submitted_at ?? a.created_at ?? 0).getTime();
+        const bTime = new Date(b.submitted_at ?? b.created_at ?? 0).getTime();
+        return bTime - aTime;
+    });
+};
 
 export const DashboardPage: React.FC = () => {
     const { role } = useConsoleContext();
     const { text } = useLocaleText();
-    const requests = useGetAllGpuRequestsQuery({ include_all: role.canUseProjectAdmin, limit: 100 });
+    const requests = useGetAllRunRequestsQuery({ include_all: role.canUseProjectAdmin, limit: 100 });
     const runs = useGetRunsQuery({ limit: 100, job_submissions_limit: 1 });
     const fleets = useGetFleetsQuery({ include_imported: true, limit: 100 }, { skip: !role.canUseProjectAdmin });
     const instances = useGetInstancesQuery({ only_active: true, include_imported: true, limit: 100 }, { skip: !role.canUseProjectAdmin });
     const events = useGetAllEventsQuery({ limit: 8 }, { skip: !role.canUseGlobalAdmin });
-    const stats = getGpuRequestStats(requests.data ?? []);
-    const containers = getContainerSummaries(requests.data ?? [], runs.data ?? []);
-    const runningContainers = containers.filter((container) => container.status === 'running').length;
+    const stats = getRunRequestStats(requests.data ?? []);
+    const runItems = getUnifiedRunItems(requests.data ?? [], runs.data ?? []);
     const runningRuns = (runs.data ?? []).filter((run) => run.status === 'running').length;
 
     return (
@@ -142,20 +206,16 @@ export const DashboardPage: React.FC = () => {
                 title={text('工作台', 'Dashboard')}
                 description={text(
                     role.canUseGlobalAdmin
-                        ? '跨项目查看 GPU 申请、容器、运行任务和基础设施状态。'
-                        : '查看你的 GPU 申请、容器状态和审批进展。',
+                        ? '跨项目查看运行任务、审批和基础设施状态。'
+                        : '查看你的运行任务、审批状态和运行进展。',
                     role.canUseGlobalAdmin
-                        ? 'Cross-project GPU request and infrastructure overview.'
-                        : 'Review your GPU requests, containers, and approval progress.',
+                        ? 'Cross-project run, approval, and infrastructure overview.'
+                        : 'Review your runs, approvals, and runtime progress.',
                 )}
             />
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <MetricCard label={text('待审批申请', 'Pending requests')} value={stats.pending} accent="amber" />
-                <MetricCard
-                    label={role.canUseGlobalAdmin ? text('运行中任务', 'Running runs') : text('运行中容器', 'Running containers')}
-                    value={role.canUseGlobalAdmin ? runningRuns : runningContainers}
-                    accent="teal"
-                />
+                <MetricCard label={text('待审批任务', 'Pending approvals')} value={stats.pending} accent="amber" />
+                <MetricCard label={text('运行中任务', 'Running runs')} value={runningRuns} accent="teal" />
                 {role.canUseProjectAdmin ? (
                     <>
                         <MetricCard label={text('集群', 'Fleets')} value={fleets.data?.length ?? 0} accent="blue" />
@@ -163,30 +223,35 @@ export const DashboardPage: React.FC = () => {
                     </>
                 ) : (
                     <>
-                        <MetricCard label={text('已批准申请', 'Approved requests')} value={stats.approved} accent="blue" />
-                        <MetricCard label={text('失败申请', 'Failed requests')} value={stats.failed} accent="slate" />
+                        <MetricCard label={text('已批准任务', 'Approved runs')} value={stats.approved} accent="blue" />
+                        <MetricCard label={text('失败任务', 'Failed runs')} value={stats.failed} accent="slate" />
                     </>
                 )}
             </div>
             <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-                <Panel title={text('最近 GPU 申请', 'Recent GPU requests')}>
+                <Panel title={text('最近运行任务', 'Recent runs')}>
                     <DataTable
-                        items={(requests.data ?? []).slice(0, 8)}
-                        loading={requests.isLoading}
+                        items={runItems.slice(0, 8)}
+                        loading={requests.isLoading || runs.isLoading}
                         keyGetter={(item) => item.id}
-                        empty={<EmptyState title={text('暂无申请', 'No requests yet')} />}
+                        empty={<EmptyState title={text('暂无运行任务', 'No runs yet')} />}
                         columns={[
-                            { id: 'name', header: text('名称', 'Name'), cell: (item) => item.request.name ?? item.id },
+                            { id: 'name', header: text('名称', 'Name'), cell: (item) => item.name },
                             { id: 'project', header: text('项目', 'Project'), cell: (item) => item.project_name },
                             ...(role.canUseProjectAdmin
-                                ? [{ id: 'applicant', header: text('申请人', 'Applicant'), cell: (item: IGpuRequest) => item.applicant }]
+                                ? [{ id: 'applicant', header: text('提交人', 'Applicant'), cell: (item: TUnifiedRunItem) => item.applicant }]
                                 : []),
                             {
-                                id: 'status',
-                                header: text('状态', 'Status'),
-                                cell: (item) => <RequestStatus status={item.status} />,
+                                id: 'requestStatus',
+                                header: text('审批', 'Approval'),
+                                cell: (item) => <RequestStatus status={item.request_status} />,
                             },
-                            { id: 'created', header: text('创建时间', 'Created'), cell: (item) => formatDate(item.created_at) },
+                            {
+                                id: 'runStatus',
+                                header: text('运行', 'Runtime'),
+                                cell: (item) => <RequestStatus status={item.run_status} />,
+                            },
+                            { id: 'created', header: text('提交时间', 'Submitted'), cell: (item) => formatDate(item.submitted_at ?? item.created_at) },
                         ]}
                     />
                 </Panel>
@@ -207,19 +272,19 @@ export const DashboardPage: React.FC = () => {
                         </div>
                     </Panel>
                 ) : (
-                    <Panel title={text('我的容器', 'My containers')}>
+                    <Panel title={text('我的运行任务', 'My runs')}>
                         <DataTable
-                            items={containers.slice(0, 6)}
+                            items={runItems.slice(0, 6)}
                             loading={requests.isLoading || runs.isLoading}
                             keyGetter={(item) => item.id}
-                            empty={<EmptyState title={text('暂无容器', 'No containers')} />}
+                            empty={<EmptyState title={text('暂无运行任务', 'No runs')} />}
                             columns={[
                                 { id: 'name', header: text('名称', 'Name'), cell: (item) => item.name },
-                                { id: 'project', header: text('项目', 'Project'), cell: (item) => item.projectName },
+                                { id: 'project', header: text('项目', 'Project'), cell: (item) => item.project_name },
                                 {
                                     id: 'status',
                                     header: text('状态', 'Status'),
-                                    cell: (item) => <RequestStatus status={item.status} />,
+                                    cell: (item) => <RequestStatus status={item.run_status ?? item.request_status} />,
                                 },
                             ]}
                         />
@@ -230,14 +295,14 @@ export const DashboardPage: React.FC = () => {
     );
 };
 
-export const GpuRequestsPage: React.FC<{ approvals?: boolean }> = ({ approvals }) => {
+export const RunApprovalsPage: React.FC = () => {
     const navigate = useNavigate();
     const { role } = useConsoleContext();
     const { text } = useLocaleText();
     const [query, setQuery] = useState('');
-    const requests = useGetAllGpuRequestsQuery({ include_all: approvals || role.canUseProjectAdmin, limit: 500 });
+    const requests = useGetAllRunRequestsQuery({ include_all: role.canUseProjectAdmin, limit: 500 });
     const items = useFilteredItems(
-        approvals ? (requests.data ?? []).filter((request) => request.status === 'pending') : (requests.data ?? []),
+        (requests.data ?? []).filter((request) => request.status === 'pending'),
         query,
         [(item) => item.request.name, (item) => item.project_name, (item) => item.applicant, (item) => item.status],
     );
@@ -245,31 +310,16 @@ export const GpuRequestsPage: React.FC<{ approvals?: boolean }> = ({ approvals }
     return (
         <>
             <PageHeader
-                title={approvals ? text('审批中心', 'Approvals') : text('GPU 申请', 'GPU Requests')}
-                description={
-                    approvals
-                        ? text('审批项目成员提交的 GPU 容器申请。', 'Review GPU container requests from project members.')
-                        : text('提交申请并跟踪审批、容器创建和关联运行任务。', 'Submit and track GPU container requests.')
-                }
-                actions={
-                    !approvals && (
-                        <Button
-                            variant="primary"
-                            icon={<Plus className="h-4 w-4" />}
-                            onClick={() => navigate(CONSOLE_ROUTES.GPU_REQUEST_CREATE)}
-                        >
-                            {text('新建申请', 'New request')}
-                        </Button>
-                    )
-                }
+                title={text('审批', 'Approvals')}
+                description={text('审批项目成员提交的运行任务。', 'Review submitted runs from project members.')}
             />
             <Panel
-                title={text('申请列表', 'Requests')}
+                title={text('待审批任务', 'Pending runs')}
                 actions={
                     <SearchInput
                         value={query}
                         onChange={(event) => setQuery(event.target.value)}
-                        placeholder={text('搜索申请', 'Search requests')}
+                        placeholder={text('搜索任务', 'Search runs')}
                     />
                 }
             >
@@ -277,7 +327,7 @@ export const GpuRequestsPage: React.FC<{ approvals?: boolean }> = ({ approvals }
                     items={items}
                     loading={requests.isLoading}
                     keyGetter={(item) => item.id}
-                    empty={<EmptyState title={text('暂无申请', 'No requests')} />}
+                    empty={<EmptyState title={text('暂无待审批任务', 'No pending runs')} />}
                     columns={[
                         {
                             id: 'name',
@@ -286,7 +336,7 @@ export const GpuRequestsPage: React.FC<{ approvals?: boolean }> = ({ approvals }
                                 <button
                                     className="font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-300"
                                     onClick={() =>
-                                        navigate(CONSOLE_ROUTES.GPU_REQUEST_DETAILS.FORMAT(item.project_name, item.id))
+                                        navigate(CONSOLE_ROUTES.RUN_REQUEST_DETAILS.FORMAT(item.project_name, item.id))
                                     }
                                 >
                                     {item.request.name ?? item.id}
@@ -302,14 +352,14 @@ export const GpuRequestsPage: React.FC<{ approvals?: boolean }> = ({ approvals }
                         },
                         {
                             id: 'applicant',
-                            header: text('申请人', 'Applicant'),
+                            header: text('提交人', 'Applicant'),
                             cell: (item) => item.applicant,
                             sortValue: (item) => item.applicant,
                         },
                         {
                             id: 'resources',
                             header: text('资源', 'Resources'),
-                            cell: (item) => formatGpuRequestResourcesText(item.request),
+                            cell: (item) => formatRunRequestResourcesText(item.request),
                         },
                         {
                             id: 'status',
@@ -319,7 +369,7 @@ export const GpuRequestsPage: React.FC<{ approvals?: boolean }> = ({ approvals }
                         },
                         {
                             id: 'created',
-                            header: text('创建时间', 'Created'),
+                            header: text('提交时间', 'Submitted'),
                             cell: (item) => formatDate(item.created_at),
                             sortValue: (item) => item.created_at,
                         },
@@ -330,13 +380,14 @@ export const GpuRequestsPage: React.FC<{ approvals?: boolean }> = ({ approvals }
     );
 };
 
-export const GpuRequestCreatePage: React.FC = () => {
+export const RunRequestCreatePage: React.FC = () => {
     const navigate = useNavigate();
-    const { projects } = useConsoleContext();
+    const { projects, role } = useConsoleContext();
     const { text } = useLocaleText();
-    const [createGpuRequest, createState] = useCreateGpuRequestMutation();
+    const [createRunRequest, createState] = useCreateRunRequestMutation();
+    const [applyRun, applyState] = useApplyRunMutation();
     const [pushNotification] = useNotifications();
-    const [values, setValues] = useState<IGpuRequestFormValues>({
+    const [values, setValues] = useState<IRunRequestFormValues>({
         project_name: projects[0]?.project_name ?? '',
         name: '',
         image: '',
@@ -352,7 +403,7 @@ export const GpuRequestCreatePage: React.FC = () => {
         fleets: '',
     });
 
-    const update = (key: keyof IGpuRequestFormValues, value: string) => setValues((current) => ({ ...current, [key]: value }));
+    const update = (key: keyof IRunRequestFormValues, value: string) => setValues((current) => ({ ...current, [key]: value }));
 
     const onSubmit = async (event: FormEvent) => {
         event.preventDefault();
@@ -363,13 +414,48 @@ export const GpuRequestCreatePage: React.FC = () => {
             });
             return;
         }
-        const result = await createGpuRequest(buildGpuRequestCreateParams(values)).unwrap();
-        navigate(CONSOLE_ROUTES.GPU_REQUEST_DETAILS.FORMAT(result.project_name, result.id));
+        const createParams = buildRunRequestCreateParams(values);
+        if (canManageConsoleProject(role, values.project_name)) {
+            const configuration: TTaskConfigurationRequest = {
+                type: 'task',
+                image: createParams.request.image,
+                commands: createParams.request.commands,
+                env: createParams.request.env ? Object.entries(createParams.request.env).map(([key, value]) => `${key}=${value}`) : undefined,
+                ports: createParams.request.ports,
+                nodes: createParams.request.nodes,
+                resources: createParams.request.resources,
+                max_duration: createParams.request.max_duration ?? undefined,
+                fleets: createParams.request.fleets ?? undefined,
+            };
+            const result = await applyRun({
+                project_name: values.project_name,
+                force: true,
+                plan: {
+                    run_spec: {
+                        run_name: createParams.request.name ?? '',
+                        configuration,
+                    },
+                },
+            }).unwrap();
+            navigate(CONSOLE_ROUTES.RUN_DETAILS.FORMAT(result.project_name, result.id));
+            return;
+        }
+        const result = await createRunRequest(createParams).unwrap();
+        navigate(CONSOLE_ROUTES.RUN_REQUEST_DETAILS.FORMAT(result.project_name, result.id));
     };
+    const selectedProjectCanDirectCreate = values.project_name ? canManageConsoleProject(role, values.project_name) : false;
 
     return (
         <>
-            <PageHeader title={text('新建 GPU 申请', 'New GPU Request')} />
+            <PageHeader
+                title={text('新建运行任务', 'New Run')}
+                description={text(
+                    selectedProjectCanDirectCreate ? '你可以在该项目中直接创建运行任务。' : '普通用户提交后需要项目管理员审批。',
+                    selectedProjectCanDirectCreate
+                        ? 'You can create a run directly in this project.'
+                        : 'Regular users submit runs for project admin approval.',
+                )}
+            />
             <form className="grid gap-6" onSubmit={onSubmit}>
                 <Panel title={text('基础信息', 'Basics')}>
                     <div className="grid gap-4 md:grid-cols-2">
@@ -386,7 +472,7 @@ export const GpuRequestCreatePage: React.FC = () => {
                                 ))}
                             </SelectInput>
                         </Field>
-                        <Field label={text('申请名称', 'Name')}>
+                        <Field label={text('任务名称', 'Name')}>
                             <TextInput
                                 value={values.name}
                                 onChange={(event) => update('name', event.target.value)}
@@ -448,8 +534,8 @@ export const GpuRequestCreatePage: React.FC = () => {
                         ].map(([key, label, placeholder]) => (
                             <Field key={key} label={label}>
                                 <TextInput
-                                    value={values[key as keyof IGpuRequestFormValues]}
-                                    onChange={(event) => update(key as keyof IGpuRequestFormValues, event.target.value)}
+                                    value={values[key as keyof IRunRequestFormValues]}
+                                    onChange={(event) => update(key as keyof IRunRequestFormValues, event.target.value)}
                                     placeholder={placeholder}
                                 />
                             </Field>
@@ -457,11 +543,11 @@ export const GpuRequestCreatePage: React.FC = () => {
                     </div>
                 </Panel>
                 <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                    <Button className="w-full sm:w-auto" type="button" onClick={() => navigate(CONSOLE_ROUTES.GPU_REQUESTS)}>
+                    <Button className="w-full sm:w-auto" type="button" onClick={() => navigate(CONSOLE_ROUTES.RUNS)}>
                         {text('取消', 'Cancel')}
                     </Button>
-                    <Button className="w-full sm:w-auto" type="submit" variant="primary" loading={createState.isLoading}>
-                        {text('提交申请', 'Submit request')}
+                    <Button className="w-full sm:w-auto" type="submit" variant="primary" loading={createState.isLoading || applyState.isLoading}>
+                        {selectedProjectCanDirectCreate ? text('创建任务', 'Create run') : text('提交审批', 'Submit for approval')}
                     </Button>
                 </div>
             </form>
@@ -469,12 +555,12 @@ export const GpuRequestCreatePage: React.FC = () => {
     );
 };
 
-export const GpuRequestDetailsPage: React.FC = () => {
+export const RunRequestDetailsPage: React.FC = () => {
     const { projectName = '', requestId = '' } = useParams();
     const navigate = useNavigate();
     const { role } = useConsoleContext();
     const { text } = useLocaleText();
-    const request = useGetGpuRequestQuery({ project_name: projectName, id: requestId });
+    const request = useGetRunRequestQuery({ project_name: projectName, id: requestId });
     const run = useGetRunQuery(
         { project_name: projectName, id: request.data?.run_id ?? '' },
         { skip: !request.data?.run_id },
@@ -491,16 +577,16 @@ export const GpuRequestDetailsPage: React.FC = () => {
         },
         { skip: !run.data || !submission },
     );
-    const [approve, approveState] = useApproveGpuRequestMutation();
-    const [retry, retryState] = useRetryGpuRequestMutation();
-    const [reject, rejectState] = useRejectGpuRequestMutation();
+    const [approve, approveState] = useApproveRunRequestMutation();
+    const [retry, retryState] = useRetryRunRequestMutation();
+    const [reject, rejectState] = useRejectRunRequestMutation();
     const [rejectOpen, setRejectOpen] = useState(false);
     const [reason, setReason] = useState('');
     const canReview = request.data && canManageConsoleProject(role, request.data.project_name);
 
     const approveRequest = async () => {
         const result = await approve({ project_name: projectName, id: requestId }).unwrap();
-        navigate(CONSOLE_ROUTES.GPU_REQUEST_DETAILS.FORMAT(result.project_name, result.id));
+        navigate(CONSOLE_ROUTES.RUN_REQUEST_DETAILS.FORMAT(result.project_name, result.id));
     };
 
     const rejectRequest = async () => {
@@ -539,11 +625,11 @@ export const GpuRequestDetailsPage: React.FC = () => {
                 }
             />
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-                <Panel title={text('申请详情', 'Request details')}>
+                <Panel title={text('任务详情', 'Run details')}>
                     {request.data ? (
                         <CodeBlock value={request.data.request} />
                     ) : (
-                        <EmptyState title={text('申请不存在', 'Request not found')} />
+                        <EmptyState title={text('任务不存在', 'Run request not found')} />
                     )}
                 </Panel>
                 {request.data && (
@@ -555,7 +641,7 @@ export const GpuRequestDetailsPage: React.FC = () => {
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-slate-500 dark:text-slate-400">{text('资源', 'Resources')}</span>
-                                <span className="font-medium">{formatGpuRequestResourcesText(request.data.request)}</span>
+                                <span className="font-medium">{formatRunRequestResourcesText(request.data.request)}</span>
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-slate-500 dark:text-slate-400">Run</span>
@@ -564,7 +650,7 @@ export const GpuRequestDetailsPage: React.FC = () => {
                             {run.data && (
                                 <>
                                     <div className="flex justify-between">
-                                        <span className="text-slate-500 dark:text-slate-400">{text('容器状态', 'Container status')}</span>
+                                        <span className="text-slate-500 dark:text-slate-400">{text('运行状态', 'Run status')}</span>
                                         <RequestStatus status={run.data.status} />
                                     </div>
                                     {run.data.service?.url && (
@@ -588,12 +674,12 @@ export const GpuRequestDetailsPage: React.FC = () => {
                                     )}
                                 </>
                             )}
-                            {request.data.run_id && role.canUseGlobalAdmin && (
+                            {request.data.run_id && (
                                 <Button
                                     className="w-full"
                                     onClick={() =>
                                         navigate(
-                                            CONSOLE_ROUTES.RESOURCES_RUN_DETAILS.FORMAT(
+                                            CONSOLE_ROUTES.RUN_DETAILS.FORMAT(
                                                 request.data!.project_name,
                                                 request.data!.run_id!,
                                             ),
@@ -614,7 +700,7 @@ export const GpuRequestDetailsPage: React.FC = () => {
             </div>
             {run.data && (
                 <div className="mt-6 grid gap-6">
-                    <Panel title={text('容器运行信息', 'Container runtime')}>
+                    <Panel title={text('运行信息', 'Run runtime')}>
                         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                             <MetricCard label={text('状态', 'Status')} value={<RequestStatus status={run.data.status} />} />
                             <MetricCard label={text('镜像', 'Image')} value={request.data?.request.image ?? '-'} />
@@ -661,7 +747,7 @@ export const GpuRequestDetailsPage: React.FC = () => {
             )}
             <Modal
                 open={rejectOpen}
-                title={text('拒绝申请', 'Reject request')}
+                title={text('拒绝任务', 'Reject run')}
                 onClose={() => setRejectOpen(false)}
                 footer={
                     <>
@@ -680,58 +766,20 @@ export const GpuRequestDetailsPage: React.FC = () => {
     );
 };
 
-export const ContainersPage: React.FC<{ adminView?: boolean }> = ({ adminView }) => {
-    const { role } = useConsoleContext();
-    const { text } = useLocaleText();
-    const requests = useGetAllGpuRequestsQuery({ include_all: adminView || role.canUseProjectAdmin, limit: 500 });
-    const runs = useGetRunsQuery({ limit: 500, job_submissions_limit: 1 });
-    const containers = getContainerSummaries(requests.data ?? [], runs.data ?? []);
-
-    return (
-        <>
-            <PageHeader title={adminView ? text('容器管理', 'Container Management') : text('我的容器', 'My Containers')} />
-            <Panel title={text('容器实例', 'Container instances')}>
-                <DataTable
-                    items={containers}
-                    loading={requests.isLoading || runs.isLoading}
-                    keyGetter={(item) => item.id}
-                    empty={<EmptyState title={text('暂无容器', 'No containers')} />}
-                    columns={[
-                        { id: 'name', header: text('名称', 'Name'), cell: (item) => item.name },
-                        { id: 'project', header: text('项目', 'Project'), cell: (item) => item.projectName },
-                        { id: 'applicant', header: text('申请人', 'Applicant'), cell: (item) => item.applicant },
-                        {
-                            id: 'status',
-                            header: text('状态', 'Status'),
-                            cell: (item) => <RequestStatus status={item.status} />,
-                        },
-                        { id: 'image', header: text('镜像', 'Image'), cell: (item) => item.image },
-                        {
-                            id: 'actions',
-                            header: text('操作', 'Actions'),
-                            cell: (item) => (
-                                <Button className="min-w-20" onClick={() => (window.location.href = item.requestDetailsPath)}>
-                                    {text('详情', 'Details')}
-                                </Button>
-                            ),
-                        },
-                    ]}
-                />
-            </Panel>
-        </>
-    );
-};
-
 export const RunsPage: React.FC = () => {
     const navigate = useNavigate();
+    const { role } = useConsoleContext();
     const { text } = useLocaleText();
     const [query, setQuery] = useState('');
     const runs = useGetRunsQuery({ limit: 500, job_submissions_limit: 1 });
-    const items = useFilteredItems(runs.data ?? [], query, [
-        (item) => item.run_spec.run_name,
+    const requests = useGetAllRunRequestsQuery({ include_all: role.canUseProjectAdmin, limit: 500 });
+    const runItems = useMemo(() => getUnifiedRunItems(requests.data ?? [], runs.data ?? []), [requests.data, runs.data]);
+    const items = useFilteredItems(runItems, query, [
+        (item) => item.name,
         (item) => item.project_name,
-        (item) => item.user,
-        (item) => item.status,
+        (item) => item.applicant,
+        (item) => item.request_status,
+        (item) => item.run_status,
     ]);
 
     return (
@@ -739,22 +787,20 @@ export const RunsPage: React.FC = () => {
             <PageHeader
                 title={text('运行任务', 'Runs')}
                 actions={
-                    <Button
-                        variant="primary"
-                        icon={<Plus className="h-4 w-4" />}
-                        onClick={() => navigate(CONSOLE_ROUTES.RESOURCES_RUN_CREATE)}
-                    >
-                        {text('创建任务', 'Create run')}
-                    </Button>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                        <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => navigate(CONSOLE_ROUTES.RUN_CREATE)}>
+                            {text('新建运行任务', 'New run')}
+                        </Button>
+                    </div>
                 }
             />
             <Panel
                 title={text('任务列表', 'Run list')}
-                actions={<SearchInput value={query} onChange={(event) => setQuery(event.target.value)} />}
+                actions={<SearchInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder={text('搜索任务', 'Search runs')} />}
             >
                 <DataTable
                     items={items}
-                    loading={runs.isLoading}
+                    loading={runs.isLoading || requests.isLoading}
                     keyGetter={(item) => item.id}
                     empty={<EmptyState title={text('暂无运行任务', 'No runs')} />}
                     columns={[
@@ -764,30 +810,47 @@ export const RunsPage: React.FC = () => {
                             cell: (item) => (
                                 <button
                                     className="font-semibold text-blue-600 dark:text-blue-300"
-                                    onClick={() =>
-                                        navigate(CONSOLE_ROUTES.RESOURCES_RUN_DETAILS.FORMAT(item.project_name, item.id))
-                                    }
+                                    onClick={() => {
+                                        if (item.run) {
+                                            navigate(CONSOLE_ROUTES.RUN_DETAILS.FORMAT(item.project_name, item.run.id));
+                                        } else if (item.request) {
+                                            navigate(CONSOLE_ROUTES.RUN_REQUEST_DETAILS.FORMAT(item.project_name, item.request.id));
+                                        }
+                                    }}
                                 >
-                                    {item.run_spec.run_name ?? item.id}
+                                    {item.name}
                                 </button>
                             ),
                         },
                         { id: 'project', header: text('项目', 'Project'), cell: (item) => item.project_name },
-                        { id: 'user', header: text('用户', 'User'), cell: (item) => item.user },
+                        { id: 'user', header: text('提交人', 'Applicant'), cell: (item) => item.applicant },
+                        { id: 'resources', header: text('资源', 'Resources'), cell: (item) => item.resources },
                         {
-                            id: 'status',
-                            header: text('状态', 'Status'),
-                            cell: (item) => <RequestStatus status={item.status} />,
+                            id: 'approval',
+                            header: text('审批', 'Approval'),
+                            cell: (item) => <RequestStatus status={item.request_status} />,
+                        },
+                        {
+                            id: 'runtime',
+                            header: text('运行', 'Runtime'),
+                            cell: (item) => <RequestStatus status={item.run_status} />,
+                        },
+                        {
+                            id: 'url',
+                            header: text('服务地址', 'Service URL'),
+                            cell: (item) =>
+                                item.service_url ? (
+                                    <a className="text-blue-600 dark:text-blue-300" href={item.service_url} target="_blank" rel="noreferrer">
+                                        {text('打开', 'Open')}
+                                    </a>
+                                ) : (
+                                    '-'
+                                ),
                         },
                         {
                             id: 'submitted',
                             header: text('提交时间', 'Submitted'),
-                            cell: (item) => formatDate(item.submitted_at),
-                        },
-                        {
-                            id: 'cost',
-                            header: text('费用', 'Cost'),
-                            cell: (item) => centsToFormattedString(item.cost ?? 0, '$'),
+                            cell: (item) => formatDate(item.submitted_at ?? item.created_at),
                         },
                     ]}
                 />
@@ -796,107 +859,9 @@ export const RunsPage: React.FC = () => {
     );
 };
 
-export const RunCreatePage: React.FC = () => {
-    const navigate = useNavigate();
-    const { projects } = useConsoleContext();
-    const { text } = useLocaleText();
-    const [applyRun, applyState] = useApplyRunMutation();
-    const [values, setValues] = useState({
-        project: projects[0]?.project_name ?? '',
-        name: '',
-        image: '',
-        commands: '',
-        gpu: '',
-        cpu: '',
-        memory: '',
-        fleets: '',
-    });
-
-    const update = (key: keyof typeof values, value: string) => setValues((current) => ({ ...current, [key]: value }));
-
-    const submit = async (event: FormEvent) => {
-        event.preventDefault();
-        const configuration: TTaskConfigurationRequest = {
-            type: 'task',
-            image: values.image,
-            commands: values.commands
-                .split('\n')
-                .map((line) => line.trim())
-                .filter(Boolean),
-            resources: {
-                ...(values.gpu ? { gpu: values.gpu } : {}),
-                ...(values.cpu ? { cpu: values.cpu } : {}),
-                ...(values.memory ? { memory: values.memory } : {}),
-            },
-            fleets: values.fleets
-                .split(',')
-                .map((item) => item.trim())
-                .filter(Boolean),
-        };
-        const result = await applyRun({
-            project_name: values.project,
-            force: true,
-            plan: { run_spec: { run_name: values.name, configuration } },
-        }).unwrap();
-        navigate(CONSOLE_ROUTES.RESOURCES_RUN_DETAILS.FORMAT(result.project_name, result.id));
-    };
-
-    return (
-        <>
-            <PageHeader title={text('创建运行任务', 'Create run')} />
-            <form className="grid gap-6" onSubmit={submit}>
-                <Panel title={text('任务配置', 'Run configuration')}>
-                    <div className="grid gap-4 md:grid-cols-2">
-                        <Field label={text('项目', 'Project')}>
-                            <SelectInput value={values.project} onChange={(event) => update('project', event.target.value)}>
-                                {projects.map((project) => (
-                                    <option key={project.project_name} value={project.project_name}>
-                                        {project.project_name}
-                                    </option>
-                                ))}
-                            </SelectInput>
-                        </Field>
-                        <Field label={text('名称', 'Name')}>
-                            <TextInput value={values.name} onChange={(event) => update('name', event.target.value)} />
-                        </Field>
-                        <Field label={text('镜像', 'Image')}>
-                            <TextInput value={values.image} onChange={(event) => update('image', event.target.value)} />
-                        </Field>
-                        <Field label="Fleet">
-                            <TextInput
-                                value={values.fleets}
-                                onChange={(event) => update('fleets', event.target.value)}
-                                placeholder="gpu-a"
-                            />
-                        </Field>
-                        <Field label="GPU">
-                            <TextInput value={values.gpu} onChange={(event) => update('gpu', event.target.value)} />
-                        </Field>
-                        <Field label="CPU">
-                            <TextInput value={values.cpu} onChange={(event) => update('cpu', event.target.value)} />
-                        </Field>
-                        <Field label={text('内存', 'Memory')}>
-                            <TextInput value={values.memory} onChange={(event) => update('memory', event.target.value)} />
-                        </Field>
-                    </div>
-                    <div className="mt-4">
-                        <Field label={text('命令', 'Commands')}>
-                            <TextArea value={values.commands} onChange={(event) => update('commands', event.target.value)} />
-                        </Field>
-                    </div>
-                </Panel>
-                <div className="flex justify-end gap-3">
-                    <Button type="submit" variant="primary" loading={applyState.isLoading}>
-                        {text('创建', 'Create')}
-                    </Button>
-                </div>
-            </form>
-        </>
-    );
-};
-
 export const RunDetailsPage: React.FC = () => {
     const { projectName = '', runId = '' } = useParams();
+    const { role } = useConsoleContext();
     const { text } = useLocaleText();
     const [confirm] = useConfirmationDialog();
     const [stopRuns, stopState] = useStopRunsMutation();
@@ -923,6 +888,7 @@ export const RunDetailsPage: React.FC = () => {
         })) ?? [];
 
     const runName = data?.run_spec.run_name ?? runId;
+    const canOperate = role.canUseGlobalAdmin || canManageConsoleProject(role, projectName);
     const stop = () => stopRuns({ project_name: projectName, runs_names: [runName], abort: true });
     const remove = () =>
         confirm({
@@ -938,7 +904,7 @@ export const RunDetailsPage: React.FC = () => {
                 title={runName}
                 description={projectName}
                 actions={
-                    data && (
+                    data && canOperate && (
                         <>
                             {runStatusForStopping.includes(data.status) && (
                                 <Button loading={stopState.isLoading} onClick={stop}>

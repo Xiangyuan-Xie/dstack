@@ -10,6 +10,7 @@ from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
 import dstack._internal.utils.common as common_utils
 from dstack._internal.core.errors import (
@@ -37,6 +38,7 @@ from dstack._internal.core.models.runs import (
     RunTerminationReason,
     ServiceSpec,
 )
+from dstack._internal.core.models.users import GlobalRole, ProjectRole
 from dstack._internal.core.services.diff import format_diff_fields_for_event
 from dstack._internal.server.db import get_db, is_db_postgres, is_db_sqlite
 from dstack._internal.server.models import (
@@ -63,7 +65,10 @@ from dstack._internal.server.services.locking import get_locker, string_to_lock_
 from dstack._internal.server.services.pipelines import PipelineHinterProtocol
 from dstack._internal.server.services.plugins import apply_plugin_policies
 from dstack._internal.server.services.probes import is_probe_ready
-from dstack._internal.server.services.projects import list_user_project_models
+from dstack._internal.server.services.projects import (
+    get_user_project_role,
+    list_user_project_models,
+)
 from dstack._internal.server.services.resources import (
     set_gpu_vendor_default,
     set_resources_defaults,
@@ -172,6 +177,7 @@ async def list_user_runs(
         session=session,
         user=user,
         only_names=True,
+        include_members=user.global_role != GlobalRole.ADMIN,
     )
     runs_user = None
     if username is not None:
@@ -191,11 +197,32 @@ async def list_user_runs(
             )
             if repo is None:
                 raise RepoDoesNotExistError.with_id(repo_id)
+    visibility_filter = None
+    if user.global_role != GlobalRole.ADMIN:
+        managed_project_ids = [
+            project.id
+            for project in projects
+            if get_user_project_role(user=user, project=project)
+            in {ProjectRole.ADMIN, ProjectRole.MANAGER}
+        ]
+        if username is None:
+            if managed_project_ids:
+                visibility_filter = or_(
+                    RunModel.project_id.in_(managed_project_ids),
+                    RunModel.user_id == user.id,
+                )
+            else:
+                runs_user = user
+        elif runs_user.id != user.id:
+            if not managed_project_ids:
+                return []
+            visibility_filter = RunModel.project_id.in_(managed_project_ids)
     run_models = await list_projects_run_models(
         session=session,
         projects=projects,
         repo=repo,
         runs_user=runs_user,
+        visibility_filter=visibility_filter,
         only_active=only_active,
         prev_submitted_at=prev_submitted_at,
         prev_run_id=prev_run_id,
@@ -225,6 +252,7 @@ async def list_projects_run_models(
     projects: List[ProjectModel],
     repo: Optional[RepoModel],
     runs_user: Optional[UserModel],
+    visibility_filter: Optional[ColumnElement[bool]],
     only_active: bool,
     prev_submitted_at: Optional[datetime],
     prev_run_id: Optional[uuid.UUID],
@@ -233,6 +261,8 @@ async def list_projects_run_models(
 ) -> List[RunModel]:
     filters = []
     filters.append(RunModel.project_id.in_(p.id for p in projects))
+    if visibility_filter is not None:
+        filters.append(visibility_filter)
     if repo is not None:
         filters.append(RunModel.repo_id == repo.id)
     if runs_user is not None:
