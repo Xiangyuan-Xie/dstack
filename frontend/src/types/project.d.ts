@@ -30,6 +30,7 @@ declare interface IProject {
     owner: IUser | { username: string };
     created_at: string;
     isPublic: boolean;
+    current_user_project_role?: TProjectRole | null;
     templates_repo?: string | null;
 }
 

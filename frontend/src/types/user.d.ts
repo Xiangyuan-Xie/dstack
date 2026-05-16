@@ -1,4 +1,5 @@
 declare type TUserRole = 'user' | 'admin';
+declare type TServerTestUserRole = 'global_admin' | 'project_manager' | 'user';
 declare type TUserPermission = 'CAN_CREATE_PROJECTS';
 declare type TUserPermissionKeys = 'can_create_projects';
 
@@ -39,6 +40,19 @@ declare interface IUserWithCreds extends IUser {
 }
 
 declare interface IUserAuthData extends Pick<IUserWithCreds['creds'], 'token'> {}
+
+declare interface IServerTestUser {
+    username: string;
+    label: string;
+    role: TServerTestUserRole;
+    token: string;
+    description: string;
+}
+
+declare interface IServerTestUsersResponse {
+    enabled: boolean;
+    users: IServerTestUser[];
+}
 
 declare interface IUserBillingInfo {
     balance: number;

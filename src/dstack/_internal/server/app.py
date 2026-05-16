@@ -55,11 +55,17 @@ from dstack._internal.server.routers import (
 from dstack._internal.server.services.config import ServerConfigManager
 from dstack._internal.server.services.gateways import gateway_connections_pool
 from dstack._internal.server.services.locking import advisory_lock_ctx
-from dstack._internal.server.services.projects import get_or_create_default_project
+from dstack._internal.server.services.projects import (
+    get_or_create_default_project,
+    get_project_model_by_name_or_error,
+)
 from dstack._internal.server.services.proxy.deps import ServerProxyDependencyInjector
 from dstack._internal.server.services.proxy.routers import service_proxy
 from dstack._internal.server.services.storage import init_default_storage
-from dstack._internal.server.services.users import get_or_create_admin_user
+from dstack._internal.server.services.users import (
+    ensure_server_test_users,
+    get_or_create_admin_user,
+)
 from dstack._internal.server.settings import (
     DEFAULT_PROJECT_NAME,
     DO_NOT_UPDATE_DEFAULT_PROJECT,
@@ -143,6 +149,12 @@ async def lifespan(app: FastAPI):
                 session=session,
                 user=admin,
             )
+            if settings.SERVER_TEST_USERS_ENABLED:
+                default_project = await get_project_model_by_name_or_error(
+                    session=session,
+                    project_name=DEFAULT_PROJECT_NAME,
+                )
+                await ensure_server_test_users(session=session, project=default_project)
             if server_config_manager is not None:
                 server_config_dir = _get_server_config_dir()
                 if not server_config_loaded:
@@ -398,7 +410,7 @@ def register_routes(app: FastAPI, ui: bool = True):
             return RedirectResponse("/api/docs")
 
 
-def _check_client_version(
+async def _check_client_version(
     request: Request, client_version: Annotated[Optional[Version], Depends(get_client_version)]
 ) -> None:
     if (

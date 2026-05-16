@@ -82,7 +82,7 @@ class TestLogin:
             "Your browser has been opened to log in with Github:"
             "http://auth_url"
             "Logged in as me"
-            "No projects configured. Create your own project via the UI or contact a project manager to add you to the project."
+            "No projects configured. Create your own project via the UI or contact a project admin to add you to the project."
         )
 
     def test_login_configures_projects(self, capsys: CaptureFixture, tmp_path: Path):

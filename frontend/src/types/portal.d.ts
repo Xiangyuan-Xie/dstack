@@ -34,6 +34,8 @@ declare interface IPortalNavItem extends IConsoleNavItem {}
 declare interface IConsoleUserRole {
     isGlobalAdmin: boolean;
     canManagePortal: boolean;
+    canUseProjectAdmin: boolean;
+    canUseGlobalAdmin: boolean;
     manageableProjectNames: string[];
 }
 
@@ -48,8 +50,9 @@ declare interface IContainerSummary {
     image: string;
     resources: string;
     url?: string | null;
-    runDetailsPath: string;
-    logsPath: string;
+    requestDetailsPath: string;
+    runDetailsPath?: string;
+    logsPath?: string;
 }
 
 declare interface IGpuRequestFormValues {

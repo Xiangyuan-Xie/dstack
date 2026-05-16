@@ -1,7 +1,7 @@
 import React, { FormEvent, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
-import { GitBranch, KeyRound, Loader2, LockKeyhole, Server, ShieldCheck } from 'lucide-react';
+import { GitBranch, KeyRound, Loader2, LockKeyhole, Server, ShieldCheck, UsersRound } from 'lucide-react';
 import { Button, Field, TextInput } from 'ui';
 
 import { useAppDispatch } from 'hooks';
@@ -13,6 +13,7 @@ import {
     useGetEntraInfoQuery,
     useGetGoogleInfoQuery,
     useGetNextRedirectMutation,
+    useGetServerTestUsersQuery,
     useGetOktaInfoQuery,
     useGithubAuthorizeMutation,
     useGithubCallbackMutation,
@@ -47,7 +48,7 @@ const AuthShell: React.FC<{ children: React.ReactNode }> = ({ children }) => (
                 </div>
                 <h1 className="text-5xl font-bold leading-tight tracking-normal">让团队用一个控制台管理 GPU 工作负载。</h1>
                 <p className="mt-5 text-base leading-7 text-slate-300">
-                    普通用户提交申请和查看容器，管理员审批资源、管理集群、项目、运行任务和用户。
+                    普通用户提交申请和查看容器，项目管理员审批资源，最高管理员管理集群、项目、运行任务和用户。
                 </p>
             </div>
             <div className="grid grid-cols-3 gap-4 text-sm text-slate-300">
@@ -91,6 +92,7 @@ export const LoginPage: React.FC<{ tokenOnly?: boolean }> = ({ tokenOnly }) => {
     const [oktaAuthorize, oktaState] = useOktaAuthorizeMutation();
     const [entraAuthorize, entraState] = useEntraAuthorizeMutation();
     const [googleAuthorize, googleState] = useGoogleAuthorizeMutation();
+    const testUsers = useGetServerTestUsersQuery();
     const oktaInfo = useGetOktaInfoQuery(undefined, { skip: process.env.UI_VERSION !== 'enterprise' });
     const entraInfo = useGetEntraInfoQuery(undefined, { skip: process.env.UI_VERSION !== 'enterprise' });
     const googleInfo = useGetGoogleInfoQuery(undefined, { skip: process.env.UI_VERSION !== 'enterprise' });
@@ -112,16 +114,20 @@ export const LoginPage: React.FC<{ tokenOnly?: boolean }> = ({ tokenOnly }) => {
         }
     };
 
-    const onTokenSubmit = async (event: FormEvent) => {
-        event.preventDefault();
+    const loginWithToken = async (nextToken: string) => {
         setError('');
         try {
-            await checkAuthToken({ token }).unwrap();
-            dispatch(setAuthData({ token }));
+            await checkAuthToken({ token: nextToken }).unwrap();
+            dispatch(setAuthData({ token: nextToken }));
             navigate(CONSOLE_ROUTES.DASHBOARD);
         } catch {
             setError(t('auth.invalid_token'));
         }
+    };
+
+    const onTokenSubmit = async (event: FormEvent) => {
+        event.preventDefault();
+        await loginWithToken(token);
     };
 
     const loading = githubState.isLoading || oktaState.isLoading || entraState.isLoading || googleState.isLoading;
@@ -166,6 +172,46 @@ export const LoginPage: React.FC<{ tokenOnly?: boolean }> = ({ tokenOnly }) => {
                                 {t('common.login_google')}
                             </Button>
                         )}
+                    </div>
+                )}
+
+                {!tokenOnly && testUsers.data?.enabled && testUsers.data.users.length > 0 && (
+                    <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50/70 p-4 dark:border-blue-500/20 dark:bg-blue-500/10">
+                        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-blue-800 dark:text-blue-200">
+                            <UsersRound className="h-4 w-4" />
+                            测试环境快捷登录
+                        </div>
+                        <div className="grid gap-3">
+                            {testUsers.data.users.map((user) => (
+                                <div
+                                    key={user.username}
+                                    className="rounded-lg border border-white/80 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-900"
+                                >
+                                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                        <div className="min-w-0">
+                                            <div className="text-sm font-semibold text-slate-950 dark:text-slate-50">
+                                                {user.label}
+                                            </div>
+                                            <div className="mt-1 truncate font-mono text-xs text-slate-500 dark:text-slate-400">
+                                                {user.token}
+                                            </div>
+                                        </div>
+                                        <Button
+                                            className="w-full sm:w-24"
+                                            variant="secondary"
+                                            loading={checkState.isLoading}
+                                            onClick={() => {
+                                                setToken(user.token);
+                                                void loginWithToken(user.token);
+                                            }}
+                                        >
+                                            登录
+                                        </Button>
+                                    </div>
+                                    <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">{user.description}</p>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 )}
 

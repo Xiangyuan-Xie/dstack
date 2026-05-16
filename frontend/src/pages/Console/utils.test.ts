@@ -1,5 +1,6 @@
 import {
     buildGpuRequestCreateParams,
+    canAccessConsoleRoute,
     getConsoleNavSections,
     getConsoleUserRole,
     getContainerSummaries,
@@ -41,6 +42,13 @@ const managedProject = {
     members: [{ user, project_role: 'manager' }],
 } as IProject;
 
+const roleOnlyManagedProject = {
+    ...project,
+    project_name: 'ops',
+    members: [],
+    current_user_project_role: 'manager',
+} as IProject;
+
 const request = {
     id: 'req-1',
     project_name: 'research',
@@ -67,24 +75,96 @@ describe('Console utils', () => {
         const role = getConsoleUserRole([project], user);
         const labels = getConsoleNavSections(role, 'zh').flatMap((section) => section.items.map((item) => item.label));
 
-        expect(labels).toEqual(expect.arrayContaining(['工作台', 'GPU 申请', '我的容器', '运行任务', '项目']));
+        expect(labels).toEqual(expect.arrayContaining(['工作台', 'GPU 申请', '我的容器', '个人资料', 'SSH 公钥']));
+        expect(labels).not.toContain('运行任务');
+        expect(labels).not.toContain('项目');
         expect(labels).not.toContain('审批中心');
+        expect(labels).not.toContain('用户管理');
+        expect(labels).not.toContain('系统事件');
         expect(labels).not.toContain('高级控制台');
     });
 
-    test('builds admin navigation without an advanced console escape hatch', () => {
+    test('builds project admin navigation from current user role without global admin links', () => {
+        const role = getConsoleUserRole([project, roleOnlyManagedProject], user);
+        const labels = getConsoleNavSections(role, 'zh').flatMap((section) => section.items.map((item) => item.label));
+
+        expect(labels).toEqual(expect.arrayContaining(['工作台', 'GPU 申请', '我的容器', '审批中心', '容器管理', '服务器管理']));
+        expect(labels).not.toContain('运行任务');
+        expect(labels).not.toContain('项目');
+        expect(labels).not.toContain('用户管理');
+        expect(labels).not.toContain('系统事件');
+    });
+
+    test('builds project admin navigation from members fallback without global admin links', () => {
+        const role = getConsoleUserRole([project, managedProject], user);
+        const labels = getConsoleNavSections(role, 'zh').flatMap((section) => section.items.map((item) => item.label));
+
+        expect(labels).toEqual(expect.arrayContaining(['工作台', 'GPU 申请', '我的容器', '审批中心', '容器管理', '服务器管理']));
+        expect(labels).not.toContain('运行任务');
+        expect(labels).not.toContain('项目');
+        expect(labels).not.toContain('用户管理');
+        expect(labels).not.toContain('系统事件');
+    });
+
+    test('builds global admin navigation with resource and global admin links', () => {
         const role = getConsoleUserRole([project], admin);
         const labels = getConsoleNavSections(role, 'zh').flatMap((section) => section.items.map((item) => item.label));
 
-        expect(labels).toEqual(expect.arrayContaining(['审批中心', '容器管理', '服务器管理', '用户管理', '系统事件']));
+        expect(labels).toEqual(
+            expect.arrayContaining(['运行任务', '集群', '实例', '项目', '审批中心', '容器管理', '服务器管理', '用户管理', '系统事件']),
+        );
         expect(labels).not.toContain('高级控制台');
     });
 
-    test('detects project managers as console admins', () => {
+    test('detects project admins from current user role as console admins', () => {
+        const role = getConsoleUserRole([project, roleOnlyManagedProject], user);
+
+        expect(role.canManagePortal).toBe(true);
+        expect(role.canUseProjectAdmin).toBe(true);
+        expect(role.canUseGlobalAdmin).toBe(false);
+        expect(role.manageableProjectNames).toEqual(['ops']);
+    });
+
+    test('detects project admins from members fallback as console admins', () => {
         const role = getConsoleUserRole([project, managedProject], user);
 
         expect(role.canManagePortal).toBe(true);
+        expect(role.canUseProjectAdmin).toBe(true);
+        expect(role.canUseGlobalAdmin).toBe(false);
         expect(role.manageableProjectNames).toEqual(['training']);
+    });
+
+    test('allows regular users only into the GPU portal and account pages', () => {
+        const role = getConsoleUserRole([project], user);
+
+        expect(canAccessConsoleRoute(role, '/dashboard')).toBe(true);
+        expect(canAccessConsoleRoute(role, '/gpu/requests/research/req-1')).toBe(true);
+        expect(canAccessConsoleRoute(role, '/gpu/containers')).toBe(true);
+        expect(canAccessConsoleRoute(role, '/account/profile')).toBe(true);
+        expect(canAccessConsoleRoute(role, '/resources/runs')).toBe(false);
+        expect(canAccessConsoleRoute(role, '/workspace/projects')).toBe(false);
+        expect(canAccessConsoleRoute(role, '/admin/users')).toBe(false);
+        expect(canAccessConsoleRoute(role, '/admin/events')).toBe(false);
+    });
+
+    test('separates project admin routes from global admin routes', () => {
+        const projectRole = getConsoleUserRole([project, managedProject], user);
+        const globalRole = getConsoleUserRole([project], admin);
+
+        expect(canAccessConsoleRoute(projectRole, '/admin/approvals')).toBe(true);
+        expect(canAccessConsoleRoute(projectRole, '/admin/containers')).toBe(true);
+        expect(canAccessConsoleRoute(projectRole, '/admin/servers')).toBe(true);
+        expect(canAccessConsoleRoute(projectRole, '/admin/users')).toBe(false);
+        expect(canAccessConsoleRoute(projectRole, '/resources/runs')).toBe(false);
+        expect(canAccessConsoleRoute(globalRole, '/admin/users')).toBe(true);
+        expect(canAccessConsoleRoute(globalRole, '/resources/runs')).toBe(true);
+    });
+
+    test('leaves legacy URLs to the Not Found route instead of permission blocking them', () => {
+        const role = getConsoleUserRole([project], user);
+
+        expect(canAccessConsoleRoute(role, '/runs')).toBe(true);
+        expect(canAccessConsoleRoute(role, '/projects')).toBe(true);
     });
 
     test('keeps old top-level console URLs out of the new router', () => {
@@ -196,6 +276,7 @@ describe('Console utils', () => {
                 image: 'pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime',
                 resources: 'cpu=8 mem=32GB gpu=1',
                 url: 'https://notebook.example.com',
+                requestDetailsPath: '/gpu/requests/research/req-1',
                 runDetailsPath: '/resources/runs/research/run-1',
                 logsPath: '/resources/runs/research/run-1#logs',
             },

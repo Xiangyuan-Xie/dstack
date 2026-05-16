@@ -5,6 +5,7 @@ import pytest
 from httpx import AsyncClient
 
 from dstack._internal.core.models.auth import OAuthProviderInfo
+from dstack._internal.server import settings as server_settings
 from dstack._internal.server.services.auth import register_provider
 
 
@@ -31,6 +32,55 @@ class TestListProviders:
                 "enabled": False,
             },
         ]
+
+
+class TestListTestUsers:
+    @pytest.mark.asyncio
+    async def test_returns_disabled_when_test_users_are_disabled(
+        self, monkeypatch: pytest.MonkeyPatch, client: AsyncClient
+    ):
+        monkeypatch.setattr(server_settings, "SERVER_TEST_USERS_ENABLED", False)
+
+        response = await client.post("/api/auth/test_users")
+
+        assert response.status_code == 200
+        assert response.json() == {"enabled": False, "users": []}
+
+    @pytest.mark.asyncio
+    async def test_returns_fixed_tokens_when_test_users_are_enabled(
+        self, monkeypatch: pytest.MonkeyPatch, client: AsyncClient
+    ):
+        monkeypatch.setattr(server_settings, "SERVER_TEST_USERS_ENABLED", True)
+
+        response = await client.post("/api/auth/test_users")
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "enabled": True,
+            "users": [
+                {
+                    "username": "test-admin",
+                    "label": "最高管理员",
+                    "role": "global_admin",
+                    "token": "dstack-test-admin-token",
+                    "description": "可访问完整资源、项目、用户和系统事件管理。",
+                },
+                {
+                    "username": "test-manager",
+                    "label": "项目管理员",
+                    "role": "project_manager",
+                    "token": "dstack-test-manager-token",
+                    "description": "可审批 GPU 申请并管理项目内容器和服务器。",
+                },
+                {
+                    "username": "test-user",
+                    "label": "普通用户",
+                    "role": "user",
+                    "token": "dstack-test-user-token",
+                    "description": "只能提交 GPU 申请、查看自己的容器和个人中心。",
+                },
+            ],
+        }
 
 
 class TestGetNextRedirectURL:

@@ -52,6 +52,7 @@ import {
     useGetProjectQuery,
     useGetProjectReposQuery,
     useGetProjectsQuery,
+    useGetProjectLogsQuery,
     useRemoveProjectMemberMutation,
     useUpdateProjectMutation,
 } from 'services/project';
@@ -125,12 +126,14 @@ const RequestStatus = ({ status }: { status?: TGpuRequestStatus | TJobStatus | s
 export const DashboardPage: React.FC = () => {
     const { role } = useConsoleContext();
     const { text } = useLocaleText();
-    const requests = useGetAllGpuRequestsQuery({ include_all: role.canManagePortal, limit: 100 });
+    const requests = useGetAllGpuRequestsQuery({ include_all: role.canUseProjectAdmin, limit: 100 });
     const runs = useGetRunsQuery({ limit: 100, job_submissions_limit: 1 });
-    const fleets = useGetFleetsQuery({ include_imported: true, limit: 100 });
-    const instances = useGetInstancesQuery({ only_active: true, include_imported: true, limit: 100 });
-    const events = useGetAllEventsQuery({ limit: 8 });
+    const fleets = useGetFleetsQuery({ include_imported: true, limit: 100 }, { skip: !role.canUseProjectAdmin });
+    const instances = useGetInstancesQuery({ only_active: true, include_imported: true, limit: 100 }, { skip: !role.canUseProjectAdmin });
+    const events = useGetAllEventsQuery({ limit: 8 }, { skip: !role.canUseGlobalAdmin });
     const stats = getGpuRequestStats(requests.data ?? []);
+    const containers = getContainerSummaries(requests.data ?? [], runs.data ?? []);
+    const runningContainers = containers.filter((container) => container.status === 'running').length;
     const runningRuns = (runs.data ?? []).filter((run) => run.status === 'running').length;
 
     return (
@@ -138,15 +141,32 @@ export const DashboardPage: React.FC = () => {
             <PageHeader
                 title={text('工作台', 'Dashboard')}
                 description={text(
-                    '跨项目查看 GPU 申请、容器、运行任务和基础设施状态。',
-                    'Cross-project GPU request and infrastructure overview.',
+                    role.canUseGlobalAdmin
+                        ? '跨项目查看 GPU 申请、容器、运行任务和基础设施状态。'
+                        : '查看你的 GPU 申请、容器状态和审批进展。',
+                    role.canUseGlobalAdmin
+                        ? 'Cross-project GPU request and infrastructure overview.'
+                        : 'Review your GPU requests, containers, and approval progress.',
                 )}
             />
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <MetricCard label={text('待审批申请', 'Pending requests')} value={stats.pending} accent="amber" />
-                <MetricCard label={text('运行中任务', 'Running runs')} value={runningRuns} accent="teal" />
-                <MetricCard label={text('集群', 'Fleets')} value={fleets.data?.length ?? 0} accent="blue" />
-                <MetricCard label={text('活跃实例', 'Active instances')} value={instances.data?.length ?? 0} accent="slate" />
+                <MetricCard
+                    label={role.canUseGlobalAdmin ? text('运行中任务', 'Running runs') : text('运行中容器', 'Running containers')}
+                    value={role.canUseGlobalAdmin ? runningRuns : runningContainers}
+                    accent="teal"
+                />
+                {role.canUseProjectAdmin ? (
+                    <>
+                        <MetricCard label={text('集群', 'Fleets')} value={fleets.data?.length ?? 0} accent="blue" />
+                        <MetricCard label={text('活跃实例', 'Active instances')} value={instances.data?.length ?? 0} accent="slate" />
+                    </>
+                ) : (
+                    <>
+                        <MetricCard label={text('已批准申请', 'Approved requests')} value={stats.approved} accent="blue" />
+                        <MetricCard label={text('失败申请', 'Failed requests')} value={stats.failed} accent="slate" />
+                    </>
+                )}
             </div>
             <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
                 <Panel title={text('最近 GPU 申请', 'Recent GPU requests')}>
@@ -158,7 +178,9 @@ export const DashboardPage: React.FC = () => {
                         columns={[
                             { id: 'name', header: text('名称', 'Name'), cell: (item) => item.request.name ?? item.id },
                             { id: 'project', header: text('项目', 'Project'), cell: (item) => item.project_name },
-                            { id: 'applicant', header: text('申请人', 'Applicant'), cell: (item) => item.applicant },
+                            ...(role.canUseProjectAdmin
+                                ? [{ id: 'applicant', header: text('申请人', 'Applicant'), cell: (item: IGpuRequest) => item.applicant }]
+                                : []),
                             {
                                 id: 'status',
                                 header: text('状态', 'Status'),
@@ -168,21 +190,41 @@ export const DashboardPage: React.FC = () => {
                         ]}
                     />
                 </Panel>
-                <Panel title={text('最近事件', 'Recent events')}>
-                    <div className="grid gap-3">
-                        {(events.data ?? []).map((event) => (
-                            <div key={event.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
-                                <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">{event.message}</div>
-                                <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                    {formatDate(event.recorded_at)} · {event.actor_user ?? 'system'}
+                {role.canUseGlobalAdmin ? (
+                    <Panel title={text('最近事件', 'Recent events')}>
+                        <div className="grid gap-3">
+                            {(events.data ?? []).map((event) => (
+                                <div key={event.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                                    <div className="text-sm font-semibold text-slate-900 dark:text-slate-50">{event.message}</div>
+                                    <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                        {formatDate(event.recorded_at)} · {event.actor_user ?? 'system'}
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
-                        {!events.isLoading && !(events.data ?? []).length && (
-                            <EmptyState title={text('暂无事件', 'No events')} />
-                        )}
-                    </div>
-                </Panel>
+                            ))}
+                            {!events.isLoading && !(events.data ?? []).length && (
+                                <EmptyState title={text('暂无事件', 'No events')} />
+                            )}
+                        </div>
+                    </Panel>
+                ) : (
+                    <Panel title={text('我的容器', 'My containers')}>
+                        <DataTable
+                            items={containers.slice(0, 6)}
+                            loading={requests.isLoading || runs.isLoading}
+                            keyGetter={(item) => item.id}
+                            empty={<EmptyState title={text('暂无容器', 'No containers')} />}
+                            columns={[
+                                { id: 'name', header: text('名称', 'Name'), cell: (item) => item.name },
+                                { id: 'project', header: text('项目', 'Project'), cell: (item) => item.projectName },
+                                {
+                                    id: 'status',
+                                    header: text('状态', 'Status'),
+                                    cell: (item) => <RequestStatus status={item.status} />,
+                                },
+                            ]}
+                        />
+                    </Panel>
+                )}
             </div>
         </>
     );
@@ -193,7 +235,7 @@ export const GpuRequestsPage: React.FC<{ approvals?: boolean }> = ({ approvals }
     const { role } = useConsoleContext();
     const { text } = useLocaleText();
     const [query, setQuery] = useState('');
-    const requests = useGetAllGpuRequestsQuery({ include_all: approvals || role.canManagePortal, limit: 500 });
+    const requests = useGetAllGpuRequestsQuery({ include_all: approvals || role.canUseProjectAdmin, limit: 500 });
     const items = useFilteredItems(
         approvals ? (requests.data ?? []).filter((request) => request.status === 'pending') : (requests.data ?? []),
         query,
@@ -433,6 +475,22 @@ export const GpuRequestDetailsPage: React.FC = () => {
     const { role } = useConsoleContext();
     const { text } = useLocaleText();
     const request = useGetGpuRequestQuery({ project_name: projectName, id: requestId });
+    const run = useGetRunQuery(
+        { project_name: projectName, id: request.data?.run_id ?? '' },
+        { skip: !request.data?.run_id },
+    );
+    const job = run.data?.jobs?.[0];
+    const submission = job?.job_submissions?.[job.job_submissions.length - 1];
+    const logs = useGetProjectLogsQuery(
+        {
+            project_name: projectName,
+            run_name: run.data?.run_spec.run_name ?? request.data?.run_name ?? '',
+            job_submission_id: submission?.id ?? '',
+            limit: 20,
+            descending: true,
+        },
+        { skip: !run.data || !submission },
+    );
     const [approve, approveState] = useApproveGpuRequestMutation();
     const [retry, retryState] = useRetryGpuRequestMutation();
     const [reject, rejectState] = useRejectGpuRequestMutation();
@@ -503,7 +561,34 @@ export const GpuRequestDetailsPage: React.FC = () => {
                                 <span className="text-slate-500 dark:text-slate-400">Run</span>
                                 <span className="font-medium">{request.data.run_name ?? request.data.run_id ?? '-'}</span>
                             </div>
-                            {request.data.run_id && (
+                            {run.data && (
+                                <>
+                                    <div className="flex justify-between">
+                                        <span className="text-slate-500 dark:text-slate-400">{text('容器状态', 'Container status')}</span>
+                                        <RequestStatus status={run.data.status} />
+                                    </div>
+                                    {run.data.service?.url && (
+                                        <div className="flex justify-between gap-4">
+                                            <span className="text-slate-500 dark:text-slate-400">{text('访问地址', 'URL')}</span>
+                                            <a
+                                                className="truncate font-medium text-blue-600 dark:text-blue-300"
+                                                href={run.data.service.url}
+                                                rel="noreferrer"
+                                                target="_blank"
+                                            >
+                                                {run.data.service.url}
+                                            </a>
+                                        </div>
+                                    )}
+                                    {submission && (
+                                        <div className="flex justify-between">
+                                            <span className="text-slate-500 dark:text-slate-400">{text('提交状态', 'Submission')}</span>
+                                            <RequestStatus status={submission.status} />
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                            {request.data.run_id && role.canUseGlobalAdmin && (
                                 <Button
                                     className="w-full"
                                     onClick={() =>
@@ -527,6 +612,53 @@ export const GpuRequestDetailsPage: React.FC = () => {
                     </Panel>
                 )}
             </div>
+            {run.data && (
+                <div className="mt-6 grid gap-6">
+                    <Panel title={text('容器运行信息', 'Container runtime')}>
+                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                            <MetricCard label={text('状态', 'Status')} value={<RequestStatus status={run.data.status} />} />
+                            <MetricCard label={text('镜像', 'Image')} value={request.data?.request.image ?? '-'} />
+                            <MetricCard label={text('用户', 'User')} value={run.data.user} />
+                            <MetricCard label={text('提交时间', 'Submitted')} value={formatDate(run.data.submitted_at)} />
+                        </div>
+                    </Panel>
+                    <Panel title="Jobs">
+                        <DataTable
+                            items={run.data.jobs ?? []}
+                            keyGetter={(item) => item.job_spec.job_name}
+                            columns={[
+                                { id: 'name', header: text('名称', 'Name'), cell: (item) => item.job_spec.job_name },
+                                { id: 'image', header: text('镜像', 'Image'), cell: (item) => item.job_spec.image_name },
+                                {
+                                    id: 'status',
+                                    header: text('状态', 'Status'),
+                                    cell: (item) => (
+                                        <RequestStatus status={item.job_submissions?.[item.job_submissions.length - 1]?.status} />
+                                    ),
+                                },
+                                { id: 'commands', header: text('命令', 'Commands'), cell: (item) => item.job_spec.commands.join(' && ') },
+                            ]}
+                        />
+                    </Panel>
+                    <Panel title={text('基础日志', 'Basic logs')}>
+                        {logs.data?.logs.length ? (
+                            <CodeBlock
+                                value={logs.data.logs
+                                    .map((log) => `[${formatDate(log.timestamp)}] ${log.log_source}: ${log.message}`)
+                                    .join('\n')}
+                            />
+                        ) : (
+                            <CodeBlock
+                                value={
+                                    submission
+                                        ? { job_submission_id: submission.id, status: submission.status }
+                                        : text('暂无日志提交', 'No log submission yet')
+                                }
+                            />
+                        )}
+                    </Panel>
+                </div>
+            )}
             <Modal
                 open={rejectOpen}
                 title={text('拒绝申请', 'Reject request')}
@@ -551,7 +683,7 @@ export const GpuRequestDetailsPage: React.FC = () => {
 export const ContainersPage: React.FC<{ adminView?: boolean }> = ({ adminView }) => {
     const { role } = useConsoleContext();
     const { text } = useLocaleText();
-    const requests = useGetAllGpuRequestsQuery({ include_all: adminView || role.canManagePortal, limit: 500 });
+    const requests = useGetAllGpuRequestsQuery({ include_all: adminView || role.canUseProjectAdmin, limit: 500 });
     const runs = useGetRunsQuery({ limit: 500, job_submissions_limit: 1 });
     const containers = getContainerSummaries(requests.data ?? [], runs.data ?? []);
 
@@ -578,7 +710,7 @@ export const ContainersPage: React.FC<{ adminView?: boolean }> = ({ adminView })
                             id: 'actions',
                             header: text('操作', 'Actions'),
                             cell: (item) => (
-                                <Button className="min-w-20" onClick={() => (window.location.href = item.runDetailsPath)}>
+                                <Button className="min-w-20" onClick={() => (window.location.href = item.requestDetailsPath)}>
                                     {text('详情', 'Details')}
                                 </Button>
                             ),

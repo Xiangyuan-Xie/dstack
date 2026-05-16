@@ -77,10 +77,86 @@ class TestListProjects:
                 "created_at": "2023-01-02T03:04:00+00:00",
                 "backends": [],
                 "members": [],
+                "current_user_project_role": "admin",
                 "is_public": False,
                 "templates_repo": None,
             }
         ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_returns_current_user_project_role(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        owner = await create_user(session=session, name="owner")
+        manager = await create_user(session=session, name="manager")
+        member = await create_user(session=session, name="member")
+        outsider = await create_user(session=session, name="outsider")
+        admin_project = await create_project(session=session, owner=owner, name="admin-project")
+        manager_project = await create_project(
+            session=session, owner=owner, name="manager-project"
+        )
+        user_project = await create_project(session=session, owner=owner, name="user-project")
+        public_project = await create_project(
+            session=session,
+            owner=owner,
+            name="public-project",
+            is_public=True,
+        )
+        await add_project_member(
+            session=session, project=admin_project, user=manager, project_role=ProjectRole.ADMIN
+        )
+        await add_project_member(
+            session=session,
+            project=manager_project,
+            user=manager,
+            project_role=ProjectRole.MANAGER,
+        )
+        await add_project_member(
+            session=session, project=user_project, user=member, project_role=ProjectRole.USER
+        )
+        await add_project_member(
+            session=session, project=public_project, user=owner, project_role=ProjectRole.ADMIN
+        )
+
+        manager_response = await client.post(
+            "/api/projects/list",
+            headers=get_auth_headers(manager.token),
+            json={"include_not_joined": True},
+        )
+        member_response = await client.post(
+            "/api/projects/list",
+            headers=get_auth_headers(member.token),
+            json={"include_not_joined": True},
+        )
+        outsider_response = await client.post(
+            "/api/projects/list",
+            headers=get_auth_headers(outsider.token),
+            json={"include_not_joined": True},
+        )
+
+        assert manager_response.status_code == 200, manager_response.json()
+        assert {
+            project["project_name"]: project["current_user_project_role"]
+            for project in manager_response.json()
+        } == {
+            "admin-project": "admin",
+            "manager-project": "manager",
+            "public-project": None,
+        }
+        assert member_response.status_code == 200, member_response.json()
+        assert {
+            project["project_name"]: project["current_user_project_role"]
+            for project in member_response.json()
+        } == {
+            "public-project": None,
+            "user-project": "user",
+        }
+        assert outsider_response.status_code == 200, outsider_response.json()
+        assert {
+            project["project_name"]: project["current_user_project_role"]
+            for project in outsider_response.json()
+        } == {"public-project": None}
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
@@ -257,6 +333,7 @@ class TestListProjects:
                 "created_at": "2023-01-02T03:06:00+00:00",
                 "backends": [],
                 "members": [],
+                "current_user_project_role": None,
                 "is_public": False,
                 "templates_repo": None,
             }
@@ -290,6 +367,7 @@ class TestListProjects:
                 "created_at": "2023-01-02T03:05:00+00:00",
                 "backends": [],
                 "members": [],
+                "current_user_project_role": None,
                 "is_public": False,
                 "templates_repo": None,
             }
@@ -323,6 +401,7 @@ class TestListProjects:
                 "created_at": "2023-01-02T03:04:00+00:00",
                 "backends": [],
                 "members": [],
+                "current_user_project_role": None,
                 "is_public": False,
                 "templates_repo": None,
             }
@@ -375,6 +454,7 @@ class TestListProjects:
                     "created_at": "2023-01-02T03:05:00+00:00",
                     "backends": [],
                     "members": [],
+                    "current_user_project_role": None,
                     "is_public": False,
                     "templates_repo": None,
                 }
@@ -980,6 +1060,7 @@ class TestCreateProject:
                     },
                 }
             ],
+            "current_user_project_role": None,
             "is_public": False,
             "templates_repo": None,
         }
@@ -1541,6 +1622,7 @@ class TestGetProject:
                     },
                 }
             ],
+            "current_user_project_role": None,
             "is_public": False,
             "templates_repo": None,
         }

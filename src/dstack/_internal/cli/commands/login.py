@@ -147,7 +147,7 @@ class LoginCommand(BaseCommand):
         if len(projects) == 0:
             console.print(
                 "No projects configured."
-                " Create your own project via the UI or contact a project manager to add you to the project."
+                " Create your own project via the UI or contact a project admin to add you to the project."
             )
             return
         config_manager = ConfigManager()

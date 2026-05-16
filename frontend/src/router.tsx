@@ -5,7 +5,7 @@ import { ROUTES } from 'routes';
 
 import App from 'App';
 import { AuthErrorPage, LoginPage, LogoutPage, OAuthCallbackPage } from 'pages/Console/Auth';
-import { AdminRoute, ConsoleLayout } from 'pages/Console/Layout';
+import { ConsoleLayout, GlobalAdminRoute, ProjectAdminRoute } from 'pages/Console/Layout';
 import {
     AccountBillingPage,
     AccountKeysPage,
@@ -63,80 +63,220 @@ export const router = createBrowserRouter([
                     { path: C.GPU_REQUEST_CREATE, element: <GpuRequestCreatePage /> },
                     { path: C.GPU_REQUEST_DETAILS.TEMPLATE, element: <GpuRequestDetailsPage /> },
                     { path: C.GPU_CONTAINERS, element: <ContainersPage /> },
-                    { path: C.RESOURCES_RUNS, element: <RunsPage /> },
-                    { path: C.RESOURCES_RUN_CREATE, element: <RunCreatePage /> },
-                    { path: C.RESOURCES_RUN_DETAILS.TEMPLATE, element: <RunDetailsPage /> },
-                    { path: C.RESOURCES_JOB_DETAILS.TEMPLATE, element: <RunDetailsPage /> },
-                    { path: C.RESOURCES_FLEETS, element: <FleetsPage /> },
-                    { path: C.RESOURCES_FLEET_CREATE, element: <FleetCreatePage /> },
-                    { path: C.RESOURCES_FLEET_DETAILS.TEMPLATE, element: <FleetDetailsPage /> },
-                    { path: C.RESOURCES_INSTANCES, element: <InstancesPage /> },
-                    { path: C.RESOURCES_INSTANCE_DETAILS.TEMPLATE, element: <InstanceDetailsPage /> },
-                    { path: C.RESOURCES_OFFERS, element: <OffersPage /> },
-                    { path: C.RESOURCES_MODELS, element: <ModelsPage /> },
-                    { path: C.RESOURCES_MODEL_DETAILS.TEMPLATE, element: <ModelDetailsPage /> },
-                    { path: C.RESOURCES_VOLUMES, element: <VolumesPage /> },
-                    { path: C.WORKSPACE_PROJECTS, element: <ProjectsPage /> },
-                    { path: C.WORKSPACE_PROJECT_CREATE, element: <ProjectCreatePage /> },
-                    { path: C.WORKSPACE_PROJECT_DETAILS.TEMPLATE, element: <ProjectDetailsPage /> },
-                    { path: C.WORKSPACE_BACKEND_CREATE.TEMPLATE, element: <BackendPage create /> },
-                    { path: C.WORKSPACE_BACKEND_DETAILS.TEMPLATE, element: <BackendPage /> },
-                    { path: C.WORKSPACE_GATEWAY_CREATE.TEMPLATE, element: <GatewayPage create /> },
-                    { path: C.WORKSPACE_GATEWAY_DETAILS.TEMPLATE, element: <GatewayPage /> },
+                    {
+                        path: C.RESOURCES_RUNS,
+                        element: (
+                            <GlobalAdminRoute>
+                                <RunsPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.RESOURCES_RUN_CREATE,
+                        element: (
+                            <GlobalAdminRoute>
+                                <RunCreatePage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.RESOURCES_RUN_DETAILS.TEMPLATE,
+                        element: (
+                            <GlobalAdminRoute>
+                                <RunDetailsPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.RESOURCES_JOB_DETAILS.TEMPLATE,
+                        element: (
+                            <GlobalAdminRoute>
+                                <RunDetailsPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.RESOURCES_FLEETS,
+                        element: (
+                            <GlobalAdminRoute>
+                                <FleetsPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.RESOURCES_FLEET_CREATE,
+                        element: (
+                            <GlobalAdminRoute>
+                                <FleetCreatePage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.RESOURCES_FLEET_DETAILS.TEMPLATE,
+                        element: (
+                            <GlobalAdminRoute>
+                                <FleetDetailsPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.RESOURCES_INSTANCES,
+                        element: (
+                            <GlobalAdminRoute>
+                                <InstancesPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.RESOURCES_INSTANCE_DETAILS.TEMPLATE,
+                        element: (
+                            <GlobalAdminRoute>
+                                <InstanceDetailsPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.RESOURCES_OFFERS,
+                        element: (
+                            <GlobalAdminRoute>
+                                <OffersPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.RESOURCES_MODELS,
+                        element: (
+                            <GlobalAdminRoute>
+                                <ModelsPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.RESOURCES_MODEL_DETAILS.TEMPLATE,
+                        element: (
+                            <GlobalAdminRoute>
+                                <ModelDetailsPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.RESOURCES_VOLUMES,
+                        element: (
+                            <GlobalAdminRoute>
+                                <VolumesPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.WORKSPACE_PROJECTS,
+                        element: (
+                            <GlobalAdminRoute>
+                                <ProjectsPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.WORKSPACE_PROJECT_CREATE,
+                        element: (
+                            <GlobalAdminRoute>
+                                <ProjectCreatePage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.WORKSPACE_PROJECT_DETAILS.TEMPLATE,
+                        element: (
+                            <GlobalAdminRoute>
+                                <ProjectDetailsPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.WORKSPACE_BACKEND_CREATE.TEMPLATE,
+                        element: (
+                            <GlobalAdminRoute>
+                                <BackendPage create />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.WORKSPACE_BACKEND_DETAILS.TEMPLATE,
+                        element: (
+                            <GlobalAdminRoute>
+                                <BackendPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.WORKSPACE_GATEWAY_CREATE.TEMPLATE,
+                        element: (
+                            <GlobalAdminRoute>
+                                <GatewayPage create />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
+                        path: C.WORKSPACE_GATEWAY_DETAILS.TEMPLATE,
+                        element: (
+                            <GlobalAdminRoute>
+                                <GatewayPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
                     {
                         path: C.ADMIN_APPROVALS,
                         element: (
-                            <AdminRoute>
+                            <ProjectAdminRoute>
                                 <GpuRequestsPage approvals />
-                            </AdminRoute>
+                            </ProjectAdminRoute>
                         ),
                     },
                     {
                         path: C.ADMIN_CONTAINERS,
                         element: (
-                            <AdminRoute>
+                            <ProjectAdminRoute>
                                 <ContainersPage adminView />
-                            </AdminRoute>
+                            </ProjectAdminRoute>
                         ),
                     },
                     {
                         path: C.ADMIN_SERVERS,
                         element: (
-                            <AdminRoute>
+                            <ProjectAdminRoute>
                                 <FleetsPage servers />
-                            </AdminRoute>
+                            </ProjectAdminRoute>
                         ),
                     },
                     {
                         path: C.ADMIN_USERS,
                         element: (
-                            <AdminRoute>
+                            <GlobalAdminRoute>
                                 <UsersPage />
-                            </AdminRoute>
+                            </GlobalAdminRoute>
                         ),
                     },
                     {
                         path: C.ADMIN_USER_CREATE,
                         element: (
-                            <AdminRoute>
+                            <GlobalAdminRoute>
                                 <UserCreatePage />
-                            </AdminRoute>
+                            </GlobalAdminRoute>
                         ),
                     },
                     {
                         path: C.ADMIN_USER_DETAILS.TEMPLATE,
                         element: (
-                            <AdminRoute>
+                            <GlobalAdminRoute>
                                 <UserDetailsPage />
-                            </AdminRoute>
+                            </GlobalAdminRoute>
                         ),
                     },
                     {
                         path: C.ADMIN_EVENTS,
                         element: (
-                            <AdminRoute>
+                            <GlobalAdminRoute>
                                 <EventsPage />
-                            </AdminRoute>
+                            </GlobalAdminRoute>
                         ),
                     },
                     { path: C.ACCOUNT_PROFILE, element: <AccountProfilePage /> },

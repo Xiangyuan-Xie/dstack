@@ -404,7 +404,7 @@ def _can_access_gpu_request(
 
 def _check_can_review_gpu_requests(user: UserModel, project: ProjectModel) -> None:
     if not _can_review_gpu_requests(user=user, project=project):
-        raise ForbiddenError("Only project managers and admins can review GPU requests")
+        raise ForbiddenError("Only project admins and highest admins can review GPU requests")
 
 
 def _can_review_gpu_requests(user: UserModel, project: ProjectModel) -> bool:

@@ -7,7 +7,7 @@ from typing import Awaitable, Callable, List, Optional, Tuple
 from sqlalchemy import and_, delete, literal_column, or_, select, update
 from sqlalchemy import func as safunc
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import QueryableAttribute, joinedload, load_only
+from sqlalchemy.orm import QueryableAttribute, aliased, joinedload, load_only
 
 from dstack._internal.core.backends.configurators import get_configurator
 from dstack._internal.core.backends.dstack.models import (
@@ -93,24 +93,28 @@ async def list_user_accessible_projects(
     if name_pattern:
         name_pattern = name_pattern.replace("_", "/_")
         filters.append(ProjectModel.name.ilike(f"%{name_pattern}%", escape="/"))
-    stmt = select(ProjectModel).where(*filters)
-    if user.global_role != GlobalRole.ADMIN:
-        stmt = stmt.outerjoin(
-            MemberModel,
+    current_user_member = aliased(MemberModel)
+    stmt = (
+        select(ProjectModel, current_user_member.project_role)
+        .outerjoin(
+            current_user_member,
             onclause=and_(
-                MemberModel.project_id == ProjectModel.id,
-                MemberModel.user_id == user.id,
+                current_user_member.project_id == ProjectModel.id,
+                current_user_member.user_id == user.id,
             ),
         )
+        .where(*filters)
+    )
+    if user.global_role != GlobalRole.ADMIN:
         if include_not_joined:
             stmt = stmt.where(
                 or_(
                     ProjectModel.is_public == True,
-                    MemberModel.user_id.is_not(None),
+                    current_user_member.user_id.is_not(None),
                 )
             )
         else:
-            stmt = stmt.where(MemberModel.user_id.is_not(None))
+            stmt = stmt.where(current_user_member.user_id.is_not(None))
     pagination_filters = []
     if prev_created_at is not None:
         if ascending:
@@ -145,10 +149,15 @@ async def list_user_accessible_projects(
         res = await session.execute(stmt.with_only_columns(safunc.count(literal_column("1"))))
         total_count = res.scalar_one()
     res = await session.execute(stmt.where(*pagination_filters).order_by(*order_by).limit(limit))
-    project_models = res.unique().scalars().all()
+    project_rows = res.unique().all()
     projects = [
-        project_model_to_project(p, include_backends=False, include_members=False)
-        for p in project_models
+        project_model_to_project(
+            project_model,
+            include_backends=False,
+            include_members=False,
+            current_user_project_role=current_user_project_role,
+        )
+        for project_model, current_user_project_role in project_rows
     ]
     if total_count is None:
         return projects
@@ -662,6 +671,7 @@ def project_model_to_project(
     project_model: ProjectModel,
     include_backends: bool = True,
     include_members: bool = True,
+    current_user_project_role: Optional[ProjectRole] = None,
 ) -> Project:
     members = []
     if include_members:
@@ -709,6 +719,7 @@ def project_model_to_project(
         created_at=project_model.created_at,
         backends=backends,
         members=members,
+        current_user_project_role=current_user_project_role,
         is_public=project_model.is_public,
         **(
             {"templates_repo": project_model.templates_repo}

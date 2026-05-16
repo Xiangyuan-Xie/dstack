@@ -123,7 +123,7 @@ def get_request_size(request: Request) -> int:
     return int(request.headers["content-length"])
 
 
-def get_client_version(request: Request) -> Optional[packaging.version.Version]:
+async def get_client_version(request: Request) -> Optional[packaging.version.Version]:
     """
     FastAPI dependency that returns the dstack client version or None if the version is latest/dev.
     """

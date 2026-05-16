@@ -13,7 +13,7 @@ import { useGetProjectsQuery } from 'services/project';
 import { selectSystemMode, selectUserData, setSystemMode } from 'App/slice';
 
 import { CONSOLE_ROUTES, LOCALE_STORAGE_KEY } from './constants';
-import { getConsoleNavSections, getConsoleUserRole } from './utils';
+import { canAccessConsoleRoute, getConsoleNavSections, getConsoleUserRole } from './utils';
 
 type ConsoleContextValue = {
     projects: IProject[];
@@ -27,6 +27,8 @@ const ConsoleContext = createContext<ConsoleContextValue>({
     role: {
         isGlobalAdmin: false,
         canManagePortal: false,
+        canUseProjectAdmin: false,
+        canUseGlobalAdmin: false,
         manageableProjectNames: [],
     },
     user: null,
@@ -187,7 +189,7 @@ export const ConsoleLayout: React.FC = () => {
                         </div>
                     </header>
                     <main className="min-h-[calc(100vh-4rem)] px-4 py-6 sm:px-6 lg:px-8">
-                        <Outlet />
+                        {canAccessConsoleRoute(role, location.pathname) ? <Outlet /> : <AccessDenied locale={locale} />}
                     </main>
                 </div>
                 <ToastViewport />
@@ -197,20 +199,32 @@ export const ConsoleLayout: React.FC = () => {
     );
 };
 
-export const AdminRoute: React.FC<{ children: ReactNode }> = ({ children }) => {
+const AccessDenied: React.FC<{ locale: TLocale }> = ({ locale }) => (
+    <div className="rounded-xl border border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">
+        <h1 className="text-xl font-bold text-slate-950 dark:text-slate-50">
+            {locale === 'zh' ? '无权访问' : 'Access denied'}
+        </h1>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+            {locale === 'zh' ? '当前账号没有访问该页面的权限。' : 'Your account does not have access to this page.'}
+        </p>
+    </div>
+);
+
+export const ProjectAdminRoute: React.FC<{ children: ReactNode }> = ({ children }) => {
     const { role, locale } = useConsoleContext();
 
-    if (!role.canManagePortal) {
-        return (
-            <div className="rounded-xl border border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">
-                <h1 className="text-xl font-bold text-slate-950 dark:text-slate-50">
-                    {locale === 'zh' ? '无权访问' : 'Access denied'}
-                </h1>
-                <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                    {locale === 'zh' ? '当前账号没有管理权限。' : 'Your account does not have admin permissions.'}
-                </p>
-            </div>
-        );
+    if (!role.canUseProjectAdmin) {
+        return <AccessDenied locale={locale} />;
+    }
+
+    return <>{children}</>;
+};
+
+export const GlobalAdminRoute: React.FC<{ children: ReactNode }> = ({ children }) => {
+    const { role, locale } = useConsoleContext();
+
+    if (!role.canUseGlobalAdmin) {
+        return <AccessDenied locale={locale} />;
     }
 
     return <>{children}</>;

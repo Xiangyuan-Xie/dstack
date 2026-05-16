@@ -28,6 +28,8 @@ class Project(CoreModel):
     created_at: Optional[datetime] = None
     backends: List[BackendInfo]
     members: List[Member]
+    current_user_project_role: Optional[ProjectRole] = None
+    """The requesting user's role in the project. Set on project list responses."""
     is_public: bool = False
     templates_repo: Optional[str] = None
 

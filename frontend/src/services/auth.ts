@@ -3,6 +3,11 @@ import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 
 import unauthorizedQueryHeaders from 'libs/fetchBaseQueryHeaders';
 
+export const getServerTestUsersQuery = () => ({
+    url: API.AUTH.TEST_USERS(),
+    method: 'POST',
+});
+
 export const authApi = createApi({
     reducerPath: 'authApi',
     baseQuery: fetchBaseQuery({
@@ -12,6 +17,10 @@ export const authApi = createApi({
     tagTypes: ['Auth'],
 
     endpoints: (builder) => ({
+        getServerTestUsers: builder.query<IServerTestUsersResponse, void>({
+            query: getServerTestUsersQuery,
+        }),
+
         getNextRedirect: builder.mutation<{ redirect_url?: string }, { code: string; state: string }>({
             query: (body) => ({
                 url: API.AUTH.NEXT_REDIRECT(),
@@ -111,6 +120,7 @@ export const authApi = createApi({
 });
 
 export const {
+    useGetServerTestUsersQuery,
     useGetNextRedirectMutation,
     useGithubAuthorizeMutation,
     useGithubCallbackMutation,

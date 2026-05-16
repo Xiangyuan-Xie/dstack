@@ -81,3 +81,22 @@ class OAuthGetNextRedirectResponse(CoreModel):
             )
         ),
     ]
+
+
+class TestUserToken(CoreModel):
+    username: Annotated[str, Field(description="The test user's username.")]
+    label: Annotated[str, Field(description="A short user-facing role label.")]
+    role: Annotated[str, Field(description="The test role represented by the token.")]
+    token: Annotated[str, Field(description="The fixed token that can be used to sign in.")]
+    description: Annotated[str, Field(description="A short description of available permissions.")]
+
+
+class ListTestUsersResponse(CoreModel):
+    enabled: Annotated[
+        bool,
+        Field(description="Whether server test users are enabled."),
+    ]
+    users: Annotated[
+        list[TestUserToken],
+        Field(description="Fixed test users available for token sign-in."),
+    ] = []

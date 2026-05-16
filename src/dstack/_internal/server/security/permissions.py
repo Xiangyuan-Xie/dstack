@@ -83,7 +83,7 @@ class ProjectAdmin:
 
 class ProjectManager:
     """
-    Allows project admins and managers to manage projects.
+    Allows project admins to manage projects.
     """
 
     async def __call__(
@@ -159,7 +159,7 @@ class ProjectMemberOrPublicAccess:
 class ProjectManagerOrPublicProject:
     """
     Allows:
-    1. Project managers to perform member management operations
+    1. Project admins to perform member management operations
     2. Access to public projects for any authenticated user
     """
 
@@ -195,7 +195,7 @@ class ProjectManagerOrPublicProject:
 class ProjectManagerOrSelfLeave:
     """
     Allows:
-    1. Project managers to remove any members
+    1. Project admins to remove any members
     2. Any project member to leave (remove themselves)
     """
 

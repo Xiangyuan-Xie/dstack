@@ -120,13 +120,17 @@ export const getConsoleUserRole = (projects: IProject[], user?: IUser | null): I
     const isGlobalAdmin = user?.global_role === GlobalUserRole.ADMIN;
     const manageableProjectNames = projects
         .filter((project) => {
-            const projectRole = project.members.find((member) => member.user.username === user?.username)?.project_role;
+            const projectRole =
+                project.current_user_project_role ??
+                project.members.find((member) => member.user.username === user?.username)?.project_role;
             return projectRole === ProjectUserRole.ADMIN || projectRole === ProjectUserRole.MANAGER;
         })
         .map((project) => project.project_name);
 
     return {
         isGlobalAdmin,
+        canUseProjectAdmin: isGlobalAdmin || manageableProjectNames.length > 0,
+        canUseGlobalAdmin: isGlobalAdmin,
         canManagePortal: isGlobalAdmin || manageableProjectNames.length > 0,
         manageableProjectNames,
     };
@@ -138,9 +142,13 @@ export const canManageConsoleProject = (role: IConsoleUserRole, projectName: str
 
 export const getConsoleNavSections = (role: IConsoleUserRole, locale: TLocale = 'zh'): IConsoleNavSection[] => {
     const text = navCopy[locale] ?? navCopy.zh;
-    const containerItem = role.canManagePortal
-        ? { label: text.containersAdmin, href: CONSOLE_ROUTES.ADMIN_CONTAINERS, icon: 'Boxes', adminOnly: true }
-        : { label: text.containersMine, href: CONSOLE_ROUTES.GPU_CONTAINERS, icon: 'Box' };
+    const gpuItems: IConsoleNavItem[] = [
+        { label: text.requests, href: CONSOLE_ROUTES.GPU_REQUESTS, icon: 'Gpu' },
+        { label: text.containersMine, href: CONSOLE_ROUTES.GPU_CONTAINERS, icon: 'Box' },
+    ];
+    if (role.canUseProjectAdmin) {
+        gpuItems.push({ label: text.containersAdmin, href: CONSOLE_ROUTES.ADMIN_CONTAINERS, icon: 'Boxes', adminOnly: true });
+    }
 
     return [
         {
@@ -149,9 +157,9 @@ export const getConsoleNavSections = (role: IConsoleUserRole, locale: TLocale = 
         },
         {
             title: text.gpu,
-            items: [{ label: text.requests, href: CONSOLE_ROUTES.GPU_REQUESTS, icon: 'Gpu' }, containerItem],
+            items: gpuItems,
         },
-        {
+        role.canUseGlobalAdmin && {
             title: text.resources,
             items: [
                 { label: text.runs, href: CONSOLE_ROUTES.RESOURCES_RUNS, icon: 'PlayCircle' },
@@ -162,17 +170,21 @@ export const getConsoleNavSections = (role: IConsoleUserRole, locale: TLocale = 
                 { label: text.volumes, href: CONSOLE_ROUTES.RESOURCES_VOLUMES, icon: 'HardDrive' },
             ],
         },
-        {
+        role.canUseGlobalAdmin && {
             title: text.workspace,
             items: [{ label: text.projects, href: CONSOLE_ROUTES.WORKSPACE_PROJECTS, icon: 'FolderKanban' }],
         },
-        role.canManagePortal && {
+        role.canUseProjectAdmin && {
             title: text.admin,
             items: [
                 { label: text.approvals, href: CONSOLE_ROUTES.ADMIN_APPROVALS, icon: 'ClipboardCheck', adminOnly: true },
                 { label: text.servers, href: CONSOLE_ROUTES.ADMIN_SERVERS, icon: 'MonitorCog', adminOnly: true },
-                { label: text.users, href: CONSOLE_ROUTES.ADMIN_USERS, icon: 'Users', adminOnly: true },
-                { label: text.events, href: CONSOLE_ROUTES.ADMIN_EVENTS, icon: 'Activity', adminOnly: true },
+                ...(role.canUseGlobalAdmin
+                    ? [
+                          { label: text.users, href: CONSOLE_ROUTES.ADMIN_USERS, icon: 'Users', adminOnly: true },
+                          { label: text.events, href: CONSOLE_ROUTES.ADMIN_EVENTS, icon: 'Activity', adminOnly: true },
+                      ]
+                    : []),
             ],
         },
         {
@@ -186,6 +198,48 @@ export const getConsoleNavSections = (role: IConsoleUserRole, locale: TLocale = 
             ],
         },
     ].filter(Boolean) as IConsoleNavSection[];
+};
+
+export const canAccessConsoleRoute = (role: IConsoleUserRole, pathname: string, uiVersion = process.env.UI_VERSION): boolean => {
+    if (isLegacyConsolePath(pathname)) {
+        // Legacy paths are handled by the router's Not Found page, not by the permission guard.
+        return true;
+    }
+    if (pathname === '/' || pathname === CONSOLE_ROUTES.DASHBOARD) {
+        return true;
+    }
+    if (
+        pathname === CONSOLE_ROUTES.GPU_REQUESTS ||
+        pathname === CONSOLE_ROUTES.GPU_REQUEST_CREATE ||
+        pathname === CONSOLE_ROUTES.GPU_CONTAINERS ||
+        pathname.startsWith('/gpu/requests/')
+    ) {
+        return true;
+    }
+    if (
+        pathname === CONSOLE_ROUTES.ACCOUNT_PROFILE ||
+        pathname === CONSOLE_ROUTES.ACCOUNT_KEYS ||
+        pathname === CONSOLE_ROUTES.ACCOUNT_PROJECTS
+    ) {
+        return true;
+    }
+    if (pathname === CONSOLE_ROUTES.ACCOUNT_BILLING) {
+        return uiVersion === 'sky';
+    }
+    if (
+        pathname === CONSOLE_ROUTES.ADMIN_APPROVALS ||
+        pathname === CONSOLE_ROUTES.ADMIN_CONTAINERS ||
+        pathname === CONSOLE_ROUTES.ADMIN_SERVERS
+    ) {
+        return role.canUseProjectAdmin;
+    }
+    if (pathname.startsWith('/resources/') || pathname.startsWith('/workspace/projects')) {
+        return role.canUseGlobalAdmin;
+    }
+    if (pathname.startsWith('/admin/users') || pathname === CONSOLE_ROUTES.ADMIN_EVENTS) {
+        return role.canUseGlobalAdmin;
+    }
+    return true;
 };
 
 export const isLegacyConsolePath = (pathname: string): boolean => {
@@ -274,6 +328,7 @@ export const getContainerSummaries = (requests: IGpuRequest[], runs: IRun[] = []
                 image: request.request.image,
                 resources: formatGpuRequestResourcesText(request.request),
                 url: run?.service?.url,
+                requestDetailsPath: CONSOLE_ROUTES.GPU_REQUEST_DETAILS.FORMAT(request.project_name, request.id),
                 runDetailsPath: CONSOLE_ROUTES.RESOURCES_RUN_DETAILS.FORMAT(request.project_name, runId),
                 logsPath: `${CONSOLE_ROUTES.RESOURCES_RUN_DETAILS.FORMAT(request.project_name, runId)}#logs`,
             };

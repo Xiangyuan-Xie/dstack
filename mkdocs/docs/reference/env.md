@@ -108,6 +108,7 @@ For more details on the options below, refer to the [server deployment](../guide
 - `DSTACK_SERVER_PORT`{ #DSTACK_SERVER_PORT } – Has the same effect as `--port`. Defaults to `3000`.
 - `DSTACK_SERVER_URL`{ #DSTACK_SERVER_URL } – The URL that the server is running on, e.g. `https://my-server.dstack.ai` Defaults to `http://{DSTACK_SERVER_HOST}:{DSTACK_SERVER_PORT}`.
 - `DSTACK_SERVER_ADMIN_TOKEN`{ #DSTACK_SERVER_ADMIN_TOKEN } – Has the same effect as `--token`. Defaults to `None`.
+- `DSTACK_SERVER_TEST_USERS_ENABLED`{ #DSTACK_SERVER_TEST_USERS_ENABLED } – Enables fixed test users and exposes their tokens on the login page. Intended for local test environments only. Defaults to `false`.
 - `DSTACK_SERVER_DIR`{ #DSTACK_SERVER_DIR } – Sets path to store data and server configs. Defaults to `~/.dstack/server`.
 - `DSTACK_DATABASE_URL`{ #DSTACK_DATABASE_URL } – The database URL to use instead of default SQLite. Currently `dstack` supports Postgres. Example: `postgresql+asyncpg://myuser:mypassword@localhost:5432/mydatabase`. Defaults to `None`.
 - `DSTACK_SERVER_CLOUDWATCH_LOG_GROUP`{ #DSTACK_SERVER_CLOUDWATCH_LOG_GROUP } – The CloudWatch Logs group for storing workloads logs. If not set, the default file-based log storage is used.

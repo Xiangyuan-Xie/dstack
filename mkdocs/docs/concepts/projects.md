@@ -37,8 +37,8 @@ A user can be added to a project and assigned or unassigned as a project role on
 
 * **Admin** – The project admin role allows a user to manage the project's settings,
   including backends, gateways, and members.
-* **Manager** – The project manager role allows a user to manage project members.
-  Unlike admins, managers cannot configure backends and gateways.
+* **Project admin** – The project admin role allows a user to review GPU requests and manage project runtime resources.
+  Internally, this role is stored as `manager`.
 * **User** – A user can manage project resources including runs, fleets, and volumes.
 
 ## Project exports

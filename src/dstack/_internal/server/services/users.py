@@ -19,6 +19,7 @@ from dstack._internal.core.errors import (
 )
 from dstack._internal.core.models.users import (
     GlobalRole,
+    ProjectRole,
     User,
     UserHookConfig,
     UserPermissions,
@@ -27,8 +28,10 @@ from dstack._internal.core.models.users import (
     UserTokenCreds,
     UserWithCreds,
 )
+from dstack._internal.server import settings
 from dstack._internal.server.db import get_db
-from dstack._internal.server.models import DecryptedString, MemberModel, UserModel
+from dstack._internal.server.models import DecryptedString, MemberModel, ProjectModel, UserModel
+from dstack._internal.server.schemas.auth import TestUserToken
 from dstack._internal.server.services import events
 from dstack._internal.server.services.locking import get_locker
 from dstack._internal.server.services.permissions import get_default_permissions
@@ -40,6 +43,36 @@ from dstack._internal.utils.logging import get_logger
 logger = get_logger(__name__)
 
 _ADMIN_USERNAME = "admin"
+
+_SERVER_TEST_USERS = [
+    TestUserToken(
+        username="test-admin",
+        label="最高管理员",
+        role="global_admin",
+        token="dstack-test-admin-token",
+        description="可访问完整资源、项目、用户和系统事件管理。",
+    ),
+    TestUserToken(
+        username="test-manager",
+        label="项目管理员",
+        role="project_manager",
+        token="dstack-test-manager-token",
+        description="可审批 GPU 申请并管理项目内容器和服务器。",
+    ),
+    TestUserToken(
+        username="test-user",
+        label="普通用户",
+        role="user",
+        token="dstack-test-user-token",
+        description="只能提交 GPU 申请、查看自己的容器和个人中心。",
+    ),
+]
+
+_SERVER_TEST_PROJECT_ROLES = {
+    "test-manager": ProjectRole.MANAGER,
+    "test-user": ProjectRole.USER,
+}
+_REMOVED_SERVER_TEST_USERNAMES = ["test-project-admin"]
 
 
 async def get_or_create_admin_user(session: AsyncSession) -> Tuple[UserModel, bool]:
@@ -53,6 +86,51 @@ async def get_or_create_admin_user(session: AsyncSession) -> Tuple[UserModel, bo
         token=os.getenv("DSTACK_SERVER_ADMIN_TOKEN"),
     )
     return admin, True
+
+
+def list_server_test_user_tokens() -> list[TestUserToken]:
+    if not settings.SERVER_TEST_USERS_ENABLED:
+        return []
+    return _SERVER_TEST_USERS
+
+
+async def ensure_server_test_users(
+    session: AsyncSession,
+    project: ProjectModel,
+) -> list[TestUserToken]:
+    for username in _REMOVED_SERVER_TEST_USERNAMES:
+        user_model = await get_user_model_by_name(session=session, username=username)
+        if user_model is not None and user_model.active:
+            user_model.active = False
+            await session.commit()
+
+    created_or_updated = []
+    for test_user in _SERVER_TEST_USERS:
+        global_role = GlobalRole.ADMIN if test_user.role == "global_admin" else GlobalRole.USER
+        user_model = await get_user_model_by_name(session=session, username=test_user.username)
+        if user_model is None:
+            user_model = await create_user(
+                session=session,
+                username=test_user.username,
+                global_role=global_role,
+                token=test_user.token,
+            )
+        else:
+            user_model.global_role = global_role
+            user_model.active = True
+            user_model.token = DecryptedString(plaintext=test_user.token)
+            user_model.token_hash = get_token_hash(test_user.token)
+            await session.commit()
+        project_role = _SERVER_TEST_PROJECT_ROLES.get(test_user.username)
+        if project_role is not None:
+            await _ensure_project_member_role(
+                session=session,
+                project=project,
+                user=user_model,
+                project_role=project_role,
+            )
+        created_or_updated.append(test_user)
+    return created_or_updated
 
 
 async def list_users_for_user(
@@ -322,6 +400,33 @@ async def delete_users(
         await session.execute(delete(MemberModel).where(MemberModel.user_id.in_(user_ids)))
         # Projects are not deleted automatically if owners are deleted.
         await session.commit()
+
+
+async def _ensure_project_member_role(
+    session: AsyncSession,
+    project: ProjectModel,
+    user: UserModel,
+    project_role: ProjectRole,
+):
+    res = await session.execute(
+        select(MemberModel).where(
+            MemberModel.project_id == project.id,
+            MemberModel.user_id == user.id,
+        )
+    )
+    member = res.scalar_one_or_none()
+    if member is None:
+        session.add(
+            MemberModel(
+                project_id=project.id,
+                user_id=user.id,
+                project_role=project_role,
+                member_num=None,
+            )
+        )
+    else:
+        member.project_role = project_role
+    await session.commit()
 
 
 async def get_user_model_by_name(
