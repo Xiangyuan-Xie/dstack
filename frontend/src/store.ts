@@ -1,7 +1,6 @@
+import confirmationReducer from 'ui/confirmation/slice';
+import notificationsReducer from 'ui/notifications/slice';
 import { configureStore } from '@reduxjs/toolkit';
-
-import confirmationReducer from 'components/ConfirmationDialog/slice';
-import notificationsReducer from 'components/Notifications/slice';
 
 import { artifactApi } from 'services/artifact';
 import { authApi } from 'services/auth';

@@ -166,9 +166,16 @@ declare type TDevEnvironmentConfiguration = TBaseConfiguration & {
     ports?: number[] | string[];
 };
 
+declare type TTaskConfigurationRequest = TBaseConfiguration & {
+    type?: 'task';
+    commands?: string[];
+    ports?: number[] | string[];
+    nodes?: number;
+};
+
 declare type TRunSpec = {
     run_name: string;
-    configuration: TDevEnvironmentConfiguration | TServiceConfiguration;
+    configuration: TDevEnvironmentConfiguration | TServiceConfiguration | TTaskConfigurationRequest;
     ssh_key_pub?: string;
 };
 

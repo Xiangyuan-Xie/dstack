@@ -1,28 +1,34 @@
 import { useEffect, useRef } from 'react';
-
-import { push, remove } from 'components/Notifications/slice';
-import { Notification } from 'components/Notifications/types';
+import { push, remove } from 'ui/notifications/slice';
 
 import { getUid } from 'libs';
 
 import useAppDispatch from './useAppDispatch';
 
+import { Notification } from 'ui/notifications/types';
+
 const NOTIFICATION_LIFE_TIME = 6000;
 
 type TUseNotificationsArgs = { temporary?: boolean; liveTime?: number } | undefined;
 
-const defaultArgs: NonNullable<Required<TUseNotificationsArgs>> = { temporary: true, liveTime: NOTIFICATION_LIFE_TIME };
+const defaultArgs = { temporary: true, liveTime: NOTIFICATION_LIFE_TIME };
+
+type TNotificationInput = {
+    type?: Notification['type'];
+    header?: Notification['header'];
+    content?: Notification['content'];
+};
 
 export const useNotifications = (args: TUseNotificationsArgs = defaultArgs) => {
     const dispatch = useAppDispatch();
-    const notificationIdsSet = useRef(new Set<ReturnType<typeof getUid>>());
+    const notificationIdsSet = useRef(new Set<string>());
 
     const { temporary, liveTime } = {
         ...defaultArgs,
         ...args,
     };
 
-    const removeNotification = (id: NonNullable<Notification['id']>) => {
+    const removeNotification = (id: string) => {
         dispatch(remove(id));
 
         if (notificationIdsSet.current.has(id)) {
@@ -30,7 +36,7 @@ export const useNotifications = (args: TUseNotificationsArgs = defaultArgs) => {
         }
     };
 
-    const pushNotification = (notification: Omit<Notification, 'id' | 'dismissible' | 'onDismiss'>) => {
+    const pushNotification = (notification: TNotificationInput) => {
         const id = getUid();
 
         dispatch(

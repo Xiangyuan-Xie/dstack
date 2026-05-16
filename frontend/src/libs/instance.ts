@@ -1,10 +1,10 @@
-import { StatusIndicatorProps } from '@cloudscape-design/components';
+type TStatusIconType = 'error' | 'success' | 'stopped' | 'in-progress' | 'pending' | 'info' | 'warning';
 
 export const prettyEnumValue = (value: string): string => {
     return value.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 };
 
-export const getHealthStatusIconType = (healthStatus: THealthStatus): StatusIndicatorProps['type'] => {
+export const getHealthStatusIconType = (healthStatus: THealthStatus): TStatusIconType => {
     switch (healthStatus) {
         case 'healthy':
             return 'success';

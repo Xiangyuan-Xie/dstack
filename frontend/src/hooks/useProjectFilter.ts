@@ -1,24 +1,27 @@
 import { useEffect, useMemo } from 'react';
 
-import { SelectCSDProps } from 'components';
-
 import { useGetProjectsQuery } from 'services/project';
 
 import { useLocalStorageState } from './useLocalStorageState';
+
+type SelectOption = {
+    label: string;
+    value: string;
+};
 
 type Args = {
     localStorePrefix: string;
 };
 
 export const useProjectFilter = ({ localStorePrefix }: Args) => {
-    const [selectedProject, setSelectedProject] = useLocalStorageState<SelectCSDProps.Option | null>(
+    const [selectedProject, setSelectedProject] = useLocalStorageState<SelectOption | null>(
         `${localStorePrefix}-project_name`,
         null,
     );
 
     const { data: projectsData, isLoading } = useGetProjectsQuery({});
 
-    const projectOptions = useMemo<SelectCSDProps.Options>(() => {
+    const projectOptions = useMemo<SelectOption[]>(() => {
         if (!projectsData?.data?.length) return [];
 
         return projectsData.data.map((project) => ({ label: project.project_name, value: project.project_name }));

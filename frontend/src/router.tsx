@@ -1,375 +1,150 @@
 import React from 'react';
-import type { RouteObject } from 'react-router-dom';
-import { createBrowserRouter } from 'react-router-dom';
-import { Navigate } from 'react-router-dom';
+import { createBrowserRouter, Navigate } from 'react-router-dom';
+
+import { ROUTES } from 'routes';
 
 import App from 'App';
-import { LoginByEntraIDCallback } from 'App/Login/EntraID/LoginByEntraIDCallback';
-import { LoginByGithubCallback } from 'App/Login/LoginByGithubCallback';
-import { LoginByGoogleCallback } from 'App/Login/LoginByGoogleCallback';
-import { LoginByOktaCallback } from 'App/Login/LoginByOktaCallback';
-import { TokenLogin } from 'App/Login/TokenLogin';
-import { Logout } from 'App/Logout';
-import { FleetAdd, FleetDetails, FleetList } from 'pages/Fleets';
-import { EventsList as FleetEventsList } from 'pages/Fleets/Details/Events';
-import { FleetDetails as FleetDetailsGeneral } from 'pages/Fleets/Details/FleetDetails';
-import { FleetInspect } from 'pages/Fleets/Details/Inspect';
-import { GpuRequestCreate, GpuRequestDetails, GpuRequestsList } from 'pages/GpuRequests';
-import { InstanceDetailsPage, InstanceList } from 'pages/Instances';
-import { EventsList as InstanceEventsList } from 'pages/Instances/Details/Events';
-import { InstanceInspect } from 'pages/Instances/Details/Inspect';
-import { InstanceDetails } from 'pages/Instances/Details/InstanceDetails';
-import { ModelsList } from 'pages/Models';
-import { ModelDetails } from 'pages/Models/Details';
+import { AuthErrorPage, LoginPage, LogoutPage, OAuthCallbackPage } from 'pages/Console/Auth';
+import { AdminRoute, ConsoleLayout } from 'pages/Console/Layout';
 import {
-    PORTAL_ROUTES,
-    PortalApprovals,
-    PortalConsole,
-    PortalContainers,
-    PortalDashboard,
-    PortalGpuRequestCreate,
-    PortalGpuRequestDetails,
-    PortalGpuRequests,
-    PortalLayout,
-    PortalServers,
-} from 'pages/Portal';
-import { CreateProjectWizard, ProjectAdd, ProjectDetails, ProjectEvents, ProjectList, ProjectSettings } from 'pages/Project';
-import { BackendAdd, BackendEdit } from 'pages/Project/Backends';
-import { AddGateway, EditGateway } from 'pages/Project/Gateways';
-import { EventsList as RunEvents, JobLogs, JobMetrics, Launch, RunDetails, RunDetailsPage, RunList } from 'pages/Runs';
-import { RunInspect } from 'pages/Runs/Details/Inspect';
-import { JobDetailsPage } from 'pages/Runs/Details/Jobs/Details';
-import { EventsList as JobEvents } from 'pages/Runs/Details/Jobs/Events';
-import { CreditsHistoryAdd, UserAdd, UserDetails, UserEdit, UserList } from 'pages/User';
-import { UserBilling, UserEvents, UserProjects, UserPublicKeys, UserSettings } from 'pages/User/Details';
+    AccountBillingPage,
+    AccountKeysPage,
+    AccountProfilePage,
+    AccountProjectsPage,
+    BackendPage,
+    ContainersPage,
+    DashboardPage,
+    EventsPage,
+    FleetCreatePage,
+    FleetDetailsPage,
+    FleetsPage,
+    GatewayPage,
+    GpuRequestCreatePage,
+    GpuRequestDetailsPage,
+    GpuRequestsPage,
+    InstanceDetailsPage,
+    InstancesPage,
+    ModelDetailsPage,
+    ModelsPage,
+    NotFoundPage,
+    OffersPage,
+    ProjectCreatePage,
+    ProjectDetailsPage,
+    ProjectsPage,
+    RunCreatePage,
+    RunDetailsPage,
+    RunsPage,
+    UserCreatePage,
+    UserDetailsPage,
+    UsersPage,
+    VolumesPage,
+} from 'pages/Console/pages';
 
-import { AuthErrorMessage } from './App/AuthErrorMessage';
-import { EventList } from './pages/Events';
-import { OfferList } from './pages/Offers';
-import { JobDetails } from './pages/Runs/Details/Jobs/Details/JobDetails';
-import { VolumeList } from './pages/Volumes';
-import { ROUTES } from './routes';
+const C = ROUTES.CONSOLE;
 
 export const router = createBrowserRouter([
     {
         path: '/',
         element: <App />,
-        errorElement: <AuthErrorMessage title="Not Found" text="Page not found" />,
+        errorElement: <AuthErrorPage title="Not Found" text="Page not found" />,
         children: [
-            // auth
+            { path: ROUTES.AUTH.GITHUB_CALLBACK, element: <OAuthCallbackPage provider="github" /> },
+            { path: ROUTES.AUTH.OKTA_CALLBACK, element: <OAuthCallbackPage provider="okta" /> },
+            { path: ROUTES.AUTH.ENTRA_CALLBACK, element: <OAuthCallbackPage provider="entra" /> },
+            { path: ROUTES.AUTH.GOOGLE_CALLBACK, element: <OAuthCallbackPage provider="google" /> },
+            { path: ROUTES.AUTH.TOKEN, element: <LoginPage tokenOnly /> },
+            { path: ROUTES.LOGOUT, element: <LogoutPage /> },
             {
-                path: ROUTES.AUTH.GITHUB_CALLBACK,
-                element: <LoginByGithubCallback />,
-            },
-            {
-                path: ROUTES.AUTH.OKTA_CALLBACK,
-                element: <LoginByOktaCallback />,
-            },
-            {
-                path: ROUTES.AUTH.ENTRA_CALLBACK,
-                element: <LoginByEntraIDCallback />,
-            },
-            {
-                path: ROUTES.AUTH.GOOGLE_CALLBACK,
-                element: <LoginByGoogleCallback />,
-            },
-            {
-                path: ROUTES.AUTH.TOKEN,
-                element: <TokenLogin />,
-            },
-            // hubs
-            {
-                path: ROUTES.BASE,
-                element: <Navigate replace to={PORTAL_ROUTES.DASHBOARD} />,
-            },
-            {
-                element: <PortalLayout />,
+                element: <ConsoleLayout />,
                 children: [
+                    { index: true, element: <Navigate replace to={C.DASHBOARD} /> },
+                    { path: C.DASHBOARD, element: <DashboardPage /> },
+                    { path: C.GPU_REQUESTS, element: <GpuRequestsPage /> },
+                    { path: C.GPU_REQUEST_CREATE, element: <GpuRequestCreatePage /> },
+                    { path: C.GPU_REQUEST_DETAILS.TEMPLATE, element: <GpuRequestDetailsPage /> },
+                    { path: C.GPU_CONTAINERS, element: <ContainersPage /> },
+                    { path: C.RESOURCES_RUNS, element: <RunsPage /> },
+                    { path: C.RESOURCES_RUN_CREATE, element: <RunCreatePage /> },
+                    { path: C.RESOURCES_RUN_DETAILS.TEMPLATE, element: <RunDetailsPage /> },
+                    { path: C.RESOURCES_JOB_DETAILS.TEMPLATE, element: <RunDetailsPage /> },
+                    { path: C.RESOURCES_FLEETS, element: <FleetsPage /> },
+                    { path: C.RESOURCES_FLEET_CREATE, element: <FleetCreatePage /> },
+                    { path: C.RESOURCES_FLEET_DETAILS.TEMPLATE, element: <FleetDetailsPage /> },
+                    { path: C.RESOURCES_INSTANCES, element: <InstancesPage /> },
+                    { path: C.RESOURCES_INSTANCE_DETAILS.TEMPLATE, element: <InstanceDetailsPage /> },
+                    { path: C.RESOURCES_OFFERS, element: <OffersPage /> },
+                    { path: C.RESOURCES_MODELS, element: <ModelsPage /> },
+                    { path: C.RESOURCES_MODEL_DETAILS.TEMPLATE, element: <ModelDetailsPage /> },
+                    { path: C.RESOURCES_VOLUMES, element: <VolumesPage /> },
+                    { path: C.WORKSPACE_PROJECTS, element: <ProjectsPage /> },
+                    { path: C.WORKSPACE_PROJECT_CREATE, element: <ProjectCreatePage /> },
+                    { path: C.WORKSPACE_PROJECT_DETAILS.TEMPLATE, element: <ProjectDetailsPage /> },
+                    { path: C.WORKSPACE_BACKEND_CREATE.TEMPLATE, element: <BackendPage create /> },
+                    { path: C.WORKSPACE_BACKEND_DETAILS.TEMPLATE, element: <BackendPage /> },
+                    { path: C.WORKSPACE_GATEWAY_CREATE.TEMPLATE, element: <GatewayPage create /> },
+                    { path: C.WORKSPACE_GATEWAY_DETAILS.TEMPLATE, element: <GatewayPage /> },
                     {
-                        path: PORTAL_ROUTES.DASHBOARD,
-                        element: <PortalDashboard />,
+                        path: C.ADMIN_APPROVALS,
+                        element: (
+                            <AdminRoute>
+                                <GpuRequestsPage approvals />
+                            </AdminRoute>
+                        ),
                     },
                     {
-                        path: PORTAL_ROUTES.GPU_REQUESTS,
-                        element: <PortalGpuRequests />,
+                        path: C.ADMIN_CONTAINERS,
+                        element: (
+                            <AdminRoute>
+                                <ContainersPage adminView />
+                            </AdminRoute>
+                        ),
                     },
                     {
-                        path: PORTAL_ROUTES.GPU_REQUEST_CREATE,
-                        element: <PortalGpuRequestCreate />,
+                        path: C.ADMIN_SERVERS,
+                        element: (
+                            <AdminRoute>
+                                <FleetsPage servers />
+                            </AdminRoute>
+                        ),
                     },
                     {
-                        path: PORTAL_ROUTES.GPU_REQUEST_DETAILS.TEMPLATE,
-                        element: <PortalGpuRequestDetails />,
+                        path: C.ADMIN_USERS,
+                        element: (
+                            <AdminRoute>
+                                <UsersPage />
+                            </AdminRoute>
+                        ),
                     },
                     {
-                        path: PORTAL_ROUTES.GPU_CONTAINERS,
-                        element: <PortalContainers />,
+                        path: C.ADMIN_USER_CREATE,
+                        element: (
+                            <AdminRoute>
+                                <UserCreatePage />
+                            </AdminRoute>
+                        ),
                     },
                     {
-                        path: PORTAL_ROUTES.ADMIN_APPROVALS,
-                        element: <PortalApprovals />,
+                        path: C.ADMIN_USER_DETAILS.TEMPLATE,
+                        element: (
+                            <AdminRoute>
+                                <UserDetailsPage />
+                            </AdminRoute>
+                        ),
                     },
                     {
-                        path: PORTAL_ROUTES.ADMIN_CONTAINERS,
-                        element: <PortalContainers adminView />,
+                        path: C.ADMIN_EVENTS,
+                        element: (
+                            <AdminRoute>
+                                <EventsPage />
+                            </AdminRoute>
+                        ),
                     },
-                    {
-                        path: PORTAL_ROUTES.ADMIN_SERVERS,
-                        element: <PortalServers />,
-                    },
-                    {
-                        path: PORTAL_ROUTES.CONSOLE,
-                        element: <PortalConsole />,
-                    },
+                    { path: C.ACCOUNT_PROFILE, element: <AccountProfilePage /> },
+                    { path: C.ACCOUNT_PROJECTS, element: <AccountProjectsPage /> },
+                    { path: C.ACCOUNT_KEYS, element: <AccountKeysPage /> },
+                    { path: C.ACCOUNT_BILLING, element: <AccountBillingPage /> },
+                    { path: '*', element: <NotFoundPage /> },
                 ],
-            },
-            {
-                path: ROUTES.PROJECT.LIST,
-                element: <ProjectList />,
-            },
-            {
-                path: ROUTES.PROJECT.DETAILS.TEMPLATE,
-                element: <ProjectDetails />,
-                children: [
-                    {
-                        index: true,
-                        element: <ProjectSettings />,
-                    },
-                    {
-                        path: ROUTES.PROJECT.DETAILS.EVENTS.TEMPLATE,
-                        element: <ProjectEvents />,
-                    },
-                    {
-                        path: ROUTES.PROJECT.BACKEND.ADD.TEMPLATE,
-                        element: <BackendAdd />,
-                    },
-                    {
-                        path: ROUTES.PROJECT.BACKEND.EDIT.TEMPLATE,
-                        element: <BackendEdit />,
-                    },
-                    {
-                        path: ROUTES.PROJECT.GATEWAY.ADD.TEMPLATE,
-                        element: <AddGateway />,
-                    },
-                    {
-                        path: ROUTES.PROJECT.GATEWAY.EDIT.TEMPLATE,
-                        element: <EditGateway />,
-                    },
-                ],
-            },
-            {
-                path: ROUTES.PROJECT.DETAILS.RUNS.DETAILS.TEMPLATE,
-                element: <RunDetailsPage />,
-                children: [
-                    {
-                        index: true,
-                        element: <RunDetails />,
-                    },
-                    {
-                        path: ROUTES.PROJECT.DETAILS.RUNS.DETAILS.METRICS.TEMPLATE,
-                        element: <JobMetrics />,
-                    },
-                    {
-                        path: ROUTES.PROJECT.DETAILS.RUNS.DETAILS.LOGS.TEMPLATE,
-                        element: <JobLogs />,
-                    },
-                    {
-                        path: ROUTES.PROJECT.DETAILS.RUNS.DETAILS.EVENTS.TEMPLATE,
-                        element: <RunEvents />,
-                    },
-                    {
-                        path: ROUTES.PROJECT.DETAILS.RUNS.DETAILS.INSPECT.TEMPLATE,
-                        element: <RunInspect />,
-                    },
-                ],
-            },
-            {
-                path: ROUTES.PROJECT.DETAILS.RUNS.DETAILS.JOBS.DETAILS.TEMPLATE,
-                element: <JobDetailsPage />,
-                children: [
-                    {
-                        index: true,
-                        element: <JobDetails />,
-                    },
-                    {
-                        path: ROUTES.PROJECT.DETAILS.RUNS.DETAILS.JOBS.DETAILS.METRICS.TEMPLATE,
-                        element: <JobMetrics />,
-                    },
-                    {
-                        path: ROUTES.PROJECT.DETAILS.RUNS.DETAILS.JOBS.DETAILS.LOGS.TEMPLATE,
-                        element: <JobLogs />,
-                    },
-                    {
-                        path: ROUTES.PROJECT.DETAILS.RUNS.DETAILS.JOBS.DETAILS.EVENTS.TEMPLATE,
-                        element: <JobEvents />,
-                    },
-                ],
-            },
-
-            ...([
-                process.env.UI_VERSION !== 'sky' && {
-                    path: ROUTES.PROJECT.ADD,
-                    element: <ProjectAdd />,
-                },
-                process.env.UI_VERSION === 'sky' && {
-                    path: ROUTES.PROJECT.ADD,
-                    element: <CreateProjectWizard />,
-                },
-            ].filter(Boolean) as RouteObject[]),
-
-            // Runs
-            {
-                path: ROUTES.RUNS.LIST,
-                element: <RunList />,
-            },
-
-            {
-                path: ROUTES.RUNS.CREATE_DEV_ENV,
-                element: <Launch />,
-            },
-
-            // GPU Requests
-            {
-                path: ROUTES.GPU_REQUESTS.LIST,
-                element: <GpuRequestsList />,
-            },
-            {
-                path: ROUTES.GPU_REQUESTS.CREATE,
-                element: <GpuRequestCreate />,
-            },
-            {
-                path: ROUTES.GPU_REQUESTS.DETAILS.TEMPLATE,
-                element: <GpuRequestDetails />,
-            },
-
-            // Offers
-            {
-                path: ROUTES.OFFERS.LIST,
-                element: <OfferList />,
-            },
-
-            // Models
-            {
-                path: ROUTES.MODELS.LIST,
-                element: <ModelsList />,
-            },
-            {
-                path: ROUTES.MODELS.DETAILS.TEMPLATE,
-                element: <ModelDetails />,
-            },
-
-            // Events
-            {
-                path: ROUTES.EVENTS.LIST,
-                element: <EventList />,
-            },
-
-            // Fleets
-            {
-                path: ROUTES.FLEETS.LIST,
-                element: <FleetList />,
-            },
-            {
-                path: ROUTES.FLEETS.ADD.TEMPLATE,
-                element: <FleetAdd />,
-            },
-            {
-                path: ROUTES.FLEETS.DETAILS.TEMPLATE,
-                element: <FleetDetails />,
-                children: [
-                    {
-                        index: true,
-                        element: <FleetDetailsGeneral />,
-                    },
-                    {
-                        path: ROUTES.FLEETS.DETAILS.EVENTS.TEMPLATE,
-                        element: <FleetEventsList />,
-                    },
-                    {
-                        path: ROUTES.FLEETS.DETAILS.INSPECT.TEMPLATE,
-                        element: <FleetInspect />,
-                    },
-                ],
-            },
-
-            // Instances
-            {
-                path: ROUTES.INSTANCES.LIST,
-                element: <InstanceList />,
-            },
-            {
-                path: ROUTES.INSTANCES.DETAILS.TEMPLATE,
-                element: <InstanceDetailsPage />,
-                children: [
-                    {
-                        index: true,
-                        element: <InstanceDetails />,
-                    },
-                    {
-                        path: ROUTES.INSTANCES.DETAILS.EVENTS.TEMPLATE,
-                        element: <InstanceEventsList />,
-                    },
-                    {
-                        path: ROUTES.INSTANCES.DETAILS.INSPECT.TEMPLATE,
-                        element: <InstanceInspect />,
-                    },
-                ],
-            },
-
-            // Volumes
-            {
-                path: ROUTES.VOLUMES.LIST,
-                element: <VolumeList />,
-            },
-
-            // Users
-            {
-                path: ROUTES.USER.LIST,
-                element: <UserList />,
-            },
-            {
-                path: ROUTES.USER.ADD,
-                element: <UserAdd />,
-            },
-            {
-                path: ROUTES.USER.DETAILS.TEMPLATE,
-                element: <UserDetails />,
-                children: [
-                    {
-                        index: true,
-                        element: <UserSettings />,
-                    },
-                    {
-                        path: ROUTES.USER.PROJECTS.TEMPLATE,
-                        element: <UserProjects />,
-                    },
-                    {
-                        path: ROUTES.USER.EVENTS.TEMPLATE,
-                        element: <UserEvents />,
-                    },
-                    {
-                        path: ROUTES.USER.PUBLIC_KEYS.TEMPLATE,
-                        element: <UserPublicKeys />,
-                    },
-                    process.env.UI_VERSION === 'sky' && {
-                        path: ROUTES.USER.BILLING.LIST.TEMPLATE,
-                        element: <UserBilling />,
-                    },
-                ].filter(Boolean) as RouteObject[],
-            },
-            {
-                path: ROUTES.USER.EDIT.TEMPLATE,
-                element: <UserEdit />,
-            },
-            {
-                path: ROUTES.USER.BILLING.ADD_PAYMENT.TEMPLATE,
-                element: <CreditsHistoryAdd />,
-            },
-
-            // auth
-            {
-                path: ROUTES.LOGOUT,
-                element: <Logout />,
             },
         ],
     },

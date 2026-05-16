@@ -54,4 +54,5 @@ export const instanceApi = createApi({
     }),
 });
 
-export const { useLazyGetInstancesQuery, useGetInstanceDetailsQuery, useDeleteInstancesMutation } = instanceApi;
+export const { useGetInstancesQuery, useLazyGetInstancesQuery, useGetInstanceDetailsQuery, useDeleteInstancesMutation } =
+    instanceApi;

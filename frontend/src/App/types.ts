@@ -1,17 +1,20 @@
-import { TutorialPanelProps } from '@cloudscape-design/components';
-import { Mode } from '@cloudscape-design/global-styles';
+import { ReactNode } from 'react';
 
-import { HelpPanelProps } from 'components';
-
-export type THelpPanelContent = Pick<HelpPanelProps, 'header' | 'footer'> & { body?: HelpPanelProps['children'] };
+export type THelpPanelContent = {
+    header?: ReactNode;
+    footer?: ReactNode;
+    body?: ReactNode;
+};
 
 export enum ToolsTabs {
     INFO = 'info',
     TUTORIAL = 'tutorial',
 }
 
-export interface ITutorialItem extends TutorialPanelProps.Tutorial {
+export interface ITutorialItem {
     id: number;
+    title?: string;
+    description?: string;
     startCallback?: (tutorial: ITutorialItem) => void;
     startWithoutActivation?: boolean;
     finishCallback?: (tutorial: ITutorialItem) => void;
@@ -21,7 +24,7 @@ export interface IAppState {
     userData: IUser | null;
     authData: IUserAuthData | null;
     breadcrumbs: TBreadcrumb[] | null;
-    systemMode: Mode;
+    systemMode: TThemeMode;
     toolsPanelState: {
         isOpen: boolean;
         tab: ToolsTabs;

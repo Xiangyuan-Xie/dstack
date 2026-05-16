@@ -123,4 +123,5 @@ export const {
     useCreateBackendViaYamlMutation,
     useUpdateBackendViaYamlMutation,
     useGetBackendYamlQuery,
+    useGetProjectBackendsQuery,
 } = extendedProjectApi;

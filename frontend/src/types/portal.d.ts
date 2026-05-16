@@ -1,14 +1,43 @@
-declare interface IPortalNavItem {
+declare type TThemeMode = 'light' | 'dark';
+
+declare type TLocale = 'zh' | 'en';
+
+declare interface IConsoleNavItem {
     label: string;
     href: string;
     adminOnly?: boolean;
+    icon?: string;
 }
 
-declare interface IPortalUserRole {
+declare interface IConsoleNavSection {
+    title: string;
+    items: IConsoleNavItem[];
+}
+
+declare interface IConsoleAction {
+    label: string;
+    onClick: () => void;
+    variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
+    disabled?: boolean;
+}
+
+declare interface IConsoleTableColumn<T> {
+    id: string;
+    header: string;
+    cell: (item: T) => React.ReactNode;
+    sortValue?: (item: T) => string | number | null | undefined;
+    className?: string;
+}
+
+declare interface IPortalNavItem extends IConsoleNavItem {}
+
+declare interface IConsoleUserRole {
     isGlobalAdmin: boolean;
     canManagePortal: boolean;
     manageableProjectNames: string[];
 }
+
+declare interface IPortalUserRole extends IConsoleUserRole {}
 
 declare interface IContainerSummary {
     id: string;

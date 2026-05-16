@@ -3,11 +3,11 @@ import { API } from 'api';
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 
 import fetchBaseQueryHeaders from 'libs/fetchBaseQueryHeaders';
+import { unfinishedRuns } from 'libs/runStatus';
 
 import { getExtendedModelFromRun } from '../libs/run';
-import { unfinishedRuns } from '../pages/Runs/constants';
 
-import { IModelExtended } from '../pages/Models/List/types';
+import { IModelExtended } from '../types/model';
 
 const reduceInvalidateTagsFromRunNames = (names: Array<string>) => {
     return names.reduce((accumulator, runName: string) => {
@@ -184,6 +184,7 @@ export const {
     useApplyRunMutation,
     useStopRunsMutation,
     useDeleteRunsMutation,
+    useGetModelsQuery,
     useLazyGetModelsQuery,
     useGetMetricsQuery,
 } = runApi;

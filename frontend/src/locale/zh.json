@@ -1,0 +1,47 @@
+{
+    "dstack": "dstack",
+    "common": {
+        "loading": "加载中",
+        "create": "创建",
+        "save": "保存",
+        "cancel": "取消",
+        "delete": "删除",
+        "stop": "停止",
+        "retry": "重试",
+        "approve": "通过",
+        "reject": "拒绝",
+        "refresh": "刷新",
+        "sign_out": "退出",
+        "login": "登录",
+        "login_github": "使用 GitHub 登录",
+        "login_okta": "使用 Okta 登录",
+        "login_entra": "使用 Entra ID 登录",
+        "login_google": "使用 Google 登录",
+        "local_storage_unavailable": "浏览器本地存储不可用",
+        "local_storage_unavailable_message": "当前浏览器不支持或禁用了 localStorage。",
+        "server_error": "服务器错误：{{error}}"
+    },
+    "auth": {
+        "invalid_token": "Token 无效",
+        "you_are_not_logged_in": "你尚未登录",
+        "contact_to_administrator": "请联系管理员获取授权 Token。",
+        "sign_in_to_dstack": "欢迎使用 dstack Sky",
+        "sign_in_to_dstack_enterprise": "欢迎使用 dstack",
+        "authorization_failed": "授权失败",
+        "try_again": "请重试",
+        "login_by_token": "使用 Token 登录",
+        "another_login_methods": "其他登录方式"
+    },
+    "console": {
+        "dashboard": "工作台",
+        "requests": "GPU 申请",
+        "containers": "容器",
+        "runs": "运行任务",
+        "fleets": "集群",
+        "instances": "实例",
+        "projects": "项目",
+        "users": "用户",
+        "events": "事件",
+        "not_found": "该页面在新控制台中不存在。"
+    }
+}

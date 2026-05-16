@@ -1,4 +1,96 @@
-.b-page-header {
-    position: relative;
-    z-index: 1002;
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+    --console-bg: #f8fafc;
+    --console-surface: #ffffff;
+    --console-surface-muted: #f1f5f9;
+    --console-border: #e2e8f0;
+    --console-text: #0f172a;
+    --console-text-muted: #64748b;
+    --console-primary: #2563eb;
+    --console-primary-soft: #dbeafe;
+    --console-accent: #14b8a6;
+    --console-danger: #dc2626;
+    --console-warning: #d97706;
+    --console-success: #16a34a;
+    --console-sidebar: #0f172a;
+    --console-sidebar-muted: #94a3b8;
+}
+
+:root.dark,
+:root[data-theme="dark"] {
+    --console-bg: #020617;
+    --console-surface: #0f172a;
+    --console-surface-muted: #1e293b;
+    --console-border: #334155;
+    --console-text: #e2e8f0;
+    --console-text-muted: #94a3b8;
+    --console-primary: #60a5fa;
+    --console-primary-soft: #1e3a8a;
+    --console-accent: #2dd4bf;
+    --console-danger: #f87171;
+    --console-warning: #fbbf24;
+    --console-success: #4ade80;
+    --console-sidebar: #020617;
+    --console-sidebar-muted: #94a3b8;
+}
+
+html,
+body,
+#root {
+    min-height: 100%;
+}
+
+body {
+    margin: 0;
+    background: var(--console-bg);
+    color: var(--console-text);
+    font-family:
+        Inter,
+        "HarmonyOS Sans SC",
+        "PingFang SC",
+        "Microsoft YaHei",
+        "Noto Sans CJK SC",
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+textarea,
+select {
+    font: inherit;
+}
+
+a {
+    color: inherit;
+    text-decoration: none;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+.console-scrollbar {
+    scrollbar-color: rgba(148, 163, 184, 0.7) transparent;
+}
+
+.console-scrollbar::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.console-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.55);
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
 }

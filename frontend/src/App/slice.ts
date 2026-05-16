@@ -1,9 +1,10 @@
 import type { RootState } from 'store';
-import { applyMode, Mode } from '@cloudscape-design/global-styles';
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
-import { AUTH_DATA_STORAGE_KEY, MODE_STORAGE_KEY, TUTORIAL_SHOW_STARTUP_STORAGE_KEY } from './constants';
-import { getThemeMode } from './helpers';
+import { THEME_STORAGE_KEY } from 'pages/Console/constants';
+
+import { AUTH_DATA_STORAGE_KEY, TUTORIAL_SHOW_STARTUP_STORAGE_KEY } from './constants';
+import { getThemeMode, setDocumentThemeMode } from './helpers';
 
 import { IAppState, ToolsTabs } from './types';
 
@@ -32,16 +33,16 @@ const getInitialState = (): IAppState => {
     }
 
     try {
-        const modeStorageData = localStorage.getItem(MODE_STORAGE_KEY);
+        const modeStorageData = localStorage.getItem(THEME_STORAGE_KEY);
 
         if (modeStorageData) {
-            activeMode = modeStorageData as Mode;
+            activeMode = modeStorageData as TThemeMode;
         }
     } catch (e) {
         console.log(e);
     }
 
-    applyMode(activeMode);
+    setDocumentThemeMode(activeMode);
 
     if (storageData) authData = JSON.parse(storageData) as IUserAuthData;
 
@@ -89,11 +90,11 @@ export const appSlice = createSlice({
             }
         },
 
-        setSystemMode: (state, action: PayloadAction<Mode>) => {
+        setSystemMode: (state, action: PayloadAction<TThemeMode>) => {
             state.systemMode = action.payload;
-            applyMode(action.payload);
+            setDocumentThemeMode(action.payload);
             try {
-                localStorage.setItem(MODE_STORAGE_KEY, action.payload);
+                localStorage.setItem(THEME_STORAGE_KEY, action.payload);
             } catch (e) {
                 console.log(e);
             }

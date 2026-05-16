@@ -1,5 +1,6 @@
 const {isDev, srcDir} = require("./env");
 const MiniCssExtractPlugin = require("mini-css-extract-plugin");
+const tailwindcss = require("@tailwindcss/postcss");
 
 function getStyleLoaders (cssOptions, preProcessor, preProcessorOptions) {
     const { sourceMap } = cssOptions;
@@ -17,6 +18,7 @@ function getStyleLoaders (cssOptions, preProcessor, preProcessorOptions) {
             options: {
                 postcssOptions: {
                     plugins: [
+                        tailwindcss(),
                         ["postcss-preset-env", {
                             autoprefixer: { flexbox: 'no-2009', },
                             browsers: ['last 2 versions', "not ie <= 11", "not ie_mob <= 12"],

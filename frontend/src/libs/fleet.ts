@@ -1,5 +1,7 @@
 import { isEqual } from 'lodash';
-import { StatusIndicatorProps } from '@cloudscape-design/components';
+
+type TStatusIconType = 'error' | 'success' | 'stopped' | 'in-progress' | 'pending' | 'info';
+type TStatusIconColor = 'red' | 'yellow' | 'blue' | 'grey';
 
 export const formatBackend = (backend: TBackendType | string | null | undefined): string => {
     if (!backend) return '-';
@@ -7,7 +9,7 @@ export const formatBackend = (backend: TBackendType | string | null | undefined)
     return backend;
 };
 
-export const getStatusIconType = (status: IInstance['status']): StatusIndicatorProps['type'] => {
+export const getStatusIconType = (status: IInstance['status']): TStatusIconType | undefined => {
     switch (status) {
         case 'pending':
         case 'creating':
@@ -26,7 +28,7 @@ export const getStatusIconType = (status: IInstance['status']): StatusIndicatorP
     }
 };
 
-export const getStatusIconColor = (status: IInstance['status']): StatusIndicatorProps.Color | undefined => {
+export const getStatusIconColor = (status: IInstance['status']): TStatusIconColor | undefined => {
     switch (status) {
         case 'busy':
         case 'provisioning':
@@ -38,7 +40,7 @@ export const getStatusIconColor = (status: IInstance['status']): StatusIndicator
     }
 };
 
-export const getFleetStatusIconType = (status: IFleet['status']): StatusIndicatorProps['type'] => {
+export const getFleetStatusIconType = (status: IFleet['status']): TStatusIconType | undefined => {
     switch (status) {
         case 'submitted':
             return 'pending';

@@ -18,18 +18,6 @@
   "env": {
     "development": {
       "plugins": ["react-refresh/babel"]
-    },
-    "production": {
-      "presets": [
-        [
-          "minify",
-          {
-            "builtIns": false,
-            "evaluate": false,
-            "mangle": false
-          }
-        ]
-      ]
     }
   }
 }

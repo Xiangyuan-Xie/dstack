@@ -1,6 +1,6 @@
-import { StatusIndicatorProps } from '@cloudscape-design/components';
+type TStatusIconType = 'error' | 'success' | 'stopped' | 'in-progress' | 'pending' | 'info';
 
-export const getStatusIconType = (status: IVolume['status']): StatusIndicatorProps['type'] => {
+export const getStatusIconType = (status: IVolume['status']): TStatusIconType | undefined => {
     switch (status) {
         case 'failed':
             return 'error';

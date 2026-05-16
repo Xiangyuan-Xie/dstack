@@ -1,9 +1,15 @@
-import type { PropertyFilterProps } from 'components';
+export type FilterToken = {
+    propertyKey?: string;
+    operator?: string;
+    value: string;
+};
 
-export const tokensToSearchParams = <RequestParamsKeys extends string>(
-    tokens: PropertyFilterProps.Query['tokens'],
-    onlyActive?: boolean,
-) => {
+export type FilterQuery = {
+    tokens: FilterToken[];
+    operation: 'and' | 'or';
+};
+
+export const tokensToSearchParams = <RequestParamsKeys extends string>(tokens: FilterToken[], onlyActive?: boolean) => {
     const params = new URLSearchParams();
 
     tokens.forEach((token) => {
@@ -37,7 +43,7 @@ export const getTokenAwareNamePatternFilterRequestParams = <PropertyKey extends 
     filteringText: string;
     limit: number;
     propertyKey: PropertyKey;
-    tokens: PropertyFilterProps.Query['tokens'];
+    tokens: FilterToken[];
 }) => {
     const matchingExistingToken = tokens.some((token) => {
         return token.propertyKey === propertyKey && typeof token.value === 'string' && token.value === filteringText;
@@ -46,7 +52,7 @@ export const getTokenAwareNamePatternFilterRequestParams = <PropertyKey extends 
     return getNamePatternFilterRequestParams(matchingExistingToken ? '' : filteringText, limit);
 };
 
-const convertTokenValueToRequestParam = (token: PropertyFilterProps.Query['tokens'][number]): RequestParam => {
+const convertTokenValueToRequestParam = (token: FilterToken): RequestParam => {
     const { value, operator } = token;
 
     if (operator === '>=') {
@@ -64,7 +70,7 @@ export const tokensToRequestParams = <RequestParamsKeys extends string>({
     tokens,
     arrayFieldKeys,
 }: {
-    tokens: PropertyFilterProps.Query['tokens'];
+    tokens: FilterToken[];
     arrayFieldKeys?: RequestParamsKeys[];
 }) => {
     return tokens.reduce<Record<RequestParamsKeys, RequestParam | string[]>>(
@@ -95,7 +101,7 @@ export const tokensToRequestParams = <RequestParamsKeys extends string>({
     );
 };
 
-export const EMPTY_QUERY: PropertyFilterProps.Query = {
+export const EMPTY_QUERY: FilterQuery = {
     tokens: [],
     operation: 'and',
 };
@@ -108,7 +114,7 @@ export const requestParamsToTokens = <RequestParamsKeys extends string>({
     searchParams: URLSearchParams;
     filterKeys: Record<string, RequestParamsKeys>;
     defaultFilterValues?: Partial<Record<RequestParamsKeys, string | string[]>>;
-}): PropertyFilterProps.Query => {
+}): FilterQuery => {
     const tokens = [];
     const filterKeysValues = Object.values(filterKeys);
 

@@ -1,18 +1,17 @@
 import { get as _get } from 'lodash';
-import { StatusIndicatorProps } from '@cloudscape-design/components';
 
 import { capitalize } from 'libs';
 import { formatResources } from 'libs/resources';
+import { finishedRunStatuses } from 'libs/runStatus';
+import { IModelExtended } from 'types/model';
 
-import { finishedRunStatuses } from '../pages/Runs/constants';
-import { getJobProbesStatuses } from '../pages/Runs/Details/Jobs/List/helpers';
-
-import { IModelExtended } from '../pages/Models/List/types';
+type TStatusIconType = 'error' | 'success' | 'stopped' | 'in-progress' | 'pending' | 'info';
+type TStatusIconColor = 'red' | 'yellow' | 'blue' | 'grey';
 
 export const getStatusIconType = (
     status: IRun['status'] | TJobStatus,
     terminationReason: string | null | undefined,
-): StatusIndicatorProps['type'] => {
+): TStatusIconType | undefined => {
     if (finishedRunStatuses.includes(status) && terminationReason === 'interrupted_by_no_capacity') {
         return 'stopped';
     }
@@ -42,7 +41,7 @@ export const getStatusIconColor = (
     status: IRun['status'] | TJobStatus,
     terminationReason: string | null | undefined,
     statusMessage: string,
-): StatusIndicatorProps.Color | undefined => {
+): TStatusIconColor | undefined => {
     if (statusMessage === 'No fleets') {
         return 'red';
     }
@@ -78,14 +77,15 @@ export const getRunError = (run: IRun): string | null => {
     return error ? capitalize(error) : null;
 };
 
-export const getRunProbeStatuses = (run: IRun): StatusIndicatorProps.Type[] => {
+export const getRunProbeStatuses = (run: IRun): TStatusIconType[] => {
     const job = run.jobs[0];
 
     if (!job) {
         return [];
     }
 
-    return getJobProbesStatuses(run.jobs[0]);
+    const probes = job.job_submissions?.[job.job_submissions.length - 1]?.probes ?? [];
+    return probes.map((probe) => (probe.success_streak > 0 ? 'success' : 'pending'));
 };
 
 export const getRunPriority = (run: IRun): number | null => {

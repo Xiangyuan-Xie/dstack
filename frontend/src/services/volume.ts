@@ -39,4 +39,4 @@ export const volumeApi = createApi({
     }),
 });
 
-export const { useLazyGetAllVolumesQuery, useDeleteVolumesMutation } = volumeApi;
+export const { useGetAllVolumesQuery, useLazyGetAllVolumesQuery, useDeleteVolumesMutation } = volumeApi;
