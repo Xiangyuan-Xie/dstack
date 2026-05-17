@@ -40,7 +40,6 @@ from dstack._internal.server.models import (
 )
 from dstack._internal.server.schemas.projects import MemberSetting
 from dstack._internal.server.services import events, users
-from dstack._internal.server.services import templates as templates_service
 from dstack._internal.server.services.backends import (
     get_backend_config_without_creds_from_backend_model,
 )
@@ -179,24 +178,20 @@ async def create_project(
     user: UserModel,
     project_name: str,
     is_public: bool = False,
-    templates_repo: Optional[str] = None,
     config: Optional[ProjectHookConfig] = None,
 ) -> Project:
-    user_permissions = users.get_user_permissions(user)
-    if not user_permissions.can_create_projects:
+    if user.global_role != GlobalRole.ADMIN:
         raise ForbiddenError("User cannot create projects")
     project = await get_project_model_by_name(
         session=session, project_name=project_name, ignore_case=True
     )
     if project is not None:
         raise ResourceExistsError()
-    await _check_projects_quota(session=session, user=user)
     project = await create_project_model(
         session=session,
         owner=user,
         project_name=project_name,
         is_public=is_public,
-        templates_repo=templates_repo,
     )
     await add_project_member(
         session=session,
@@ -222,26 +217,25 @@ async def update_project(
     session: AsyncSession,
     user: UserModel,
     project: ProjectModel,
+    project_name: Optional[str] = None,
     is_public: Optional[bool] = None,
-    templates_repo: Optional[str] = None,
-    reset_templates_repo: bool = False,
 ):
     updated_fields = []
+    if project_name is not None:
+        validate_project_name(project_name)
+        if project_name != project.name:
+            existing_project = await get_project_model_by_name(
+                session=session, project_name=project_name
+            )
+            if existing_project is not None:
+                raise ResourceExistsError()
+            project.name = project_name
+            updated_fields.append(f"project_name={project_name}")
+
     if is_public is not None and is_public != project.is_public:
         project.is_public = is_public
         updated_fields.append(f"is_public={is_public}")
 
-    update_templates_repo, new_templates_repo = await _resolve_new_templates_repo(
-        project=project,
-        templates_repo=templates_repo,
-        reset_templates_repo=reset_templates_repo,
-    )
-    if update_templates_repo:
-        templates_service.invalidate_templates_cache(
-            project.id, project.templates_repo, new_templates_repo
-        )
-        project.templates_repo = new_templates_repo
-        updated_fields.append(f"templates_repo={new_templates_repo}")
     events.emit(
         session,
         f"Project updated. Updated fields: {', '.join(updated_fields) or '<none>'}",
@@ -622,10 +616,8 @@ async def create_project_model(
     owner: UserModel,
     project_name: str,
     is_public: bool = False,
-    templates_repo: Optional[str] = None,
 ) -> ProjectModel:
     validate_project_name(project_name)
-    templates_repo = await _normalize_templates_repo_url(templates_repo)
     private_bytes, public_bytes = await run_async(
         generate_rsa_key_pair_bytes, f"{project_name}@dstack"
     )
@@ -636,7 +628,6 @@ async def create_project_model(
         ssh_private_key=private_bytes.decode(),
         ssh_public_key=public_bytes.decode(),
         is_public=is_public,
-        templates_repo=templates_repo,
     )
     session.add(project)
     events.emit(
@@ -721,11 +712,6 @@ def project_model_to_project(
         members=members,
         current_user_project_role=current_user_project_role,
         is_public=project_model.is_public,
-        **(
-            {"templates_repo": project_model.templates_repo}
-            if project_model.templates_repo is not None
-            else {}
-        ),
     )
 
 
@@ -762,36 +748,6 @@ def is_valid_project_name(project_name: str) -> bool:
     return re.match("^[a-zA-Z0-9-_]{1,50}$", project_name) is not None
 
 
-async def _normalize_templates_repo_url(templates_repo: Optional[str]) -> Optional[str]:
-    if templates_repo is None:
-        return None
-    templates_repo = templates_repo.strip()
-    if templates_repo == "":
-        return None
-    try:
-        await run_async(templates_service.validate_templates_repo_access, templates_repo)
-    except ValueError as e:
-        raise ServerClientError(str(e))
-    return templates_repo
-
-
-async def _resolve_new_templates_repo(
-    project: ProjectModel,
-    templates_repo: Optional[str],
-    reset_templates_repo: bool,
-) -> Tuple[bool, Optional[str]]:
-    if reset_templates_repo:
-        return project.templates_repo is not None, None
-    if templates_repo is None:
-        return False, None
-    normalized_templates_repo = await _normalize_templates_repo_url(templates_repo)
-    if normalized_templates_repo is None:
-        return False, None
-    if normalized_templates_repo == project.templates_repo:
-        return False, None
-    return True, normalized_templates_repo
-
-
 _CREATE_PROJECT_HOOKS = []
 
 
@@ -799,14 +755,6 @@ def register_create_project_hook(
     func: Callable[[AsyncSession, ProjectModel, Optional[ProjectHookConfig]], Awaitable[None]],
 ):
     _CREATE_PROJECT_HOOKS.append(func)
-
-
-async def _check_projects_quota(session: AsyncSession, user: UserModel):
-    if user.global_role == GlobalRole.ADMIN:
-        return
-    owned_projects = await list_user_owned_project_models(session=session, user=user)
-    if len(owned_projects) >= user.projects_quota:
-        raise ServerClientError("User project quota exceeded")
 
 
 def _is_project_admin(

@@ -103,7 +103,6 @@ async def create_project(
             user=user,
             project_name=body.project_name,
             is_public=body.is_public,
-            templates_repo=body.templates_repo,
         )
     )
 
@@ -208,9 +207,8 @@ async def update_project(
         session=session,
         user=user,
         project=project,
+        project_name=body.project_name,
         is_public=body.is_public,
-        templates_repo=body.templates_repo,
-        reset_templates_repo=body.reset_templates_repo,
     )
     await session.refresh(project)
     return CustomORJSONResponse(projects.project_model_to_project(project))

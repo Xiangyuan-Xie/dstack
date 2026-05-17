@@ -2,7 +2,7 @@ import shutil
 import threading
 import uuid
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 import git
 import yaml
@@ -25,7 +25,7 @@ _templates_lock = threading.Lock()
 
 async def list_templates(project: ProjectModel) -> List[UITemplate]:
     """Return templates available for the UI."""
-    repo_url = project.templates_repo or settings.SERVER_TEMPLATES_REPO
+    repo_url = settings.SERVER_TEMPLATES_REPO
     if not repo_url:
         return []
     repo_key = _repo_key(project.id, repo_url)
@@ -103,17 +103,3 @@ def _parse_templates(repo_path: Path) -> List[UITemplate]:
 def _repo_key(project_id: uuid.UUID, repo_url: str) -> str:
     key_source = f"{project_id}:{repo_url}"
     return uuid.uuid5(uuid.NAMESPACE_URL, key_source).hex
-
-
-def validate_templates_repo_access(repo_url: str) -> None:
-    try:
-        git.Git().ls_remote("--exit-code", repo_url, "HEAD")
-    except git.GitCommandError:
-        raise ValueError(f"Cannot access templates repo: {repo_url}")
-
-
-def invalidate_templates_cache(project_id: uuid.UUID, *repo_urls: Optional[str]) -> None:
-    unique_repo_urls = {repo_url for repo_url in repo_urls if repo_url}
-    with _templates_lock:
-        for repo_url in unique_repo_urls:
-            _templates_cache.pop((_repo_key(project_id, repo_url), repo_url), None)

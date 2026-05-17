@@ -18,10 +18,6 @@ class GlobalRole(str, enum.Enum):
     USER = "user"
 
 
-class UserPermissions(CoreModel):
-    can_create_projects: bool
-
-
 class User(CoreModel):
     id: UUID4
     username: str
@@ -29,7 +25,6 @@ class User(CoreModel):
     global_role: GlobalRole
     email: Optional[str]
     active: bool
-    permissions: UserPermissions
     ssh_public_key: Optional[str] = None
 
 

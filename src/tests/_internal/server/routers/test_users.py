@@ -64,9 +64,6 @@ class TestListUsers:
                 "global_role": admin.global_role,
                 "email": None,
                 "active": True,
-                "permissions": {
-                    "can_create_projects": True,
-                },
                 "ssh_public_key": None,
             },
             {
@@ -76,9 +73,6 @@ class TestListUsers:
                 "global_role": other_user.global_role,
                 "email": None,
                 "active": True,
-                "permissions": {
-                    "can_create_projects": True,
-                },
                 "ssh_public_key": None,
             },
         ]
@@ -121,9 +115,6 @@ class TestListUsers:
                     "global_role": admin.global_role,
                     "email": None,
                     "active": True,
-                    "permissions": {
-                        "can_create_projects": True,
-                    },
                     "ssh_public_key": None,
                 }
             ],
@@ -164,9 +155,6 @@ class TestListUsers:
                 "global_role": admin.global_role,
                 "email": None,
                 "active": True,
-                "permissions": {
-                    "can_create_projects": True,
-                },
                 "ssh_public_key": None,
             }
         ]
@@ -188,9 +176,6 @@ class TestListUsers:
                 "global_role": user_one.global_role,
                 "email": None,
                 "active": True,
-                "permissions": {
-                    "can_create_projects": True,
-                },
                 "ssh_public_key": None,
             }
         ]
@@ -232,9 +217,6 @@ class TestListUsers:
                 "global_role": matching_user.global_role,
                 "email": None,
                 "active": True,
-                "permissions": {
-                    "can_create_projects": True,
-                },
                 "ssh_public_key": None,
             }
         ]
@@ -266,9 +248,6 @@ class TestListUsers:
                 "global_role": other_user.global_role,
                 "email": None,
                 "active": True,
-                "permissions": {
-                    "can_create_projects": True,
-                },
                 "ssh_public_key": None,
             }
         ]
@@ -320,9 +299,6 @@ class TestGetMyUser:
             "email": None,
             "creds": {"token": user.token.get_plaintext_or_error()},
             "active": True,
-            "permissions": {
-                "can_create_projects": True,
-            },
             "ssh_private_key": "private-key",
             "ssh_public_key": "public-key",
         }
@@ -349,6 +325,65 @@ class TestGetMyUser:
         await session.refresh(user)
         assert user.ssh_private_key == data["ssh_private_key"]
         assert user.ssh_public_key == data["ssh_public_key"]
+
+
+class TestUpdateMyUser:
+    @pytest.mark.asyncio
+    async def test_returns_40x_if_not_authenticated(self, client: AsyncClient):
+        response = await client.post("/api/users/update_my_user", json={"email": "me@example.com"})
+        assert response.status_code in [401, 403]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_updates_own_email(self, test_db, session: AsyncSession, client: AsyncClient):
+        user = await create_user(
+            session=session,
+            name="alice",
+            global_role=GlobalRole.USER,
+            email=None,
+        )
+
+        response = await client.post(
+            "/api/users/update_my_user",
+            headers=get_auth_headers(user.token),
+            json={"email": "alice@example.com"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["username"] == "alice"
+        assert response.json()["email"] == "alice@example.com"
+        assert response.json()["global_role"] == GlobalRole.USER
+        assert response.json()["active"] is True
+        await session.refresh(user)
+        assert user.email == "alice@example.com"
+        assert user.name == "alice"
+        assert user.global_role == GlobalRole.USER
+        assert user.active is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_rejects_fields_other_than_email(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        user = await create_user(session=session, name="alice", global_role=GlobalRole.USER)
+
+        response = await client.post(
+            "/api/users/update_my_user",
+            headers=get_auth_headers(user.token),
+            json={
+                "email": "alice@example.com",
+                "username": "admin",
+                "global_role": GlobalRole.ADMIN,
+                "active": False,
+            },
+        )
+
+        assert response.status_code == 422
+        await session.refresh(user)
+        assert user.email is None
+        assert user.name == "alice"
+        assert user.global_role == GlobalRole.USER
+        assert user.active is True
 
 
 class TestGetUser:
@@ -397,9 +432,6 @@ class TestGetUser:
             "email": None,
             "creds": {"token": "1234"},
             "active": True,
-            "permissions": {
-                "can_create_projects": True,
-            },
             "ssh_private_key": None,
             "ssh_public_key": None,
         }
@@ -438,9 +470,6 @@ class TestCreateUser:
             "global_role": "user",
             "email": "test@example.com",
             "active": True,
-            "permissions": {
-                "can_create_projects": True,
-            },
             "ssh_public_key": ssh_public_key,
         }
         res = await session.execute(select(UserModel).where(UserModel.name == "test"))
@@ -476,9 +505,6 @@ class TestCreateUser:
             "global_role": "user",
             "email": None,
             "active": True,
-            "permissions": {
-                "can_create_projects": True,
-            },
             "ssh_public_key": ssh_public_key,
         }
         # Username uniqueness check should be case insensitive
@@ -521,6 +547,61 @@ class TestCreateUser:
             },
         )
         assert response.status_code == 400
+
+
+class TestUpdateUser:
+    @pytest.mark.asyncio
+    async def test_returns_40x_if_not_authenticated(self, client: AsyncClient):
+        response = await client.post("/api/users/update")
+        assert response.status_code in [401, 403]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_returns_403_if_not_global_admin(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        user = await create_user(session=session, global_role=GlobalRole.USER)
+        response = await client.post(
+            "/api/users/update",
+            headers=get_auth_headers(user.token),
+            json={
+                "username": user.name,
+                "global_role": GlobalRole.ADMIN,
+                "email": "alice@example.com",
+                "active": False,
+            },
+        )
+
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_global_admin_updates_user_email_role_and_status(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        admin = await create_user(session=session, name="admin", global_role=GlobalRole.ADMIN)
+        user = await create_user(session=session, name="alice", global_role=GlobalRole.USER)
+
+        response = await client.post(
+            "/api/users/update",
+            headers=get_auth_headers(admin.token),
+            json={
+                "username": user.name,
+                "global_role": GlobalRole.ADMIN,
+                "email": "alice@example.com",
+                "active": False,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["username"] == "alice"
+        assert response.json()["email"] == "alice@example.com"
+        assert response.json()["global_role"] == GlobalRole.ADMIN
+        assert response.json()["active"] is False
+        await session.refresh(user)
+        assert user.email == "alice@example.com"
+        assert user.global_role == GlobalRole.ADMIN
+        assert user.active is False
 
 
 class TestDeleteUsers:

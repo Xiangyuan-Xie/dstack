@@ -1,7 +1,7 @@
 import React, { FormEvent, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { format } from 'date-fns';
-import { Activity, Plus, RefreshCcw, Save } from 'lucide-react';
+import { Activity, Check, Pencil, Plus, RefreshCcw, Save, UserCircle, X } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
     Button,
@@ -35,7 +35,13 @@ import {
 } from 'services/backend';
 import { useGetFeishuConfigQuery, useUpdateFeishuConfigMutation } from 'services/adminOAuth';
 import { useGetAllEventsQuery } from 'services/events';
-import { useApplyFleetMutation, useDeleteFleetMutation, useGetFleetDetailsQuery, useGetFleetsQuery } from 'services/fleet';
+import {
+    useApplyFleetMutation,
+    useDeleteFleetMutation,
+    useGetFleetDetailsQuery,
+    useGetFleetsQuery,
+    useGetProjectFleetsQuery,
+} from 'services/fleet';
 import { useGetGpusListQuery } from 'services/gpu';
 import {
     useApproveRunRequestMutation,
@@ -74,7 +80,9 @@ import {
     useGetUserBillingInfoQuery,
     useGetUserListQuery,
     useGetUserQuery,
+    useLazyGetUserListQuery,
     useRefreshTokenMutation,
+    useUpdateMyUserMutation,
     useUpdateUserMutation,
 } from 'services/user';
 import { useDeleteVolumesMutation, useGetAllVolumesQuery } from 'services/volume';
@@ -111,6 +119,40 @@ const useLocaleText = () => {
         isZh: locale === 'zh',
         text: (zh: string, en: string) => (locale === 'zh' ? zh : en),
     };
+};
+
+const ProfileInfoItem = ({ label, value }: { label: React.ReactNode; value: React.ReactNode }) => (
+    <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-950/40">
+        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</div>
+        <div className="mt-2 break-words text-sm font-semibold text-slate-950 dark:text-slate-50">{value}</div>
+    </div>
+);
+
+const getProfileRoleText = (role: IConsoleUserRole, locale: TLocale) => {
+    if (role.canUseGlobalAdmin) {
+        return locale === 'zh' ? '最高管理员' : 'Global administrator';
+    }
+    if (role.canUseProjectAdmin) {
+        return locale === 'zh' ? '项目管理员' : 'Project administrator';
+    }
+    return locale === 'zh' ? '普通用户' : 'Regular user';
+};
+
+const getUserRoleText = (globalRole: TUserRole | null | undefined, locale: TLocale) => {
+    if (globalRole === 'admin') {
+        return locale === 'zh' ? '最高管理员' : 'Global administrator';
+    }
+    return locale === 'zh' ? '普通用户' : 'Regular user';
+};
+
+const getProjectRoleText = (projectRole: TProjectRole | null | undefined, locale: TLocale) => {
+    if (projectRole === 'admin') {
+        return locale === 'zh' ? '项目拥有者' : 'Project owner';
+    }
+    if (projectRole === 'manager') {
+        return locale === 'zh' ? '项目管理员' : 'Project administrator';
+    }
+    return locale === 'zh' ? '项目成员' : 'Project member';
 };
 
 const useFilteredItems = <T,>(items: T[], query: string, fields: Array<(item: T) => string | null | undefined>) => {
@@ -458,7 +500,7 @@ export const RunRequestCreatePage: React.FC = () => {
                     selectedProjectCanDirectCreate ? '你可以在该项目中直接创建运行任务。' : '普通用户提交后需要项目管理员审批。',
                     selectedProjectCanDirectCreate
                         ? 'You can create a run directly in this project.'
-                        : 'Regular users submit runs for project admin approval.',
+                        : 'Regular users submit runs for project administrator approval.',
                 )}
             />
             <form className="grid gap-6" onSubmit={onSubmit}>
@@ -1063,10 +1105,15 @@ export const FleetsPage: React.FC<{ servers?: boolean }> = ({ servers }) => {
 
 export const FleetCreatePage: React.FC = () => {
     const navigate = useNavigate();
+    const location = useLocation();
     const { projects } = useConsoleContext();
     const { text } = useLocaleText();
     const [applyFleet, applyState] = useApplyFleetMutation();
-    const [projectName, setProjectName] = useState(projects[0]?.project_name ?? '');
+    const preselectedProjectName =
+        typeof location.state === 'object' && location.state && 'projectName' in location.state
+            ? String(location.state.projectName)
+            : '';
+    const [projectName, setProjectName] = useState(preselectedProjectName || projects[0]?.project_name || '');
     const [name, setName] = useState('');
     const [yaml, setYaml] = useState('type: fleet\nnodes:\n  min: 0\n  max: 1\n');
 
@@ -1405,7 +1452,6 @@ export const ProjectsPage: React.FC = () => {
     const navigate = useNavigate();
     const { text } = useLocaleText();
     const projects = useGetProjectsQuery({ include_not_joined: true, limit: 500 });
-    const [deleteProjects] = useDeleteProjectsMutation();
 
     return (
         <>
@@ -1446,8 +1492,8 @@ export const ProjectsPage: React.FC = () => {
                             id: 'actions',
                             header: text('操作', 'Actions'),
                             cell: (item) => (
-                                <Button variant="danger" onClick={() => deleteProjects([item.project_name])}>
-                                    {text('删除', 'Delete')}
+                                <Button onClick={() => navigate(CONSOLE_ROUTES.WORKSPACE_PROJECT_DETAILS.FORMAT(item.project_name))}>
+                                    {text('编辑', 'Edit')}
                                 </Button>
                             ),
                         },
@@ -1503,20 +1549,92 @@ export const ProjectCreatePage: React.FC = () => {
 
 export const ProjectDetailsPage: React.FC = () => {
     const { projectName = '' } = useParams();
+    const navigate = useNavigate();
     const { locale, text } = useLocaleText();
     const project = useGetProjectQuery({ name: projectName });
     const repos = useGetProjectReposQuery({ project_name: projectName });
     const backends = useGetProjectBackendsQuery({ projectName });
+    const fleets = useGetProjectFleetsQuery({ projectName, includeImported: true });
     const secrets = useGetAllSecretsQuery({ project_name: projectName });
     const events = useGetAllEventsQuery({ within_projects: [projectName], limit: 20 });
-    const [updateProject] = useUpdateProjectMutation();
+    const [updateProject, updateProjectState] = useUpdateProjectMutation();
+    const [deleteProjects] = useDeleteProjectsMutation();
     const [addMember, addMemberState] = useAddProjectMemberMutation();
     const [removeMember] = useRemoveProjectMemberMutation();
+    const [searchUsers, userSearch] = useLazyGetUserListQuery();
     const [updateSecret] = useUpdateSecretMutation();
     const [deleteSecrets] = useDeleteSecretsMutation();
-    const [memberName, setMemberName] = useState('');
+    const [confirm] = useConfirmationDialog();
+    const [pushNotification] = useNotifications();
+    const [memberSearch, setMemberSearch] = useState('');
+    const [selectedMember, setSelectedMember] = useState<IUser | null>(null);
     const [secretName, setSecretName] = useState('');
     const [secretValue, setSecretValue] = useState('');
+    const [settings, setSettings] = useState({
+        projectName,
+        isPublic: false,
+    });
+
+    useEffect(() => {
+        if (!project.data) return;
+        setSettings({
+            projectName: project.data.project_name,
+            isPublic: project.data.isPublic,
+        });
+    }, [project.data?.project_name, project.data?.isPublic]);
+
+    const existingMemberNames = useMemo(
+        () => new Set((project.data?.members ?? []).map((member) => member.user.username)),
+        [project.data?.members],
+    );
+    const memberCandidates = useMemo(
+        () => (userSearch.data?.data ?? []).filter((candidate) => !existingMemberNames.has(candidate.username)),
+        [existingMemberNames, userSearch.data?.data],
+    );
+
+    const submitSettings = async (event: FormEvent) => {
+        event.preventDefault();
+        const updatedProject = await updateProject({
+            project_name: projectName,
+            new_project_name: settings.projectName.trim(),
+            is_public: settings.isPublic,
+        }).unwrap();
+        if (updatedProject.project_name !== projectName) {
+            navigate(CONSOLE_ROUTES.WORKSPACE_PROJECT_DETAILS.FORMAT(updatedProject.project_name));
+        }
+    };
+
+    const searchProjectMember = (value: string) => {
+        setMemberSearch(value);
+        setSelectedMember(null);
+        const namePattern = value.trim();
+        if (namePattern) {
+            searchUsers({ name_pattern: namePattern });
+        }
+    };
+
+    const addSelectedMember = async () => {
+        if (!selectedMember) return;
+        await addMember({ project_name: projectName, username: selectedMember.username }).unwrap();
+        setSelectedMember(null);
+        setMemberSearch('');
+    };
+
+    const removeProject = () =>
+        confirm({
+            title: text('删除项目', 'Delete project'),
+            content: text('确认删除该项目？此操作不可恢复。', 'Delete this project? This action cannot be undone.'),
+            confirmButtonLabel: text('删除', 'Delete'),
+            onConfirm: async () => {
+                try {
+                    await deleteProjects([projectName]).unwrap();
+                    pushNotification({ type: 'success', header: text('项目已删除', 'Project deleted') });
+                    navigate(CONSOLE_ROUTES.WORKSPACE_PROJECTS);
+                } catch {
+                    pushNotification({ type: 'error', header: text('项目删除失败', 'Failed to delete project') });
+                }
+            },
+        });
 
     return (
         <>
@@ -1528,25 +1646,93 @@ export const ProjectDetailsPage: React.FC = () => {
                 )}
             />
             <div className="grid gap-6">
-                <Panel title={text('设置', 'Settings')}>
-                    <div className="flex flex-wrap gap-3">
-                        <Button
-                            onClick={() => updateProject({ project_name: projectName, is_public: !project.data?.isPublic })}
-                        >
-                            {project.data?.isPublic ? text('设为私有', 'Make private') : text('设为公开', 'Make public')}
-                        </Button>
-                    </div>
-                </Panel>
+                <form onSubmit={submitSettings}>
+                    <Panel
+                        title={text('项目设置', 'Project settings')}
+                        description={text('修改项目名称和可见性。', 'Edit project name and visibility.')}
+                        actions={
+                            <>
+                                <Button type="button" variant="danger" onClick={removeProject}>
+                                    {text('删除项目', 'Delete project')}
+                                </Button>
+                                <Button
+                                    type="submit"
+                                    variant="primary"
+                                    icon={<Save className="h-4 w-4" />}
+                                    loading={updateProjectState.isLoading || project.isLoading}
+                                >
+                                    {text('保存', 'Save')}
+                                </Button>
+                            </>
+                        }
+                    >
+                        <div className="grid gap-4 md:grid-cols-2">
+                            <Field label={text('项目名称', 'Project name')}>
+                                <TextInput
+                                    value={settings.projectName}
+                                    onChange={(event) =>
+                                        setSettings((current) => ({ ...current, projectName: event.target.value }))
+                                    }
+                                />
+                            </Field>
+                            <Field label={text('可见性', 'Visibility')}>
+                                <SelectInput
+                                    value={settings.isPublic ? 'public' : 'private'}
+                                    onChange={(event) =>
+                                        setSettings((current) => ({
+                                            ...current,
+                                            isPublic: event.target.value === 'public',
+                                        }))
+                                    }
+                                >
+                                    <option value="private">{text('私有', 'Private')}</option>
+                                    <option value="public">{text('公开', 'Public')}</option>
+                                </SelectInput>
+                            </Field>
+                        </div>
+                    </Panel>
+                </form>
                 <Panel title={text('成员', 'Members')}>
-                    <div className="mb-4 flex flex-col gap-3 sm:flex-row">
-                        <TextInput
-                            value={memberName}
-                            onChange={(event) => setMemberName(event.target.value)}
-                            placeholder="username"
-                        />
+                    <div className="mb-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+                        <div className="relative">
+                            <SearchInput
+                                value={memberSearch}
+                                onChange={(event) => searchProjectMember(event.target.value)}
+                                placeholder={text('搜索用户', 'Search users')}
+                            />
+                            {memberSearch.trim() && !selectedMember && (
+                                <div className="absolute z-10 mt-2 w-full overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
+                                    {memberCandidates.length > 0 ? (
+                                        memberCandidates.map((candidate) => (
+                                            <button
+                                                key={candidate.username}
+                                                type="button"
+                                                className="block w-full px-4 py-3 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800"
+                                                onClick={() => {
+                                                    setSelectedMember(candidate);
+                                                    setMemberSearch(candidate.username);
+                                                }}
+                                            >
+                                                <span className="block font-semibold text-slate-950 dark:text-slate-50">
+                                                    {candidate.username}
+                                                </span>
+                                                <span className="block text-xs text-slate-500 dark:text-slate-400">
+                                                    {valueOrDash(candidate.email)}
+                                                </span>
+                                            </button>
+                                        ))
+                                    ) : (
+                                        <div className="px-4 py-3 text-sm text-slate-500 dark:text-slate-400">
+                                            {userSearch.isFetching ? text('搜索中...', 'Searching...') : text('没有可添加的用户', 'No users to add')}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
                         <Button
                             loading={addMemberState.isLoading}
-                            onClick={() => addMember({ project_name: projectName, username: memberName })}
+                            disabled={!selectedMember}
+                            onClick={addSelectedMember}
                         >
                             {text('添加成员', 'Add member')}
                         </Button>
@@ -1557,7 +1743,11 @@ export const ProjectDetailsPage: React.FC = () => {
                         keyGetter={(item) => item.user.username}
                         columns={[
                             { id: 'user', header: text('用户', 'User'), cell: (item) => item.user.username },
-                            { id: 'role', header: text('角色', 'Role'), cell: (item) => item.project_role },
+                            {
+                                id: 'role',
+                                header: text('角色', 'Role'),
+                                cell: (item) => getProjectRoleText(item.project_role, locale),
+                            },
                             {
                                 id: 'actions',
                                 header: text('操作', 'Actions'),
@@ -1583,6 +1773,67 @@ export const ProjectDetailsPage: React.FC = () => {
                         columns={[
                             { id: 'name', header: text('名称', 'Name'), cell: (item) => item.name },
                             { id: 'type', header: text('类型', 'Type'), cell: (item) => item.config?.type },
+                        ]}
+                    />
+                </Panel>
+                <Panel
+                    title={text('项目机器', 'Project machines')}
+                    description={text(
+                        '项目关联的集群和服务器实例。',
+                        'Fleets and server instances associated with this project.',
+                    )}
+                    actions={
+                        <Button
+                            variant="primary"
+                            icon={<Plus className="h-4 w-4" />}
+                            onClick={() =>
+                                navigate(CONSOLE_ROUTES.RESOURCES_FLEET_CREATE, { state: { projectName } })
+                            }
+                        >
+                            {text('创建/分配集群', 'Create/assign fleet')}
+                        </Button>
+                    }
+                >
+                    <DataTable
+                        items={fleets.data ?? []}
+                        loading={fleets.isLoading}
+                        keyGetter={(item) => item.id}
+                        empty={<EmptyState title={text('暂无项目机器', 'No project machines')} />}
+                        columns={[
+                            {
+                                id: 'name',
+                                header: text('集群', 'Fleet'),
+                                cell: (item) => (
+                                    <button
+                                        className="font-semibold text-blue-600 dark:text-blue-300"
+                                        onClick={() =>
+                                            navigate(
+                                                CONSOLE_ROUTES.RESOURCES_FLEET_DETAILS.FORMAT(
+                                                    item.project_name,
+                                                    item.id,
+                                                ),
+                                            )
+                                        }
+                                    >
+                                        {item.name}
+                                    </button>
+                                ),
+                            },
+                            {
+                                id: 'status',
+                                header: text('状态', 'Status'),
+                                cell: (item) => <RequestStatus status={item.status} />,
+                            },
+                            {
+                                id: 'servers',
+                                header: text('服务器', 'Servers'),
+                                cell: (item) => item.instances.map((instance) => instance.name || instance.id).join(', ') || '-',
+                            },
+                            {
+                                id: 'count',
+                                header: text('数量', 'Count'),
+                                cell: (item) => item.instances.length,
+                            },
                         ]}
                     />
                 </Panel>
@@ -1716,9 +1967,8 @@ export const GatewayPage: React.FC<{ create?: boolean }> = ({ create }) => {
 
 export const UsersPage: React.FC = () => {
     const navigate = useNavigate();
-    const { text } = useLocaleText();
+    const { locale, text } = useLocaleText();
     const users = useGetUserListQuery({ limit: 500 });
-    const [deleteUsers] = useDeleteUsersMutation();
 
     return (
         <>
@@ -1752,19 +2002,25 @@ export const UsersPage: React.FC = () => {
                                 </button>
                             ),
                         },
-                        { id: 'role', header: text('角色', 'Role'), cell: (item) => item.global_role },
+                        {
+                            id: 'role',
+                            header: text('角色', 'Role'),
+                            cell: (item) => <StatusBadge tone={item.global_role === 'admin' ? 'info' : 'neutral'}>{getUserRoleText(item.global_role, locale)}</StatusBadge>,
+                        },
                         { id: 'email', header: 'Email', cell: (item) => valueOrDash(item.email) },
                         {
                             id: 'active',
                             header: text('状态', 'Status'),
-                            cell: (item) => <RequestStatus status={item.active ? 'active' : 'disabled'} />,
+                            cell: (item) => (
+                                <StatusBadge tone={item.active ? 'success' : 'danger'}>{item.active ? text('已启用', 'Active') : text('已停用', 'Inactive')}</StatusBadge>
+                            ),
                         },
                         {
                             id: 'actions',
                             header: text('操作', 'Actions'),
                             cell: (item) => (
-                                <Button variant="danger" onClick={() => deleteUsers([item.username])}>
-                                    {text('删除', 'Delete')}
+                                <Button onClick={() => navigate(CONSOLE_ROUTES.ADMIN_USER_DETAILS.FORMAT(item.username))}>
+                                    {text('编辑', 'Edit')}
                                 </Button>
                             ),
                         },
@@ -1777,13 +2033,18 @@ export const UsersPage: React.FC = () => {
 
 export const UserCreatePage: React.FC = () => {
     const navigate = useNavigate();
-    const { text } = useLocaleText();
+    const { locale, text } = useLocaleText();
     const [createUser, createState] = useCreateUserMutation();
-    const [values, setValues] = useState({ username: '', email: '', global_role: 'user' as TUserRole, active: true });
+    const [values, setValues] = useState({
+        username: '',
+        email: '',
+        global_role: 'user' as TUserRole,
+        active: true,
+    });
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
-        const user = await createUser({ ...values, id: '', permissions: [] }).unwrap();
+        const user = await createUser({ ...values, email: values.email.trim() || null }).unwrap();
         navigate(CONSOLE_ROUTES.ADMIN_USER_DETAILS.FORMAT(user.username));
     };
 
@@ -1812,8 +2073,8 @@ export const UserCreatePage: React.FC = () => {
                                     setValues((current) => ({ ...current, global_role: event.target.value as TUserRole }))
                                 }
                             >
-                                <option value="user">user</option>
-                                <option value="admin">admin</option>
+                                <option value="user">{getUserRoleText('user', locale)}</option>
+                                <option value="admin">{getUserRoleText('admin', locale)}</option>
                             </SelectInput>
                         </Field>
                     </div>
@@ -1830,12 +2091,31 @@ export const UserCreatePage: React.FC = () => {
 
 export const UserDetailsPage: React.FC = () => {
     const { userName = '' } = useParams();
-    const { text } = useLocaleText();
+    const { locale, text } = useLocaleText();
+    const navigate = useNavigate();
     const user = useGetUserQuery({ name: userName });
     const billing = useGetUserBillingInfoQuery({ username: userName }, { skip: process.env.UI_VERSION !== 'sky' });
     const [updateUser] = useUpdateUserMutation();
-    const [refreshToken] = useRefreshTokenMutation();
+    const [deleteUsers] = useDeleteUsersMutation();
+    const [refreshToken, refreshState] = useRefreshTokenMutation();
+    const [confirm] = useConfirmationDialog();
     const [pushNotification] = useNotifications();
+    const [values, setValues] = useState<TUpdateUserParams>({
+        username: userName,
+        email: null,
+        global_role: 'user',
+        active: true,
+    });
+
+    useEffect(() => {
+        if (!user.data) return;
+        setValues({
+            username: user.data.username,
+            email: user.data.email,
+            global_role: user.data.global_role,
+            active: user.data.active,
+        });
+    }, [user.data?.username, user.data?.email, user.data?.global_role, user.data?.active]);
 
     const refresh = async () => {
         const result = await refreshToken({ username: userName }).unwrap();
@@ -1844,30 +2124,124 @@ export const UserDetailsPage: React.FC = () => {
         );
     };
 
+    const removeUser = () =>
+        confirm({
+            title: text('删除用户', 'Delete user'),
+            content: text('确认删除该用户？此操作不可恢复。', 'Delete this user? This action cannot be undone.'),
+            confirmButtonLabel: text('删除', 'Delete'),
+            onConfirm: async () => {
+                try {
+                    await deleteUsers([userName]).unwrap();
+                    pushNotification({ type: 'success', header: text('用户已删除', 'User deleted') });
+                    navigate(CONSOLE_ROUTES.ADMIN_USERS);
+                } catch {
+                    pushNotification({ type: 'error', header: text('用户删除失败', 'Failed to delete user') });
+                }
+            },
+        });
+
+    const toggleUserActive = () => {
+        const nextActive = !values.active;
+        confirm({
+            title: nextActive ? text('启用账号', 'Activate account') : text('停用账号', 'Deactivate account'),
+            content: nextActive
+                ? text('确认启用该用户账号？', 'Activate this user account?')
+                : text('确认停用该用户账号？', 'Deactivate this user account?'),
+            confirmButtonLabel: nextActive ? text('启用', 'Activate') : text('停用', 'Deactivate'),
+            onConfirm: async () => {
+                try {
+                    await updateUser({
+                        username: values.username,
+                        email: values.email?.trim() || null,
+                        global_role: values.global_role,
+                        active: nextActive,
+                    }).unwrap();
+                    setValues((current) => ({ ...current, active: nextActive }));
+                    pushNotification({
+                        type: 'success',
+                        header: nextActive ? text('用户已启用', 'User activated') : text('用户已停用', 'User deactivated'),
+                    });
+                } catch {
+                    pushNotification({
+                        type: 'error',
+                        header: nextActive ? text('用户启用失败', 'Failed to activate user') : text('用户停用失败', 'Failed to deactivate user'),
+                    });
+                }
+            },
+        });
+    };
+
     return (
         <>
             <PageHeader
                 title={userName}
                 actions={
-                    <>
-                        <Button icon={<RefreshCcw className="h-4 w-4" />} onClick={refresh}>
+                    <Button icon={<RefreshCcw className="h-4 w-4" />} loading={refreshState.isLoading} onClick={refresh}>
                             {text('刷新 Token', 'Refresh token')}
-                        </Button>
-                        {user.data && (
-                            <Button onClick={() => updateUser({ username: userName, active: !user.data!.active })}>
-                                {user.data.active ? text('禁用', 'Disable') : text('启用', 'Enable')}
-                            </Button>
-                        )}
-                    </>
+                    </Button>
                 }
             />
-            <div className="grid gap-6 xl:grid-cols-2">
-                <Panel title={text('用户信息', 'User info')}>
-                    <CodeBlock value={user.data ?? {}} />
+            <div className="grid gap-6">
+                <Panel
+                    title={text('用户信息', 'User info')}
+                    description={text(
+                        '用户名、邮箱、创建时间、状态和角色只读。',
+                        'Username, email, creation time, status, and role are read-only.',
+                    )}
+                >
+                    <div className="grid gap-4 md:grid-cols-2">
+                        <ProfileInfoItem label={text('用户 ID', 'User ID')} value={valueOrDash(user.data?.id)} />
+                        <ProfileInfoItem label={text('用户名', 'Username')} value={valueOrDash(user.data?.username)} />
+                        <ProfileInfoItem label={text('创建时间', 'Created')} value={formatDate(user.data?.created_at)} />
+                        <ProfileInfoItem
+                            label={text('当前状态', 'Current status')}
+                            value={
+                                <StatusBadge tone={values.active ? 'success' : 'danger'}>
+                                    {values.active ? text('已启用', 'Active') : text('已停用', 'Inactive')}
+                                </StatusBadge>
+                            }
+                        />
+                        <ProfileInfoItem label="Email" value={valueOrDash(user.data?.email)} />
+                        <ProfileInfoItem label={text('角色', 'Role')} value={getUserRoleText(values.global_role, locale)} />
+                    </div>
                 </Panel>
+                <Panel
+                    title={text('危险操作', 'Danger zone')}
+                    description={text('停用账号会阻止用户继续使用；删除用户不可恢复。', 'Deactivating blocks account use. Deleting a user cannot be undone.')}
+                    actions={
+                        <>
+                            <Button
+                                variant={values.active ? 'secondary' : 'primary'}
+                                onClick={toggleUserActive}
+                            >
+                                {values.active ? text('停用账号', 'Deactivate account') : text('启用账号', 'Activate account')}
+                            </Button>
+                            <Button variant="danger" onClick={removeUser}>
+                                {text('删除用户', 'Delete user')}
+                            </Button>
+                        </>
+                    }
+                />
                 {process.env.UI_VERSION === 'sky' && (
                     <Panel title={text('账单', 'Billing')}>
-                        <CodeBlock value={billing.data ?? {}} />
+                        <div className="grid gap-4">
+                            <ProfileInfoItem
+                                label={text('余额', 'Balance')}
+                                value={billing.data ? centsToFormattedString(billing.data.balance) : '-'}
+                            />
+                            <ProfileInfoItem
+                                label={text('默认充值金额', 'Default payment amount')}
+                                value={billing.data ? centsToFormattedString(billing.data.default_payment_amount) : '-'}
+                            />
+                            <ProfileInfoItem
+                                label={text('支付方式', 'Payment method')}
+                                value={
+                                    <StatusBadge tone={billing.data?.is_payment_method_attached ? 'success' : 'neutral'}>
+                                        {billing.data?.is_payment_method_attached ? text('已绑定', 'Attached') : text('未绑定', 'Not attached')}
+                                    </StatusBadge>
+                                }
+                            />
+                        </div>
                     </Panel>
                 )}
             </div>
@@ -2025,13 +2399,135 @@ export const EventsPage: React.FC = () => {
 
 export const AccountProfilePage: React.FC = () => {
     const user = useAppSelector(selectUserData);
+    const { role, locale } = useConsoleContext();
     const { text } = useLocaleText();
+    const [pushNotification] = useNotifications();
+    const [updateMyUser, updateState] = useUpdateMyUserMutation();
+    const [email, setEmail] = useState(user?.email ?? '');
+    const [editingEmail, setEditingEmail] = useState(false);
+    const profileRoleText = getProfileRoleText(role, locale);
+
+    useEffect(() => {
+        setEmail(user?.email ?? '');
+    }, [user?.email]);
+
+    const submitEmail = async (event: FormEvent) => {
+        event.preventDefault();
+        try {
+            await updateMyUser({ email: email.trim() || null }).unwrap();
+            setEditingEmail(false);
+            pushNotification({
+                type: 'success',
+                header: text('邮箱已更新', 'Email updated'),
+            });
+        } catch {
+            pushNotification({
+                type: 'error',
+                header: text('邮箱更新失败', 'Failed to update email'),
+            });
+        }
+    };
+
     return (
         <>
-            <PageHeader title={text('个人资料', 'Profile')} />
-            <Panel title={text('账户信息', 'Account')}>
-                <CodeBlock value={user ?? {}} />
-            </Panel>
+            <PageHeader
+                title={text('个人资料', 'Profile')}
+                description={text('查看基础账号状态，并维护你的邮箱。', 'View basic account status and keep your email up to date.')}
+            />
+            <div className="grid gap-6">
+                <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-200/60 dark:border-slate-800 dark:bg-slate-900 dark:shadow-none">
+                    <div className="bg-gradient-to-r from-blue-600 via-blue-500 to-teal-400 px-6 py-7 text-white">
+                        <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex min-w-0 items-center gap-4">
+                                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-white/18 ring-1 ring-white/25">
+                                    <UserCircle className="h-9 w-9" />
+                                </div>
+                                <div className="min-w-0">
+                                    <div className="truncate text-2xl font-bold">{user?.username ?? '-'}</div>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                        <span className="inline-flex h-7 items-center rounded-full bg-white/18 px-3 text-xs font-semibold ring-1 ring-white/25">
+                                            {profileRoleText}
+                                        </span>
+                                        <span className="inline-flex h-7 items-center rounded-full bg-white/18 px-3 text-xs font-semibold ring-1 ring-white/25">
+                                            {user?.active ? text('已启用', 'Active') : text('已停用', 'Inactive')}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="rounded-xl bg-white/14 px-4 py-3 text-sm ring-1 ring-white/20">
+                                <div className="text-xs font-semibold uppercase tracking-wide text-white/75">
+                                    {text('创建时间', 'Created')}
+                                </div>
+                                <div className="mt-1 font-semibold">{formatDate(user?.created_at)}</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+                <Panel title={text('基础信息', 'Basic info')}>
+                    <div className="grid gap-4 md:grid-cols-2">
+                        <ProfileInfoItem label={text('用户名', 'Username')} value={valueOrDash(user?.username)} />
+                        <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-800 dark:bg-slate-950/40">
+                            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                                {text('邮箱', 'Email')}
+                            </div>
+                            {editingEmail ? (
+                                <form className="mt-2 flex flex-col gap-2 sm:flex-row" onSubmit={submitEmail}>
+                                    <TextInput
+                                        type="email"
+                                        value={email}
+                                        onChange={(event) => setEmail(event.target.value)}
+                                        placeholder="name@example.com"
+                                    />
+                                    <div className="flex gap-2">
+                                        <Button
+                                            type="submit"
+                                            variant="primary"
+                                            loading={updateState.isLoading}
+                                            icon={<Check className="h-4 w-4" />}
+                                        >
+                                            {text('保存', 'Save')}
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            icon={<X className="h-4 w-4" />}
+                                            onClick={() => {
+                                                setEmail(user?.email ?? '');
+                                                setEditingEmail(false);
+                                            }}
+                                        >
+                                            {text('取消', 'Cancel')}
+                                        </Button>
+                                    </div>
+                                </form>
+                            ) : (
+                                <div className="mt-2 flex items-center justify-between gap-3">
+                                    <div className="break-words text-sm font-semibold text-slate-950 dark:text-slate-50">
+                                        {valueOrDash(user?.email)}
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        className="h-9 w-9 min-w-0 px-0"
+                                        icon={<Pencil className="h-4 w-4" />}
+                                        aria-label={text('编辑邮箱', 'Edit email')}
+                                        title={text('编辑邮箱', 'Edit email')}
+                                        onClick={() => setEditingEmail(true)}
+                                    />
+                                </div>
+                            )}
+                        </div>
+                        <ProfileInfoItem
+                            label={text('账号状态', 'Status')}
+                            value={
+                                <StatusBadge tone={user?.active ? 'success' : 'danger'}>
+                                    {user?.active ? text('已启用', 'Active') : text('已停用', 'Inactive')}
+                                </StatusBadge>
+                            }
+                        />
+                        <ProfileInfoItem label={text('创建时间', 'Created')} value={formatDate(user?.created_at)} />
+                    </div>
+                </Panel>
+            </div>
         </>
     );
 };

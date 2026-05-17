@@ -19,7 +19,6 @@ const user = {
     username: 'alice',
     global_role: 'user',
     email: null,
-    permissions: [],
     created_at: '2026-05-15T00:00:00Z',
     active: true,
 } as IUser;
@@ -88,7 +87,19 @@ describe('Console utils', () => {
         expect(labels).not.toContain('系统设置');
         expect(labels).not.toContain('用户管理');
         expect(labels).not.toContain('系统事件');
+        expect(labels).not.toContain('账单');
         expect(labels).not.toContain('高级控制台');
+    });
+
+    test('shows billing only for sky UI navigation', () => {
+        const role = getConsoleUserRole([project], user);
+
+        expect(getConsoleNavSections(role, 'zh').flatMap((section) => section.items.map((item) => item.label))).not.toContain(
+            '账单',
+        );
+        expect(getConsoleNavSections(role, 'zh', 'sky').flatMap((section) => section.items.map((item) => item.label))).toContain(
+            '账单',
+        );
     });
 
     test('builds project admin navigation from current user role without global admin links', () => {

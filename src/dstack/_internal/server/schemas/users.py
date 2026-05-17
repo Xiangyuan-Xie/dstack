@@ -64,6 +64,10 @@ class CreateUserRequest(CoreModel):
 UpdateUserRequest = CreateUserRequest
 
 
+class UpdateMyUserRequest(CoreModel):
+    email: Optional[str] = None
+
+
 class RefreshTokenRequest(CoreModel):
     username: str
 

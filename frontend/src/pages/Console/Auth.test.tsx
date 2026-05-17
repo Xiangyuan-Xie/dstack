@@ -38,7 +38,8 @@ jest.mock('libs', () => ({
 jest.mock('assets/icons/feishu.svg', () => {
     const React = require('react');
     return {
-        ReactComponent: (props: React.SVGProps<SVGSVGElement>) => React.createElement('svg', props),
+        ReactComponent: (props: React.SVGProps<SVGSVGElement>) =>
+            React.createElement('svg', { ...props, 'data-testid': 'feishu-logo' }),
     };
 });
 
@@ -85,6 +86,7 @@ describe('LoginPage', () => {
         render(<LoginPage />);
 
         expect(screen.getByRole('button', { name: '使用飞书登录' })).toBeDisabled();
+        expect(screen.getByTestId('feishu-logo')).toBeInTheDocument();
         expect(screen.getByText('飞书登录未配置，请管理员配置飞书 OAuth。')).toBeInTheDocument();
         expect(screen.queryByText(/GitHub/i)).not.toBeInTheDocument();
     });

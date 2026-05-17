@@ -16,7 +16,6 @@ PROJECT_PAYLOAD = {
         "global_role": "user",
         "email": None,
         "active": True,
-        "permissions": {"can_create_projects": True},
         "ssh_public_key": None,
     },
     "created_at": "2023-01-02T03:04:00+00:00",

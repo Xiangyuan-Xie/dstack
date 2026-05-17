@@ -1,11 +1,21 @@
 declare type TUserRole = 'user' | 'admin';
 declare type TServerTestUserRole = 'global_admin' | 'project_manager' | 'user';
-declare type TUserPermission = 'CAN_CREATE_PROJECTS';
-declare type TUserPermissionKeys = 'can_create_projects';
 
 declare type TGetUserListParams = TBaseRequestListParams & {
     return_total_count?: boolean;
     name_pattern?: string;
+};
+
+declare type TUpdateMyUserParams = {
+    email: string | null;
+};
+
+declare type TCreateUserParams = Pick<IUser, 'username' | 'global_role' | 'active'> & {
+    email: string | null;
+};
+
+declare type TUpdateUserParams = Pick<IUser, 'username' | 'global_role' | 'active'> & {
+    email: string | null;
 };
 
 declare type TGetUserListResponse = {
@@ -18,7 +28,6 @@ declare interface IUserResponseData {
     username: string;
     global_role: TUserRole;
     email: string | null;
-    permissions: Record<TUserPermissionKeys, boolean>;
     created_at: string;
     active: boolean;
 }
@@ -28,7 +37,6 @@ declare interface IUser {
     username: string;
     global_role: TUserRole;
     email: string | null;
-    permissions: TUserPermission[];
     created_at: string;
     active: boolean;
 }

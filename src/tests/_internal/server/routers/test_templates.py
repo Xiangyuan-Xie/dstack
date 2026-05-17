@@ -49,15 +49,13 @@ class TestListTemplates:
         assert response.json() == []
 
     @pytest.mark.asyncio
-    async def test_uses_project_templates_repo_when_set(
+    async def test_uses_global_templates_repo_when_set(
         self, test_db, session: AsyncSession, client: AsyncClient, tmp_path: Path
     ):
         user = await create_user(session=session, global_role=GlobalRole.USER)
         project = await create_project(
             session=session, owner=user, name="project-with-templates", is_public=False
         )
-        project.templates_repo = "https://project.example/repo.git"
-        await session.commit()
         await add_project_member(
             session=session, project=project, user=user, project_role=ProjectRole.USER
         )
@@ -75,7 +73,14 @@ class TestListTemplates:
                 f,
             )
 
-        with patch.object(templates_service, "_fetch_templates_repo", return_value=tmp_path):
+        with (
+            patch.object(
+                templates_service.settings,
+                "SERVER_TEMPLATES_REPO",
+                "https://project.example/repo.git",
+            ),
+            patch.object(templates_service, "_fetch_templates_repo", return_value=tmp_path),
+        ):
             response = await client.post(
                 f"/api/project/{project.name}/templates/list",
                 headers=get_auth_headers(user.token),
@@ -157,16 +162,21 @@ class TestListTemplates:
     ):
         user = await create_user(session=session, global_role=GlobalRole.USER)
         project = await create_project(session=session, owner=user)
-        project.templates_repo = "https://github.com/dstackai/dstack-sky"
-        await session.commit()
         await add_project_member(
             session=session, project=project, user=user, project_role=ProjectRole.USER
         )
 
-        with patch.object(
-            templates_service,
-            "_fetch_templates_repo",
-            side_effect=GitCommandError(["git", "clone"], 128, stderr="not found"),
+        with (
+            patch.object(
+                templates_service.settings,
+                "SERVER_TEMPLATES_REPO",
+                "https://github.com/dstackai/dstack-sky",
+            ),
+            patch.object(
+                templates_service,
+                "_fetch_templates_repo",
+                side_effect=GitCommandError(["git", "clone"], 128, stderr="not found"),
+            ),
         ):
             response = await client.post(
                 f"/api/project/{project.name}/templates/list",

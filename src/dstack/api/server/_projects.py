@@ -18,6 +18,7 @@ from dstack._internal.server.schemas.projects import (
     MemberSetting,
     RemoveProjectMemberRequest,
     SetProjectMembersRequest,
+    UpdateProjectRequest,
 )
 from dstack.api.server._group import APIClientGroup
 
@@ -87,6 +88,19 @@ class ProjectsAPIClient(APIClientGroup):
     def create(self, project_name: str, is_public: bool = False) -> Project:
         body = CreateProjectRequest(project_name=project_name, is_public=is_public)
         resp = self._request("/api/projects/create", body=body.json())
+        return parse_obj_as(Project.__response__, resp.json())
+
+    def update(
+        self,
+        project_name: str,
+        new_project_name: Optional[str] = None,
+        is_public: Optional[bool] = None,
+    ) -> Project:
+        body = UpdateProjectRequest(
+            project_name=new_project_name,
+            is_public=is_public,
+        )
+        resp = self._request(f"/api/projects/{project_name}/update", body=body.json())
         return parse_obj_as(Project.__response__, resp.json())
 
     def delete(self, projects_names: List[str]):

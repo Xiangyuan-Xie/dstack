@@ -31,7 +31,6 @@ class Project(CoreModel):
     current_user_project_role: Optional[ProjectRole] = None
     """The requesting user's role in the project. Set on project list responses."""
     is_public: bool = False
-    templates_repo: Optional[str] = None
 
 
 class ProjectsInfoList(CoreModel):

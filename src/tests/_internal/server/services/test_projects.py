@@ -17,7 +17,6 @@ class TestProjectModelToProject:
         owner.email = None
         owner.active = True
         owner.ssh_public_key = None
-        owner.projects_quota = 1
 
         project_model = Mock(spec=ProjectModel)
         project_model.id = uuid4()
@@ -27,7 +26,6 @@ class TestProjectModelToProject:
         project_model.backends = []
         project_model.members = []
         project_model.is_public = False
-        project_model.templates_repo = None
 
         project = projects.project_model_to_project(
             project_model,

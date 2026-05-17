@@ -3,7 +3,7 @@ import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 
 import fetchBaseQueryHeaders from 'libs/fetchBaseQueryHeaders';
 
-import { UserPermission, userPermissionMap } from '../types';
+import { setUserData } from 'App/slice';
 
 export const userApi = createApi({
     reducerPath: 'userApi',
@@ -23,18 +23,7 @@ export const userApi = createApi({
                 };
             },
 
-            transformResponse: (userData: IUserResponseData): IUser => {
-                return {
-                    ...userData,
-                    permissions: Object.keys(userPermissionMap).reduce<TUserPermission[]>((acc, key) => {
-                        if (userData?.permissions?.[key as TUserPermissionKeys]) {
-                            acc.push(UserPermission[userPermissionMap[key as TUserPermissionKeys]]);
-                        }
-
-                        return acc;
-                    }, []),
-                };
-            },
+            transformResponse: (userData: IUserResponseData): IUser => userData,
         }),
 
         getUserList: builder.query<TGetUserListResponse, TGetUserListParams>({
@@ -83,7 +72,7 @@ export const userApi = createApi({
             }),
         }),
 
-        createUser: builder.mutation<IUser, Omit<IUser, 'id'>>({
+        createUser: builder.mutation<IUser, TCreateUserParams>({
             query: (user) => ({
                 url: API.USERS.CREATE(),
                 method: 'POST',
@@ -93,14 +82,32 @@ export const userApi = createApi({
             invalidatesTags: (result) => [{ type: 'User' as const, id: result?.username }, 'User'],
         }),
 
-        updateUser: builder.mutation<IUser, Partial<IUser> & Pick<IUser, 'username'>>({
+        updateUser: builder.mutation<IUser, TUpdateUserParams>({
             query: (user) => ({
                 url: API.USERS.UPDATE(),
                 method: 'POST',
                 body: user,
             }),
 
-            invalidatesTags: (result) => [{ type: 'User' as const, id: result?.username }],
+            invalidatesTags: (result) => [{ type: 'User' as const, id: result?.username }, 'User'],
+        }),
+
+        updateMyUser: builder.mutation<IUser, TUpdateMyUserParams>({
+            query: (body) => ({
+                url: API.USERS.UPDATE_MY_USER(),
+                method: 'POST',
+                body,
+            }),
+
+            transformResponse: (userData: IUserResponseData): IUser => userData,
+
+            async onQueryStarted(_, { dispatch, queryFulfilled }) {
+                try {
+                    const { data } = await queryFulfilled;
+                    dispatch(setUserData(data));
+                } catch {
+                }
+            },
         }),
 
         refreshToken: builder.mutation<IUserWithCreds, Pick<IUser, 'username'>>({
@@ -210,6 +217,7 @@ export const {
     useCreateUserMutation,
     useDeleteUsersMutation,
     useUpdateUserMutation,
+    useUpdateMyUserMutation,
     useRefreshTokenMutation,
     useGetUserPaymentsQuery,
     useAddUserPaymentMutation,

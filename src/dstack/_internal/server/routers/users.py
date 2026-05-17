@@ -13,6 +13,7 @@ from dstack._internal.server.schemas.users import (
     GetUserRequest,
     ListUsersRequest,
     RefreshTokenRequest,
+    UpdateMyUserRequest,
     UpdateUserRequest,
 )
 from dstack._internal.server.security.permissions import Authenticated, GlobalAdmin
@@ -118,6 +119,20 @@ async def update_user(
     )
     if res is None:
         raise ResourceNotExistsError()
+    return CustomORJSONResponse(users.user_model_to_user(res))
+
+
+@router.post("/update_my_user", summary="Update my user", response_model=User)
+async def update_my_user(
+    body: UpdateMyUserRequest,
+    session: AsyncSession = Depends(get_session),
+    user: UserModel = Depends(Authenticated()),
+):
+    res = await users.update_my_user(
+        session=session,
+        actor=user,
+        email=body.email,
+    )
     return CustomORJSONResponse(users.user_model_to_user(res))
 
 

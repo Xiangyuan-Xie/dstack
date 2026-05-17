@@ -340,7 +340,6 @@ def _mock_feishu_http(
 def _mock_get_or_create_feishu_user(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     from dstack._internal.core.models.users import (
         GlobalRole,
-        UserPermissions,
         UserTokenCreds,
         UserWithCreds,
     )
@@ -355,7 +354,6 @@ def _mock_get_or_create_feishu_user(monkeypatch: pytest.MonkeyPatch) -> list[dic
             global_role=GlobalRole.USER,
             email=user_info.get("email"),
             active=True,
-            permissions=UserPermissions(can_create_projects=True),
             creds=UserTokenCreds(token="test-token"),
         )
 

@@ -8,7 +8,6 @@ from unittest.mock import Mock
 from dstack._internal.core.models.users import (
     GlobalRole,
     User,
-    UserPermissions,
     UserTokenCreds,
     UserWithCreds,
 )
@@ -24,7 +23,6 @@ SAMPLE_USER = UserWithCreds(
     global_role=GlobalRole.USER,
     active=True,
     email="test@example.com",
-    permissions=UserPermissions(can_create_projects=False),
     creds=UserTokenCreds(token="7f92121b-a1b9-4ff2-8c0e-39070ffcd964"),
     ssh_public_key="ssh-rsa AAA.public",
     ssh_private_key="-----BEGIN PRIVATE KEY-----\nPRIVATE\n-----END PRIVATE KEY-----",

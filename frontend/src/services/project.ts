@@ -198,18 +198,24 @@ export const projectApi = createApi({
             IProject,
             {
                 project_name: string;
+                new_project_name?: string;
                 is_public?: boolean;
-                templates_repo?: string | null;
-                reset_templates_repo?: boolean;
             }
         >({
-            query: ({ project_name, ...body }) => ({
+            query: ({ project_name, new_project_name, ...body }) => ({
                 url: API.PROJECTS.UPDATE(project_name),
                 method: 'POST',
-                body,
+                body: {
+                    ...body,
+                    ...(new_project_name !== undefined ? { project_name: new_project_name } : {}),
+                },
             }),
             transformResponse: transformProjectResponse,
-            invalidatesTags: (result, error, params) => [{ type: 'Projects' as const, id: params?.project_name }],
+            invalidatesTags: (result, error, params) => [
+                { type: 'Projects' as const, id: params?.project_name },
+                ...(result ? [{ type: 'Projects' as const, id: result.project_name }] : []),
+                'Projects',
+            ],
         }),
     }),
 });

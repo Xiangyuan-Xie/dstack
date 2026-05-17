@@ -31,4 +31,6 @@ class UpdateFeishuOAuthConfigRequest(CoreModel):
             )
         ),
     ] = None
-    scope: Annotated[Optional[str], Field(description="OAuth scopes requested from Feishu.")] = None
+    scope: Annotated[Optional[str], Field(description="OAuth scopes requested from Feishu.")] = (
+        None
+    )

@@ -200,7 +200,6 @@ async def create_project(
     ssh_private_key: str = "",
     ssh_public_key: str = "",
     is_public: bool = False,
-    templates_repo: Optional[str] = None,
     deleted: bool = False,
 ) -> ProjectModel:
     if owner is None:
@@ -212,7 +211,6 @@ async def create_project(
         ssh_private_key=ssh_private_key,
         ssh_public_key=ssh_public_key,
         is_public=is_public,
-        templates_repo=templates_repo,
         deleted=deleted,
     )
     session.add(project)

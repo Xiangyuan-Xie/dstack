@@ -5,15 +5,6 @@ from dstack._internal.core.models.common import CoreModel
 
 
 class DefaultPermissions(CoreModel):
-    allow_non_admins_create_projects: Annotated[
-        bool,
-        Field(
-            description=(
-                "This flag controls whether regular users (non-global admins)"
-                " can create and manage their own projects"
-            )
-        ),
-    ] = True
     allow_non_admins_manage_ssh_fleets: Annotated[
         bool,
         Field(

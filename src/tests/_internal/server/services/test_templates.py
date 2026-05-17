@@ -1,4 +1,3 @@
-import uuid
 from pathlib import Path
 from unittest.mock import patch
 
@@ -28,8 +27,8 @@ def _create_template_file(templates_dir: Path, filename: str, data: dict) -> Pat
     return filepath
 
 
-def _create_templates_repo(tmp_path: Path) -> Path:
-    """Create a fake templates repo directory with .dstack/templates/."""
+def _create_template_dir(tmp_path: Path) -> Path:
+    """Create a fake checkout directory with .dstack/templates/."""
     templates_dir = tmp_path / ".dstack" / "templates"
     templates_dir.mkdir(parents=True)
     return templates_dir
@@ -39,7 +38,7 @@ class TestListTemplates:
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_repo_configured(self):
         with patch.object(templates_service.settings, "SERVER_TEMPLATES_REPO", None):
-            project = type("Project", (), {"templates_repo": None, "id": "project-id"})()
+            project = type("Project", (), {"id": "project-id"})()
             result = await templates_service.list_templates(project)
         assert result == []
 
@@ -50,7 +49,7 @@ class TestParseTemplates:
         assert result == []
 
     def test_parses_valid_template(self, tmp_path: Path):
-        templates_dir = _create_templates_repo(tmp_path)
+        templates_dir = _create_template_dir(tmp_path)
         _create_template_file(
             templates_dir,
             "test.yml",
@@ -68,7 +67,7 @@ class TestParseTemplates:
         assert isinstance(result[0].parameters[0], NameUITemplateParameter)
 
     def test_parses_template_with_env_parameter(self, tmp_path: Path):
-        templates_dir = _create_templates_repo(tmp_path)
+        templates_dir = _create_template_dir(tmp_path)
         _create_template_file(
             templates_dir,
             "test.yml",
@@ -91,7 +90,7 @@ class TestParseTemplates:
         assert param.value == "secret"
 
     def test_skips_non_yaml_files(self, tmp_path: Path):
-        templates_dir = _create_templates_repo(tmp_path)
+        templates_dir = _create_template_dir(tmp_path)
         _create_template_file(
             templates_dir,
             "valid.yml",
@@ -108,7 +107,7 @@ class TestParseTemplates:
         assert result[0].name == "valid"
 
     def test_skips_non_template_type(self, tmp_path: Path):
-        templates_dir = _create_templates_repo(tmp_path)
+        templates_dir = _create_template_dir(tmp_path)
         _create_template_file(
             templates_dir,
             "other.yml",
@@ -118,7 +117,7 @@ class TestParseTemplates:
         assert result == []
 
     def test_skips_invalid_yaml(self, tmp_path: Path):
-        templates_dir = _create_templates_repo(tmp_path)
+        templates_dir = _create_template_dir(tmp_path)
         (templates_dir / "bad.yml").write_text(": invalid: yaml: [")
         _create_template_file(
             templates_dir,
@@ -135,7 +134,7 @@ class TestParseTemplates:
         assert result[0].name == "good"
 
     def test_skips_template_with_unknown_parameter_type(self, tmp_path: Path):
-        templates_dir = _create_templates_repo(tmp_path)
+        templates_dir = _create_template_dir(tmp_path)
         _create_template_file(
             templates_dir,
             "bad_param.yml",
@@ -162,7 +161,7 @@ class TestParseTemplates:
         assert result[0].name == "good"
 
     def test_parses_yaml_extension(self, tmp_path: Path):
-        templates_dir = _create_templates_repo(tmp_path)
+        templates_dir = _create_template_dir(tmp_path)
         _create_template_file(
             templates_dir,
             "test.yaml",
@@ -178,7 +177,7 @@ class TestParseTemplates:
         assert result[0].name == "yaml-ext"
 
     def test_returns_templates_sorted_by_filename(self, tmp_path: Path):
-        templates_dir = _create_templates_repo(tmp_path)
+        templates_dir = _create_template_dir(tmp_path)
         _create_template_file(
             templates_dir,
             "b.yml",
@@ -218,7 +217,7 @@ class TestListTemplatesSync:
         assert result == []
 
     def test_caches_result(self, tmp_path: Path):
-        templates_dir = _create_templates_repo(tmp_path)
+        templates_dir = _create_template_dir(tmp_path)
         _create_template_file(
             templates_dir,
             "test.yml",
@@ -243,7 +242,7 @@ class TestListTemplatesSync:
             assert result2[0].name == "cached"
 
     def test_refreshes_after_cache_clear(self, tmp_path: Path):
-        templates_dir = _create_templates_repo(tmp_path)
+        templates_dir = _create_template_dir(tmp_path)
         _create_template_file(
             templates_dir,
             "test.yml",
@@ -277,7 +276,7 @@ class TestListTemplatesSync:
             assert result2[0].name == "updated"
 
     def test_refreshes_after_cache_ttl_expiration(self, tmp_path: Path):
-        templates_dir = _create_templates_repo(tmp_path)
+        templates_dir = _create_template_dir(tmp_path)
         _create_template_file(
             templates_dir,
             "test.yml",
@@ -312,20 +311,3 @@ class TestListTemplatesSync:
 
             result2 = templates_service._list_templates_sync("project-key", "https://example.com")
             assert result2[0].name == "updated-after-expire"
-
-
-class TestInvalidateTemplatesCache:
-    def test_removes_cache_entries_for_project_repo_keys(self):
-        templates_service._templates_cache.clear()
-        project_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
-        repo1 = "https://example.com/templates-1.git"
-        repo2 = "https://example.com/templates-2.git"
-        key1 = templates_service._repo_key(project_id=project_id, repo_url=repo1)
-        key2 = templates_service._repo_key(project_id=project_id, repo_url=repo2)
-        templates_service._templates_cache[(key1, repo1)] = ["a"]
-        templates_service._templates_cache[(key2, repo2)] = ["b"]
-
-        templates_service.invalidate_templates_cache(project_id, repo1, repo2)
-
-        assert (key1, repo1) not in templates_service._templates_cache
-        assert (key2, repo2) not in templates_service._templates_cache

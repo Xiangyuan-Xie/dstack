@@ -38,6 +38,7 @@ export const API = {
         LIST: () => `${API.USERS.BASE()}/list`,
         CREATE: () => `${API.USERS.BASE()}/create`,
         UPDATE: () => `${API.USERS.BASE()}/update`,
+        UPDATE_MY_USER: () => `${API.USERS.BASE()}/update_my_user`,
         DETAILS: () => `${API.USERS.BASE()}/get_user`,
         CURRENT_USER: () => `${API.USERS.BASE()}/get_my_user`,
         REFRESH_TOKEN: () => `${API.USERS.BASE()}/refresh_token`,

@@ -22,7 +22,6 @@ from dstack._internal.core.models.users import (
     ProjectRole,
     User,
     UserHookConfig,
-    UserPermissions,
     UsersInfoList,
     UsersInfoListOrUsersList,
     UserTokenCreds,
@@ -34,7 +33,6 @@ from dstack._internal.server.models import DecryptedString, MemberModel, Project
 from dstack._internal.server.schemas.auth import TestUserToken
 from dstack._internal.server.services import events
 from dstack._internal.server.services.locking import get_locker
-from dstack._internal.server.services.permissions import get_default_permissions
 from dstack._internal.server.utils.routers import error_forbidden
 from dstack._internal.utils import crypto
 from dstack._internal.utils.common import get_current_datetime, get_or_error, run_async
@@ -309,6 +307,25 @@ async def update_user(
     return user
 
 
+async def update_my_user(
+    session: AsyncSession,
+    actor: UserModel,
+    email: Optional[str] = None,
+) -> UserModel:
+    updated_fields = []
+    if email != actor.email:
+        actor.email = email
+        updated_fields.append("email")  # do not include potentially sensitive new value
+    events.emit(
+        session,
+        f"User profile updated. Updated fields: {', '.join(updated_fields) or '<none>'}",
+        actor=events.UserActor.from_user(actor),
+        targets=[events.Target.from_model(actor)],
+    )
+    await session.commit()
+    return actor
+
+
 async def refresh_ssh_key(
     session: AsyncSession,
     actor: UserModel,
@@ -515,7 +532,6 @@ def user_model_to_user(user_model: UserModel) -> User:
         global_role=user_model.global_role,
         email=user_model.email,
         active=user_model.active,
-        permissions=get_user_permissions(user_model),
         ssh_public_key=user_model.ssh_public_key,
     )
 
@@ -528,21 +544,9 @@ def user_model_to_user_with_creds(user_model: UserModel) -> UserWithCreds:
         global_role=user_model.global_role,
         email=user_model.email,
         active=user_model.active,
-        permissions=get_user_permissions(user_model),
         ssh_public_key=user_model.ssh_public_key,
         creds=UserTokenCreds(token=user_model.token.get_plaintext_or_error()),
         ssh_private_key=user_model.ssh_private_key,
-    )
-
-
-def get_user_permissions(user_model: UserModel) -> UserPermissions:
-    default_permissions = get_default_permissions()
-    can_create_projects = True
-    if not default_permissions.allow_non_admins_create_projects:
-        if user_model.global_role != GlobalRole.ADMIN:
-            can_create_projects = False
-    return UserPermissions(
-        can_create_projects=can_create_projects,
     )
 
 

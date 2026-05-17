@@ -9,7 +9,7 @@ type ConfirmationDialogInput = {
     title?: ConfirmationDialogProps['title'];
     content?: ConfirmationDialogProps['content'];
     visible?: ConfirmationDialogProps['visible'];
-    onConfirm: ConfirmationDialogProps['onConfirm'];
+    onConfirm: () => void | Promise<void>;
     cancelButtonLabel?: ConfirmationDialogProps['cancelButtonLabel'];
     confirmButtonLabel?: ConfirmationDialogProps['confirmButtonLabel'];
 };
@@ -28,6 +28,10 @@ export const useConfirmationDialog = () => {
             open({
                 uuid,
                 ...props,
+                onConfirm: async () => {
+                    await props.onConfirm();
+                    onDiscard(uuid);
+                },
                 onDiscard: () => onDiscard(uuid),
             }),
         );

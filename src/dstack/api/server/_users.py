@@ -67,12 +67,20 @@ class UsersAPIClient(APIClientGroup):
         return parse_obj_as(User.__response__, resp.json())
 
     def create(self, username: str, global_role: GlobalRole) -> User:
-        body = CreateUserRequest(username=username, global_role=global_role, email=None)
+        body = CreateUserRequest(
+            username=username,
+            global_role=global_role,
+            email=None,
+        )
         resp = self._request("/api/users/create", body=body.json())
         return parse_obj_as(User.__response__, resp.json())
 
     def update(self, username: str, global_role: GlobalRole) -> User:
-        body = UpdateUserRequest(username=username, global_role=global_role, email=None)
+        body = UpdateUserRequest(
+            username=username,
+            global_role=global_role,
+            email=None,
+        )
         resp = self._request("/api/users/update", body=body.json())
         return parse_obj_as(User.__response__, resp.json())
 

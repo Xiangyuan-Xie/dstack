@@ -31,7 +31,6 @@ declare interface IProject {
     created_at: string;
     isPublic: boolean;
     current_user_project_role?: TProjectRole | null;
-    templates_repo?: string | null;
 }
 
 declare interface IProjectMemberPermissions {
@@ -63,5 +62,4 @@ declare interface IProjectSecret {
 
 declare type IProjectCreateRequestParams = Pick<IProject, 'project_name'> & {
     is_public: boolean;
-    templates_repo?: string | null;
 };

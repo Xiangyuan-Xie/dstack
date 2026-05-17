@@ -143,7 +143,11 @@ export const canManageConsoleProject = (role: IConsoleUserRole, projectName: str
     return role.isGlobalAdmin || role.manageableProjectNames.includes(projectName);
 };
 
-export const getConsoleNavSections = (role: IConsoleUserRole, locale: TLocale = 'zh'): IConsoleNavSection[] => {
+export const getConsoleNavSections = (
+    role: IConsoleUserRole,
+    locale: TLocale = 'zh',
+    uiVersion = process.env.UI_VERSION,
+): IConsoleNavSection[] => {
     const text = navCopy[locale] ?? navCopy.zh;
 
     return [
@@ -189,7 +193,7 @@ export const getConsoleNavSections = (role: IConsoleUserRole, locale: TLocale = 
             items: [
                 { label: text.profile, href: CONSOLE_ROUTES.ACCOUNT_PROFILE, icon: 'UserCircle' },
                 { label: text.keys, href: CONSOLE_ROUTES.ACCOUNT_KEYS, icon: 'KeyRound' },
-                ...(process.env.UI_VERSION === 'sky'
+                ...(uiVersion === 'sky'
                     ? [{ label: text.billing, href: CONSOLE_ROUTES.ACCOUNT_BILLING, icon: 'CreditCard' }]
                     : []),
             ],
