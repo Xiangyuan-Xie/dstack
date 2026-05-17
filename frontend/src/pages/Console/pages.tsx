@@ -1,7 +1,7 @@
 import React, { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { format } from 'date-fns';
-import { Activity, Check, Pencil, Plus, RefreshCcw, Save, UserCircle, X } from 'lucide-react';
+import { Activity, Check, Copy, Pencil, Plus, RefreshCcw, Save, UserCircle, X } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
     Button,
@@ -23,9 +23,10 @@ import {
 import { useConfirmationDialog, useNotifications } from 'hooks';
 import { useAppSelector } from 'hooks';
 import { centsToFormattedString, copyToClipboard } from 'libs';
-import { formatFleetBackend, getFleetPrice } from 'libs/fleet';
+import { formatFleetBackend } from 'libs/fleet';
 import { formatResources } from 'libs/resources';
 import { runStatusForDeleting, runStatusForStopping } from 'libs/runStatus';
+import { useGetFeishuConfigQuery, useUpdateFeishuConfigMutation } from 'services/adminOAuth';
 import {
     useCreateBackendViaYamlMutation,
     useDeleteProjectBackendMutation,
@@ -33,37 +34,29 @@ import {
     useGetProjectBackendsQuery,
     useUpdateBackendViaYamlMutation,
 } from 'services/backend';
-import { useGetFeishuConfigQuery, useUpdateFeishuConfigMutation } from 'services/adminOAuth';
 import { useGetAllEventsQuery } from 'services/events';
-import {
-    useApplyFleetMutation,
-    useDeleteFleetMutation,
-    useGetFleetDetailsQuery,
-    useGetFleetsQuery,
-    useGetProjectFleetsQuery,
-} from 'services/fleet';
 import { useGetGpusListQuery } from 'services/gpu';
-import {
-    useApproveRunRequestMutation,
-    useCreateRunRequestMutation,
-    useGetAllRunRequestsQuery,
-    useGetRunRequestQuery,
-    useRejectRunRequestMutation,
-    useRetryRunRequestMutation,
-} from 'services/runRequest';
 import { useDeleteInstancesMutation, useGetInstanceDetailsQuery, useGetInstancesQuery } from 'services/instance';
 import {
     useAddProjectMemberMutation,
     useCreateProjectMutation,
     useDeleteProjectsMutation,
+    useGetProjectLogsQuery,
     useGetProjectQuery,
     useGetProjectReposQuery,
     useGetProjectsQuery,
-    useGetProjectLogsQuery,
     useRemoveProjectMemberMutation,
     useUpdateProjectMutation,
 } from 'services/project';
 import { useAddPublicKeyMutation, useDeletePublicKeysMutation, useListPublicKeysQuery } from 'services/publicKeys';
+import {
+    useCreateResourcePoolMutation,
+    useDeleteResourcePoolsMutation,
+    useGetProjectResourcePoolsQuery,
+    useGetResourcePoolDetailsQuery,
+    useGetResourcePoolsQuery,
+    useUpdateResourcePoolAssignmentMutation,
+} from 'services/resourcePool';
 import {
     useApplyRunMutation,
     useDeleteRunsMutation,
@@ -73,6 +66,14 @@ import {
     useGetRunsQuery,
     useStopRunsMutation,
 } from 'services/run';
+import {
+    useApproveRunRequestMutation,
+    useCreateRunRequestMutation,
+    useGetAllRunRequestsQuery,
+    useGetRunRequestQuery,
+    useRejectRunRequestMutation,
+    useRetryRunRequestMutation,
+} from 'services/runRequest';
 import { useDeleteSecretsMutation, useGetAllSecretsQuery, useUpdateSecretMutation } from 'services/secrets';
 import {
     useCreateUserMutation,
@@ -86,7 +87,13 @@ import {
     useUpdateUserMutation,
 } from 'services/user';
 import { useDeleteVolumesMutation, useGetAllVolumesQuery } from 'services/volume';
+import {
+    useCreateWorkerRegistrationTokenMutation,
+    useDeleteWorkerRegistrationTokenMutation,
+    useGetWorkerRegistrationTokensQuery,
+} from 'services/worker';
 
+import { getBaseUrl } from 'App/helpers';
 import { selectUserData } from 'App/slice';
 
 import { CONSOLE_ROUTES } from './constants';
@@ -112,12 +119,15 @@ const formatDate = (value?: string | number | Date | null) => {
 
 const valueOrDash = (value?: React.ReactNode | null) => (value === null || value === undefined || value === '' ? '-' : value);
 
+const RESOURCE_NAME_REGEX = /^[a-z][a-z0-9-]{1,40}$/;
+
 const useLocaleText = () => {
     const { locale } = useConsoleContext();
     return {
         locale,
         isZh: locale === 'zh',
         text: (zh: string, en: string) => (locale === 'zh' ? zh : en),
+        emptyTitle: locale === 'zh' ? '暂无数据' : 'No data',
     };
 };
 
@@ -153,6 +163,16 @@ const getProjectRoleText = (projectRole: TProjectRole | null | undefined, locale
         return locale === 'zh' ? '项目管理员' : 'Project administrator';
     }
     return locale === 'zh' ? '项目成员' : 'Project member';
+};
+
+const formatFleetType = (
+    fleet: Pick<IFleet, 'spec'> & { instances: Array<Pick<IInstance, 'backend'> | IResourcePoolInstance> },
+    locale: TLocale,
+) => {
+    if (fleet.spec.profile?.name === 'registered' || fleet.instances.some((instance) => instance.backend === 'registered')) {
+        return locale === 'zh' ? '注册服务器' : 'Registered server';
+    }
+    return formatFleetBackend(fleet.spec.configuration);
 };
 
 const useFilteredItems = <T,>(items: T[], query: string, fields: Array<(item: T) => string | null | undefined>) => {
@@ -235,11 +255,14 @@ const getUnifiedRunItems = (requests: IRunRequest[], runs: IRun[]): TUnifiedRunI
 
 export const DashboardPage: React.FC = () => {
     const { role, locale } = useConsoleContext();
-    const { text } = useLocaleText();
+    const { emptyTitle, text } = useLocaleText();
     const requests = useGetAllRunRequestsQuery({ include_all: role.canUseProjectAdmin, limit: 100 });
     const runs = useGetRunsQuery({ limit: 100, job_submissions_limit: 1 });
-    const fleets = useGetFleetsQuery({ include_imported: true, limit: 100 }, { skip: !role.canUseProjectAdmin });
-    const instances = useGetInstancesQuery({ only_active: true, include_imported: true, limit: 100 }, { skip: !role.canUseProjectAdmin });
+    const resourcePools = useGetResourcePoolsQuery({ only_active: false, limit: 100 }, { skip: !role.canUseGlobalAdmin });
+    const instances = useGetInstancesQuery(
+        { only_active: true, include_imported: true, limit: 100 },
+        { skip: !role.canUseProjectAdmin },
+    );
     const events = useGetAllEventsQuery({ limit: 8 }, { skip: !role.canUseGlobalAdmin });
     const stats = getRunRequestStats(requests.data ?? []);
     const runItems = getUnifiedRunItems(requests.data ?? [], runs.data ?? []);
@@ -263,8 +286,12 @@ export const DashboardPage: React.FC = () => {
                 <MetricCard label={text('运行中任务', 'Running runs')} value={runningRuns} accent="teal" />
                 {role.canUseProjectAdmin ? (
                     <>
-                        <MetricCard label={text('集群', 'Fleets')} value={fleets.data?.length ?? 0} accent="blue" />
-                        <MetricCard label={text('活跃实例', 'Active instances')} value={instances.data?.length ?? 0} accent="slate" />
+                        <MetricCard label={text('资源池', 'Fleets')} value={resourcePools.data?.length ?? 0} accent="blue" />
+                        <MetricCard
+                            label={text('活跃实例', 'Active instances')}
+                            value={instances.data?.length ?? 0}
+                            accent="slate"
+                        />
                     </>
                 ) : (
                     <>
@@ -280,11 +307,18 @@ export const DashboardPage: React.FC = () => {
                         loading={requests.isLoading || runs.isLoading}
                         keyGetter={(item) => item.id}
                         empty={<EmptyState title={text('暂无运行任务', 'No runs yet')} />}
+                        emptyTitle={emptyTitle}
                         columns={[
                             { id: 'name', header: text('名称', 'Name'), cell: (item) => item.name },
                             { id: 'project', header: text('项目', 'Project'), cell: (item) => item.project_name },
                             ...(role.canUseProjectAdmin
-                                ? [{ id: 'applicant', header: text('提交人', 'Applicant'), cell: (item: TUnifiedRunItem) => item.applicant }]
+                                ? [
+                                      {
+                                          id: 'applicant',
+                                          header: text('提交人', 'Applicant'),
+                                          cell: (item: TUnifiedRunItem) => item.applicant,
+                                      },
+                                  ]
                                 : []),
                             {
                                 id: 'requestStatus',
@@ -296,7 +330,11 @@ export const DashboardPage: React.FC = () => {
                                 header: text('运行', 'Runtime'),
                                 cell: (item) => <RequestStatus status={item.run_status} />,
                             },
-                            { id: 'created', header: text('提交时间', 'Submitted'), cell: (item) => formatDate(item.submitted_at ?? item.created_at) },
+                            {
+                                id: 'created',
+                                header: text('提交时间', 'Submitted'),
+                                cell: (item) => formatDate(item.submitted_at ?? item.created_at),
+                            },
                         ]}
                     />
                 </Panel>
@@ -325,6 +363,7 @@ export const DashboardPage: React.FC = () => {
                             loading={requests.isLoading || runs.isLoading}
                             keyGetter={(item) => item.id}
                             empty={<EmptyState title={text('暂无运行任务', 'No runs')} />}
+                            emptyTitle={emptyTitle}
                             columns={[
                                 { id: 'name', header: text('名称', 'Name'), cell: (item) => item.name },
                                 { id: 'project', header: text('项目', 'Project'), cell: (item) => item.project_name },
@@ -345,7 +384,7 @@ export const DashboardPage: React.FC = () => {
 export const RunApprovalsPage: React.FC = () => {
     const navigate = useNavigate();
     const { role } = useConsoleContext();
-    const { text } = useLocaleText();
+    const { emptyTitle, text } = useLocaleText();
     const [query, setQuery] = useState('');
     const requests = useGetAllRunRequestsQuery({ include_all: role.canUseProjectAdmin, limit: 500 });
     const items = useFilteredItems(
@@ -375,6 +414,7 @@ export const RunApprovalsPage: React.FC = () => {
                     loading={requests.isLoading}
                     keyGetter={(item) => item.id}
                     empty={<EmptyState title={text('暂无待审批任务', 'No pending runs')} />}
+                    emptyTitle={emptyTitle}
                     columns={[
                         {
                             id: 'name',
@@ -449,8 +489,15 @@ export const RunRequestCreatePage: React.FC = () => {
         max_duration: '',
         fleets: '',
     });
+    const projectResourcePools = useGetProjectResourcePoolsQuery(
+        { projectName: values.project_name },
+        { skip: !values.project_name },
+    );
 
     const update = (key: keyof IRunRequestFormValues, value: string) => setValues((current) => ({ ...current, [key]: value }));
+    const updateProject = (projectName: string) => {
+        setValues((current) => ({ ...current, project_name: projectName, fleets: '' }));
+    };
 
     const onSubmit = async (event: FormEvent) => {
         event.preventDefault();
@@ -467,7 +514,9 @@ export const RunRequestCreatePage: React.FC = () => {
                 type: 'task',
                 image: createParams.request.image,
                 commands: createParams.request.commands,
-                env: createParams.request.env ? Object.entries(createParams.request.env).map(([key, value]) => `${key}=${value}`) : undefined,
+                env: createParams.request.env
+                    ? Object.entries(createParams.request.env).map(([key, value]) => `${key}=${value}`)
+                    : undefined,
                 ports: createParams.request.ports,
                 nodes: createParams.request.nodes,
                 resources: createParams.request.resources,
@@ -497,7 +546,9 @@ export const RunRequestCreatePage: React.FC = () => {
             <PageHeader
                 title={text('新建运行任务', 'New Run')}
                 description={text(
-                    selectedProjectCanDirectCreate ? '你可以在该项目中直接创建运行任务。' : '普通用户提交后需要项目管理员审批。',
+                    selectedProjectCanDirectCreate
+                        ? '你可以在该项目中直接创建运行任务。'
+                        : '普通用户提交后需要项目管理员审批。',
                     selectedProjectCanDirectCreate
                         ? 'You can create a run directly in this project.'
                         : 'Regular users submit runs for project administrator approval.',
@@ -507,10 +558,7 @@ export const RunRequestCreatePage: React.FC = () => {
                 <Panel title={text('基础信息', 'Basics')}>
                     <div className="grid gap-4 md:grid-cols-2">
                         <Field label={text('项目', 'Project')}>
-                            <SelectInput
-                                value={values.project_name}
-                                onChange={(event) => update('project_name', event.target.value)}
-                            >
+                            <SelectInput value={values.project_name} onChange={(event) => updateProject(event.target.value)}>
                                 <option value="">{text('请选择项目', 'Select a project')}</option>
                                 {projects.map((project) => (
                                     <option key={project.project_name} value={project.project_name}>
@@ -533,12 +581,25 @@ export const RunRequestCreatePage: React.FC = () => {
                                 placeholder="pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime"
                             />
                         </Field>
-                        <Field label={text('可选 Fleet', 'Optional fleets')}>
-                            <TextInput
+                        <Field
+                            label={text('资源池', 'Fleet')}
+                            hint={text(
+                                '不选择时自动使用该项目已授权的资源范围。',
+                                'Leave empty to use the project authorized resource scope automatically.',
+                            )}
+                        >
+                            <SelectInput
                                 value={values.fleets}
                                 onChange={(event) => update('fleets', event.target.value)}
-                                placeholder="gpu-a, gpu-b"
-                            />
+                                disabled={projectResourcePools.isLoading || !projectResourcePools.data?.length}
+                            >
+                                <option value="">{text('自动选择', 'Auto select')}</option>
+                                {(projectResourcePools.data ?? []).map((pool) => (
+                                    <option key={pool.id} value={pool.name}>
+                                        {pool.name}
+                                    </option>
+                                ))}
+                            </SelectInput>
                         </Field>
                     </div>
                 </Panel>
@@ -593,8 +654,15 @@ export const RunRequestCreatePage: React.FC = () => {
                     <Button className="w-full sm:w-auto" type="button" onClick={() => navigate(CONSOLE_ROUTES.RUNS)}>
                         {text('取消', 'Cancel')}
                     </Button>
-                    <Button className="w-full sm:w-auto" type="submit" variant="primary" loading={createState.isLoading || applyState.isLoading}>
-                        {selectedProjectCanDirectCreate ? text('创建任务', 'Create run') : text('提交审批', 'Submit for approval')}
+                    <Button
+                        className="w-full sm:w-auto"
+                        type="submit"
+                        variant="primary"
+                        loading={createState.isLoading || applyState.isLoading}
+                    >
+                        {selectedProjectCanDirectCreate
+                            ? text('创建任务', 'Create run')
+                            : text('提交审批', 'Submit for approval')}
                     </Button>
                 </div>
             </form>
@@ -606,12 +674,9 @@ export const RunRequestDetailsPage: React.FC = () => {
     const { projectName = '', requestId = '' } = useParams();
     const navigate = useNavigate();
     const { role } = useConsoleContext();
-    const { text } = useLocaleText();
+    const { emptyTitle, text } = useLocaleText();
     const request = useGetRunRequestQuery({ project_name: projectName, id: requestId });
-    const run = useGetRunQuery(
-        { project_name: projectName, id: request.data?.run_id ?? '' },
-        { skip: !request.data?.run_id },
-    );
+    const run = useGetRunQuery({ project_name: projectName, id: request.data?.run_id ?? '' }, { skip: !request.data?.run_id });
     const job = run.data?.jobs?.[0];
     const submission = job?.job_submissions?.[job.job_submissions.length - 1];
     const logs = useGetProjectLogsQuery(
@@ -697,12 +762,16 @@ export const RunRequestDetailsPage: React.FC = () => {
                             {run.data && (
                                 <>
                                     <div className="flex justify-between">
-                                        <span className="text-slate-500 dark:text-slate-400">{text('运行状态', 'Run status')}</span>
+                                        <span className="text-slate-500 dark:text-slate-400">
+                                            {text('运行状态', 'Run status')}
+                                        </span>
                                         <RequestStatus status={run.data.status} />
                                     </div>
                                     {run.data.service?.url && (
                                         <div className="flex justify-between gap-4">
-                                            <span className="text-slate-500 dark:text-slate-400">{text('访问地址', 'URL')}</span>
+                                            <span className="text-slate-500 dark:text-slate-400">
+                                                {text('访问地址', 'URL')}
+                                            </span>
                                             <a
                                                 className="truncate font-medium text-blue-600 dark:text-blue-300"
                                                 href={run.data.service.url}
@@ -715,7 +784,9 @@ export const RunRequestDetailsPage: React.FC = () => {
                                     )}
                                     {submission && (
                                         <div className="flex justify-between">
-                                            <span className="text-slate-500 dark:text-slate-400">{text('提交状态', 'Submission')}</span>
+                                            <span className="text-slate-500 dark:text-slate-400">
+                                                {text('提交状态', 'Submission')}
+                                            </span>
                                             <RequestStatus status={submission.status} />
                                         </div>
                                     )}
@@ -759,6 +830,7 @@ export const RunRequestDetailsPage: React.FC = () => {
                         <DataTable
                             items={run.data.jobs ?? []}
                             keyGetter={(item) => item.job_spec.job_name}
+                            emptyTitle={emptyTitle}
                             columns={[
                                 { id: 'name', header: text('名称', 'Name'), cell: (item) => item.job_spec.job_name },
                                 { id: 'image', header: text('镜像', 'Image'), cell: (item) => item.job_spec.image_name },
@@ -766,10 +838,16 @@ export const RunRequestDetailsPage: React.FC = () => {
                                     id: 'status',
                                     header: text('状态', 'Status'),
                                     cell: (item) => (
-                                        <RequestStatus status={item.job_submissions?.[item.job_submissions.length - 1]?.status} />
+                                        <RequestStatus
+                                            status={item.job_submissions?.[item.job_submissions.length - 1]?.status}
+                                        />
                                     ),
                                 },
-                                { id: 'commands', header: text('命令', 'Commands'), cell: (item) => item.job_spec.commands.join(' && ') },
+                                {
+                                    id: 'commands',
+                                    header: text('命令', 'Commands'),
+                                    cell: (item) => item.job_spec.commands.join(' && '),
+                                },
                             ]}
                         />
                     </Panel>
@@ -816,7 +894,7 @@ export const RunRequestDetailsPage: React.FC = () => {
 export const RunsPage: React.FC = () => {
     const navigate = useNavigate();
     const { role } = useConsoleContext();
-    const { text } = useLocaleText();
+    const { emptyTitle, text } = useLocaleText();
     const [query, setQuery] = useState('');
     const runs = useGetRunsQuery({ limit: 500, job_submissions_limit: 1 });
     const requests = useGetAllRunRequestsQuery({ include_all: role.canUseProjectAdmin, limit: 500 });
@@ -835,7 +913,11 @@ export const RunsPage: React.FC = () => {
                 title={text('运行任务', 'Runs')}
                 actions={
                     <div className="flex flex-col gap-2 sm:flex-row">
-                        <Button variant="primary" icon={<Plus className="h-4 w-4" />} onClick={() => navigate(CONSOLE_ROUTES.RUN_CREATE)}>
+                        <Button
+                            variant="primary"
+                            icon={<Plus className="h-4 w-4" />}
+                            onClick={() => navigate(CONSOLE_ROUTES.RUN_CREATE)}
+                        >
                             {text('新建运行任务', 'New run')}
                         </Button>
                     </div>
@@ -843,13 +925,20 @@ export const RunsPage: React.FC = () => {
             />
             <Panel
                 title={text('任务列表', 'Run list')}
-                actions={<SearchInput value={query} onChange={(event) => setQuery(event.target.value)} placeholder={text('搜索任务', 'Search runs')} />}
+                actions={
+                    <SearchInput
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        placeholder={text('搜索任务', 'Search runs')}
+                    />
+                }
             >
                 <DataTable
                     items={items}
                     loading={runs.isLoading || requests.isLoading}
                     keyGetter={(item) => item.id}
                     empty={<EmptyState title={text('暂无运行任务', 'No runs')} />}
+                    emptyTitle={emptyTitle}
                     columns={[
                         {
                             id: 'name',
@@ -861,7 +950,9 @@ export const RunsPage: React.FC = () => {
                                         if (item.run) {
                                             navigate(CONSOLE_ROUTES.RUN_DETAILS.FORMAT(item.project_name, item.run.id));
                                         } else if (item.request) {
-                                            navigate(CONSOLE_ROUTES.RUN_REQUEST_DETAILS.FORMAT(item.project_name, item.request.id));
+                                            navigate(
+                                                CONSOLE_ROUTES.RUN_REQUEST_DETAILS.FORMAT(item.project_name, item.request.id),
+                                            );
                                         }
                                     }}
                                 >
@@ -887,7 +978,12 @@ export const RunsPage: React.FC = () => {
                             header: text('服务地址', 'Service URL'),
                             cell: (item) =>
                                 item.service_url ? (
-                                    <a className="text-blue-600 dark:text-blue-300" href={item.service_url} target="_blank" rel="noreferrer">
+                                    <a
+                                        className="text-blue-600 dark:text-blue-300"
+                                        href={item.service_url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                    >
                                         {text('打开', 'Open')}
                                     </a>
                                 ) : (
@@ -909,7 +1005,7 @@ export const RunsPage: React.FC = () => {
 export const RunDetailsPage: React.FC = () => {
     const { projectName = '', runId = '' } = useParams();
     const { role } = useConsoleContext();
-    const { text } = useLocaleText();
+    const { emptyTitle, text } = useLocaleText();
     const [confirm] = useConfirmationDialog();
     const [stopRuns, stopState] = useStopRunsMutation();
     const [deleteRuns, deleteState] = useDeleteRunsMutation();
@@ -951,7 +1047,8 @@ export const RunDetailsPage: React.FC = () => {
                 title={runName}
                 description={projectName}
                 actions={
-                    data && canOperate && (
+                    data &&
+                    canOperate && (
                         <>
                             {runStatusForStopping.includes(data.status) && (
                                 <Button loading={stopState.isLoading} onClick={stop}>
@@ -986,6 +1083,7 @@ export const RunDetailsPage: React.FC = () => {
                             items={data?.jobs ?? []}
                             loading={run.isLoading}
                             keyGetter={(item) => item.job_spec.job_name}
+                            emptyTitle={emptyTitle}
                             columns={[
                                 { id: 'name', header: text('名称', 'Name'), cell: (item) => item.job_spec.job_name },
                                 { id: 'image', header: text('镜像', 'Image'), cell: (item) => item.job_spec.image_name },
@@ -1041,33 +1139,32 @@ export const RunDetailsPage: React.FC = () => {
     );
 };
 
-export const FleetsPage: React.FC<{ servers?: boolean }> = ({ servers }) => {
+export const FleetsPage: React.FC = () => {
     const navigate = useNavigate();
-    const { text } = useLocaleText();
-    const fleets = useGetFleetsQuery({ include_imported: true, limit: 500 });
+    const { emptyTitle, locale, text } = useLocaleText();
+    const resourcePools = useGetResourcePoolsQuery({ only_active: false, limit: 500 });
 
     return (
         <>
             <PageHeader
-                title={servers ? text('服务器管理', 'Servers') : text('集群', 'Fleets')}
+                title={text('资源池', 'Fleets')}
                 actions={
-                    !servers && (
-                        <Button
-                            variant="primary"
-                            icon={<Plus className="h-4 w-4" />}
-                            onClick={() => navigate(CONSOLE_ROUTES.RESOURCES_FLEET_CREATE)}
-                        >
-                            {text('创建集群', 'Create fleet')}
-                        </Button>
-                    )
+                    <Button
+                        variant="primary"
+                        icon={<Plus className="h-4 w-4" />}
+                        onClick={() => navigate(CONSOLE_ROUTES.RESOURCES_FLEET_CREATE)}
+                    >
+                        {text('创建资源池', 'Create fleet')}
+                    </Button>
                 }
             />
-            <Panel title={text('集群列表', 'Fleet list')}>
+            <Panel title={text('资源池列表', 'Fleet list')}>
                 <DataTable
-                    items={fleets.data ?? []}
-                    loading={fleets.isLoading}
+                    items={resourcePools.data ?? []}
+                    loading={resourcePools.isLoading}
                     keyGetter={(item) => item.id}
-                    empty={<EmptyState title={text('暂无集群', 'No fleets')} />}
+                    empty={<EmptyState title={text('暂无资源池', 'No fleets')} />}
+                    emptyTitle={emptyTitle}
                     columns={[
                         {
                             id: 'name',
@@ -1075,15 +1172,12 @@ export const FleetsPage: React.FC<{ servers?: boolean }> = ({ servers }) => {
                             cell: (item) => (
                                 <button
                                     className="font-semibold text-blue-600 dark:text-blue-300"
-                                    onClick={() =>
-                                        navigate(CONSOLE_ROUTES.RESOURCES_FLEET_DETAILS.FORMAT(item.project_name, item.id))
-                                    }
+                                    onClick={() => navigate(CONSOLE_ROUTES.RESOURCES_FLEET_DETAILS.FORMAT('_', item.id))}
                                 >
                                     {item.name}
                                 </button>
                             ),
                         },
-                        { id: 'project', header: text('项目', 'Project'), cell: (item) => item.project_name },
                         {
                             id: 'status',
                             header: text('状态', 'Status'),
@@ -1091,11 +1185,17 @@ export const FleetsPage: React.FC<{ servers?: boolean }> = ({ servers }) => {
                         },
                         {
                             id: 'backend',
-                            header: text('后端', 'Backend'),
-                            cell: (item) => formatFleetBackend(item.spec.configuration),
+                            header: text('类型', 'Type'),
+                            cell: (item) => formatFleetType(item, locale),
                         },
                         { id: 'instances', header: text('实例', 'Instances'), cell: (item) => item.instances.length },
-                        { id: 'price', header: text('价格', 'Price'), cell: (item) => valueOrDash(getFleetPrice(item)) },
+                        {
+                            id: 'authorized',
+                            header: text('授权项目', 'Authorized projects'),
+                            cell: (item) => item.authorized_project_names.join(', ') || '-',
+                        },
+                        { id: 'idle', header: text('闲置实例', 'Idle instances'), cell: (item) => item.idle_instance_count },
+                        { id: 'busy', header: text('占用实例', 'Busy instances'), cell: (item) => item.busy_instance_count },
                     ]}
                 />
             </Panel>
@@ -1105,57 +1205,85 @@ export const FleetsPage: React.FC<{ servers?: boolean }> = ({ servers }) => {
 
 export const FleetCreatePage: React.FC = () => {
     const navigate = useNavigate();
-    const location = useLocation();
-    const { projects } = useConsoleContext();
     const { text } = useLocaleText();
-    const [applyFleet, applyState] = useApplyFleetMutation();
-    const preselectedProjectName =
-        typeof location.state === 'object' && location.state && 'projectName' in location.state
-            ? String(location.state.projectName)
-            : '';
-    const [projectName, setProjectName] = useState(preselectedProjectName || projects[0]?.project_name || '');
+    const [createResourcePool, createState] = useCreateResourcePoolMutation();
     const [name, setName] = useState('');
-    const [yaml, setYaml] = useState('type: fleet\nnodes:\n  min: 0\n  max: 1\n');
+    const [nameError, setNameError] = useState<string | null>(null);
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
+        const trimmedName = name.trim();
+        if (!RESOURCE_NAME_REGEX.test(trimmedName)) {
+            setNameError(
+                text("资源池名称需匹配 '^[a-z][a-z0-9-]{1,40}$'。", "Resource pool name must match '^[a-z][a-z0-9-]{1,40}$'."),
+            );
+            return;
+        }
+        setNameError(null);
         const spec = {
-            configuration: { type: 'fleet', name },
+            configuration: {
+                type: 'fleet',
+                name: trimmedName,
+                nodes: { min: 0 },
+            },
             configuration_path: 'console.yaml',
-            profile: { name, default: true },
+            profile: { name: 'registered', default: true },
         } as IFleetSpec;
-        const result = await applyFleet({ projectName, force: true, plan: { spec } }).unwrap();
-        navigate(CONSOLE_ROUTES.RESOURCES_FLEET_DETAILS.FORMAT(result.project_name, result.id));
+        const result = await createResourcePool({ force: true, plan: { spec } }).unwrap();
+        navigate(CONSOLE_ROUTES.RESOURCES_INSTANCES, {
+            state: {
+                fleetName: result.name,
+                openConnectServer: true,
+            },
+        });
     };
 
     return (
         <>
-            <PageHeader title={text('创建集群', 'Create fleet')} />
+            <PageHeader
+                title={text('创建资源池', 'Create fleet')}
+                description={text(
+                    '资源池用于组织可接入的自有服务器。创建后继续生成接入命令，把服务器注册为实例。',
+                    'A fleet groups registered servers. After creation, generate a connection command to register servers as instances.',
+                )}
+            />
             <form className="grid gap-6" onSubmit={submit}>
-                <Panel title={text('配置', 'Configuration')}>
+                <Panel
+                    title={text('基础信息', 'Basic information')}
+                    description={text(
+                        '当前版本创建注册服务器资源池，不需要填写 YAML。',
+                        'This version creates registered-server fleets without YAML.',
+                    )}
+                >
                     <div className="grid gap-4 md:grid-cols-2">
-                        <Field label={text('项目', 'Project')}>
-                            <SelectInput value={projectName} onChange={(event) => setProjectName(event.target.value)}>
-                                {projects.map((project) => (
-                                    <option key={project.project_name} value={project.project_name}>
-                                        {project.project_name}
-                                    </option>
-                                ))}
-                            </SelectInput>
-                        </Field>
-                        <Field label={text('名称', 'Name')}>
-                            <TextInput value={name} onChange={(event) => setName(event.target.value)} />
+                        <Field
+                            label={text('资源池名称', 'Fleet name')}
+                            hint={text(
+                                '小写字母开头，可包含小写字母、数字和短横线。',
+                                'Start with a lowercase letter. Use lowercase letters, numbers, and hyphens.',
+                            )}
+                            error={nameError}
+                        >
+                            <TextInput
+                                aria-label={text('资源池名称', 'Fleet name')}
+                                value={name}
+                                onChange={(event) => {
+                                    setName(event.target.value);
+                                    if (nameError) setNameError(null);
+                                }}
+                            />
                         </Field>
                     </div>
-                    <div className="mt-4">
-                        <Field label="YAML">
-                            <TextArea value={yaml} onChange={(event) => setYaml(event.target.value)} />
-                        </Field>
+                    <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
+                        {text(
+                            '类型：注册服务器。服务器不会在创建资源池时自动出现，需要下一步在实例页生成接入命令。',
+                            'Type: Registered server. Servers are not added automatically; generate a connection command on the Instances page next.',
+                        )}
                     </div>
                 </Panel>
                 <div className="flex justify-end">
-                    <Button type="submit" variant="primary" loading={applyState.isLoading}>
-                        {text('创建', 'Create')}
+                    <Button type="submit" variant="primary" loading={createState.isLoading}>
+                        {text('创建资源池', 'Create fleet')}
                     </Button>
                 </div>
             </form>
@@ -1164,22 +1292,26 @@ export const FleetCreatePage: React.FC = () => {
 };
 
 export const FleetDetailsPage: React.FC = () => {
-    const { projectName = '', fleetId = '' } = useParams();
-    const { text } = useLocaleText();
-    const [deleteFleet, deleteState] = useDeleteFleetMutation();
-    const fleet = useGetFleetDetailsQuery({ projectName, fleetId });
+    const { fleetId = '' } = useParams();
+    const { emptyTitle, text } = useLocaleText();
+    const navigate = useNavigate();
+    const [deleteResourcePools, deleteState] = useDeleteResourcePoolsMutation();
+    const fleet = useGetResourcePoolDetailsQuery({ id: fleetId });
 
     return (
         <>
             <PageHeader
                 title={fleet.data?.name ?? fleetId}
-                description={projectName}
+                description={text('全局资源池', 'Global resource pool')}
                 actions={
                     fleet.data && (
                         <Button
                             variant="danger"
                             loading={deleteState.isLoading}
-                            onClick={() => deleteFleet({ projectName, fleetNames: [fleet.data!.name] })}
+                            onClick={async () => {
+                                await deleteResourcePools({ names: [fleet.data!.name] }).unwrap();
+                                navigate(CONSOLE_ROUTES.RESOURCES_FLEETS);
+                            }}
                         >
                             {text('删除', 'Delete')}
                         </Button>
@@ -1192,6 +1324,7 @@ export const FleetDetailsPage: React.FC = () => {
                         items={fleet.data?.instances ?? []}
                         loading={fleet.isLoading}
                         keyGetter={(item) => item.id}
+                        emptyTitle={emptyTitle}
                         columns={[
                             { id: 'name', header: text('名称', 'Name'), cell: (item) => item.name },
                             {
@@ -1200,11 +1333,43 @@ export const FleetDetailsPage: React.FC = () => {
                                 cell: (item) => <RequestStatus status={item.status} />,
                             },
                             { id: 'backend', header: text('后端', 'Backend'), cell: (item) => item.backend },
-                            { id: 'region', header: text('区域', 'Region'), cell: (item) => item.region },
                             {
-                                id: 'resources',
-                                header: text('资源', 'Resources'),
-                                cell: (item) => (item.instance_type ? formatResources(item.instance_type.resources) : '-'),
+                                id: 'authorized',
+                                header: text('授权项目', 'Authorized projects'),
+                                cell: (item) => item.authorized_projects.join(', ') || '-',
+                            },
+                            {
+                                id: 'occupancy',
+                                header: text('运行占用', 'Runtime occupancy'),
+                                cell: (item) =>
+                                    item.occupancy.status === 'busy'
+                                        ? `${item.occupancy.project_names.join(', ')} (${item.occupancy.task_count})`
+                                        : text('闲置', 'Idle'),
+                            },
+                        ]}
+                    />
+                </Panel>
+                <Panel title={text('项目授权', 'Project assignments')}>
+                    <DataTable
+                        items={fleet.data?.assignments ?? []}
+                        loading={fleet.isLoading}
+                        keyGetter={(item) => item.project_name}
+                        emptyTitle={emptyTitle}
+                        columns={[
+                            { id: 'project', header: text('项目', 'Project'), cell: (item) => item.project_name },
+                            {
+                                id: 'scope',
+                                header: text('授权范围', 'Scope'),
+                                cell: (item) =>
+                                    item.whole_pool
+                                        ? text('整个资源池', 'Whole resource pool')
+                                        : text('指定实例', 'Selected instances'),
+                            },
+                            {
+                                id: 'instances',
+                                header: text('实例数量', 'Instances'),
+                                cell: (item) =>
+                                    item.whole_pool ? (fleet.data?.instances.length ?? 0) : item.instance_ids.length,
                             },
                         ]}
                     />
@@ -1219,17 +1384,108 @@ export const FleetDetailsPage: React.FC = () => {
 
 export const InstancesPage: React.FC = () => {
     const navigate = useNavigate();
-    const { text } = useLocaleText();
+    const location = useLocation();
+    const { emptyTitle, text } = useLocaleText();
+    const [pushNotification] = useNotifications();
     const instances = useGetInstancesQuery({ include_imported: true, limit: 500 });
+    const tokens = useGetWorkerRegistrationTokensQuery();
+    const resourcePools = useGetResourcePoolsQuery({ only_active: false, limit: 500 });
+    const [values, setValues] = useState({ fleet_name: '' });
+    const [createToken, createState] = useCreateWorkerRegistrationTokenMutation();
+    const [deleteToken, deleteState] = useDeleteWorkerRegistrationTokenMutation();
+    const [connectOpen, setConnectOpen] = useState(false);
+    const [latestToken, setLatestToken] = useState<IWorkerRegistrationToken | null>(null);
+    const availableFleets = useMemo(() => resourcePools.data ?? [], [resourcePools.data]);
+    const connectState =
+        typeof location.state === 'object' && location.state
+            ? (location.state as { fleetName?: string; openConnectServer?: boolean })
+            : null;
+
+    useEffect(() => {
+        if (connectState?.openConnectServer) {
+            setConnectOpen(true);
+            setLatestToken(null);
+        }
+    }, [connectState?.openConnectServer]);
+
+    useEffect(() => {
+        if (resourcePools.isLoading) return;
+        const firstFleetName = availableFleets[0]?.name ?? '';
+        const selectedFleetExists = availableFleets.some((fleet) => fleet.name === values.fleet_name);
+        if (selectedFleetExists || values.fleet_name === firstFleetName) {
+            return;
+        }
+        const stateFleetName =
+            connectState?.openConnectServer && availableFleets.some((fleet) => fleet.name === connectState.fleetName)
+                ? connectState.fleetName
+                : undefined;
+        setValues({ fleet_name: stateFleetName ?? firstFleetName });
+    }, [availableFleets, connectState?.fleetName, connectState?.openConnectServer, resourcePools.isLoading, values.fleet_name]);
+
+    const buildServerCommand = (token?: string | null) =>
+        token ? `dstack worker --server ${getBaseUrl()} --token ${token}` : '';
+
+    const createRegistrationToken = async (event: FormEvent) => {
+        event.preventDefault();
+        const token = await createToken({
+            fleet_name: values.fleet_name.trim(),
+        }).unwrap();
+        setLatestToken(token);
+        pushNotification({
+            type: 'success',
+            header: text('接入命令已生成', 'Server connection command created'),
+        });
+    };
+
+    const disableToken = async (token: IWorkerRegistrationToken) => {
+        await deleteToken({ id: token.id }).unwrap();
+        if (latestToken?.id === token.id) {
+            setLatestToken(null);
+        }
+        pushNotification({
+            type: 'success',
+            header: text('Token 已停用', 'Token disabled'),
+        });
+    };
+
+    const copyServerCommand = () => {
+        const command = buildServerCommand(latestToken?.token);
+        if (!command) return;
+        copyToClipboard(command, () =>
+            pushNotification({ type: 'success', header: text('启动命令已复制', 'Start command copied') }),
+        );
+    };
+
+    const formatInstanceBackend = (backend?: string) => {
+        if (backend === 'registered') {
+            return text('注册服务器', 'Registered server');
+        }
+        return backend ?? '-';
+    };
 
     return (
         <>
-            <PageHeader title={text('实例', 'Instances')} />
+            <PageHeader
+                title={text('实例', 'Instances')}
+                actions={
+                    <Button
+                        variant="primary"
+                        icon={<Plus className="h-4 w-4" />}
+                        onClick={() => {
+                            setConnectOpen(true);
+                            setLatestToken(null);
+                        }}
+                    >
+                        {text('接入服务器', 'Connect server')}
+                    </Button>
+                }
+            />
             <Panel title={text('实例列表', 'Instances')}>
                 <DataTable
                     items={instances.data ?? []}
                     loading={instances.isLoading}
                     keyGetter={(item) => item.id}
+                    emptyTitle={emptyTitle}
                     columns={[
                         {
                             id: 'name',
@@ -1247,17 +1503,134 @@ export const InstancesPage: React.FC = () => {
                                 </button>
                             ),
                         },
-                        { id: 'fleet', header: 'Fleet', cell: (item) => item.fleet_name },
+                        { id: 'fleet', header: text('资源池', 'Fleet'), cell: (item) => item.fleet_name },
                         {
                             id: 'status',
                             header: text('状态', 'Status'),
                             cell: (item) => <RequestStatus status={item.status} />,
                         },
-                        { id: 'backend', header: text('后端', 'Backend'), cell: (item) => item.backend },
+                        { id: 'backend', header: text('类型', 'Type'), cell: (item) => formatInstanceBackend(item.backend) },
                         { id: 'region', header: text('区域', 'Region'), cell: (item) => item.region },
                     ]}
                 />
             </Panel>
+            <Panel className="mt-5" title={text('注册 Token', 'Registration tokens')}>
+                <DataTable
+                    items={tokens.data ?? []}
+                    loading={tokens.isLoading}
+                    keyGetter={(item) => item.id}
+                    empty={<EmptyState title={text('暂无注册 Token', 'No registration tokens')} />}
+                    emptyTitle={emptyTitle}
+                    columns={[
+                        { id: 'fleet', header: text('资源池', 'Fleet'), cell: (item) => item.fleet_name },
+                        {
+                            id: 'status',
+                            header: text('状态', 'Status'),
+                            cell: (item) => (
+                                <StatusBadge tone={item.enabled ? 'success' : 'neutral'}>
+                                    {item.enabled ? text('可用', 'Enabled') : text('已停用', 'Disabled')}
+                                </StatusBadge>
+                            ),
+                        },
+                        { id: 'created', header: text('创建时间', 'Created'), cell: (item) => formatDate(item.created_at) },
+                        { id: 'expires', header: text('过期时间', 'Expires'), cell: (item) => formatDate(item.expires_at) },
+                        {
+                            id: 'actions',
+                            header: text('操作', 'Actions'),
+                            cell: (item) =>
+                                item.enabled ? (
+                                    <Button variant="danger" loading={deleteState.isLoading} onClick={() => disableToken(item)}>
+                                        {text('停用', 'Disable')}
+                                    </Button>
+                                ) : (
+                                    <span className="text-sm text-slate-500 dark:text-slate-400">-</span>
+                                ),
+                        },
+                    ]}
+                />
+            </Panel>
+            <Modal
+                open={connectOpen}
+                title={text('接入服务器', 'Connect server')}
+                onClose={() => setConnectOpen(false)}
+                footer={<Button onClick={() => setConnectOpen(false)}>{text('关闭', 'Close')}</Button>}
+            >
+                <div className="space-y-5">
+                    <form onSubmit={createRegistrationToken}>
+                        <div className="space-y-4">
+                            <Field
+                                label={text('资源池', 'Fleet')}
+                                hint={text(
+                                    '服务器会作为实例加入所选资源池。',
+                                    'The server will join the selected fleet as an instance.',
+                                )}
+                            >
+                                <SelectInput
+                                    aria-label={text('资源池', 'Fleet')}
+                                    value={values.fleet_name}
+                                    onChange={(event) => setValues({ fleet_name: event.target.value })}
+                                    disabled={resourcePools.isLoading || availableFleets.length === 0}
+                                >
+                                    {availableFleets.map((fleet) => (
+                                        <option key={fleet.id} value={fleet.name}>
+                                            {fleet.name}
+                                        </option>
+                                    ))}
+                                </SelectInput>
+                            </Field>
+                            {!resourcePools.isLoading && availableFleets.length === 0 && (
+                                <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+                                    <div>{text('还没有资源池，请先创建资源池。', 'No fleets yet. Create a fleet first.')}</div>
+                                    <Button
+                                        type="button"
+                                        className="mt-3"
+                                        onClick={() => {
+                                            setConnectOpen(false);
+                                            navigate(CONSOLE_ROUTES.RESOURCES_FLEET_CREATE);
+                                        }}
+                                    >
+                                        {text('创建资源池', 'Create fleet')}
+                                    </Button>
+                                </div>
+                            )}
+                            <Button
+                                type="submit"
+                                variant="primary"
+                                loading={createState.isLoading}
+                                disabled={!values.fleet_name || availableFleets.length === 0}
+                            >
+                                {text('生成接入命令', 'Create connection command')}
+                            </Button>
+                        </div>
+                    </form>
+                    <Panel
+                        title={text('启动命令', 'Start command')}
+                        description={text(
+                            'Token 只会在生成时展示一次，请复制命令到目标服务器执行。',
+                            'The token is shown only when it is created. Copy the command to the target server.',
+                        )}
+                        actions={
+                            latestToken?.token ? (
+                                <Button icon={<Copy className="h-4 w-4" />} onClick={copyServerCommand}>
+                                    {text('复制命令', 'Copy command')}
+                                </Button>
+                            ) : null
+                        }
+                    >
+                        {latestToken?.token ? (
+                            <CodeBlock value={buildServerCommand(latestToken.token)} />
+                        ) : (
+                            <EmptyState
+                                title={text('尚未生成接入命令', 'No connection command yet')}
+                                description={text(
+                                    '生成后这里会显示可复制的服务器启动命令。',
+                                    'After creation, the server start command appears here.',
+                                )}
+                            />
+                        )}
+                    </Panel>
+                </div>
+            </Modal>
         </>
     );
 };
@@ -1300,7 +1673,7 @@ export const InstanceDetailsPage: React.FC = () => {
 
 export const OffersPage: React.FC = () => {
     const { projects } = useConsoleContext();
-    const { text } = useLocaleText();
+    const { emptyTitle, text } = useLocaleText();
     const [projectName, setProjectName] = useState(projects[0]?.project_name ?? '');
     const offers = useGetGpusListQuery(
         {
@@ -1333,6 +1706,7 @@ export const OffersPage: React.FC = () => {
                     items={offers.data?.gpus ?? []}
                     loading={offers.isLoading}
                     keyGetter={(item, index = 0) => `${item.name}-${item.backend}-${item.region}-${index}`}
+                    emptyTitle={emptyTitle}
                     columns={[
                         { id: 'name', header: 'GPU', cell: (item) => item.name },
                         { id: 'backend', header: text('后端', 'Backend'), cell: (item) => valueOrDash(item.backend) },
@@ -1348,7 +1722,7 @@ export const OffersPage: React.FC = () => {
 
 export const ModelsPage: React.FC = () => {
     const navigate = useNavigate();
-    const { text } = useLocaleText();
+    const { emptyTitle, text } = useLocaleText();
     const models = useGetModelsQuery({ limit: 500 });
 
     return (
@@ -1359,6 +1733,7 @@ export const ModelsPage: React.FC = () => {
                     items={models.data ?? []}
                     loading={models.isLoading}
                     keyGetter={(item) => item.id}
+                    emptyTitle={emptyTitle}
                     columns={[
                         {
                             id: 'name',
@@ -1403,7 +1778,7 @@ export const ModelDetailsPage: React.FC = () => {
 };
 
 export const VolumesPage: React.FC = () => {
-    const { text } = useLocaleText();
+    const { emptyTitle, text } = useLocaleText();
     const volumes = useGetAllVolumesQuery({ limit: 500 });
     const [deleteVolumes] = useDeleteVolumesMutation();
 
@@ -1415,6 +1790,7 @@ export const VolumesPage: React.FC = () => {
                     items={volumes.data ?? []}
                     loading={volumes.isLoading}
                     keyGetter={(item) => item.id}
+                    emptyTitle={emptyTitle}
                     columns={[
                         { id: 'name', header: text('名称', 'Name'), cell: (item) => item.name },
                         { id: 'project', header: text('项目', 'Project'), cell: (item) => item.project_name },
@@ -1450,7 +1826,7 @@ export const VolumesPage: React.FC = () => {
 
 export const ProjectsPage: React.FC = () => {
     const navigate = useNavigate();
-    const { text } = useLocaleText();
+    const { emptyTitle, text } = useLocaleText();
     const projects = useGetProjectsQuery({ include_not_joined: true, limit: 500 });
 
     return (
@@ -1472,6 +1848,7 @@ export const ProjectsPage: React.FC = () => {
                     items={projects.data?.data ?? []}
                     loading={projects.isLoading}
                     keyGetter={(item) => item.project_name}
+                    emptyTitle={emptyTitle}
                     columns={[
                         {
                             id: 'name',
@@ -1492,7 +1869,9 @@ export const ProjectsPage: React.FC = () => {
                             id: 'actions',
                             header: text('操作', 'Actions'),
                             cell: (item) => (
-                                <Button onClick={() => navigate(CONSOLE_ROUTES.WORKSPACE_PROJECT_DETAILS.FORMAT(item.project_name))}>
+                                <Button
+                                    onClick={() => navigate(CONSOLE_ROUTES.WORKSPACE_PROJECT_DETAILS.FORMAT(item.project_name))}
+                                >
                                     {text('编辑', 'Edit')}
                                 </Button>
                             ),
@@ -1550,14 +1929,16 @@ export const ProjectCreatePage: React.FC = () => {
 export const ProjectDetailsPage: React.FC = () => {
     const { projectName = '' } = useParams();
     const navigate = useNavigate();
-    const { locale, text } = useLocaleText();
+    const { emptyTitle, locale, text } = useLocaleText();
     const project = useGetProjectQuery({ name: projectName });
     const repos = useGetProjectReposQuery({ project_name: projectName });
     const backends = useGetProjectBackendsQuery({ projectName });
-    const fleets = useGetProjectFleetsQuery({ projectName, includeImported: true });
+    const resourcePools = useGetResourcePoolsQuery({ only_active: false, limit: 500 });
+    const projectResourcePools = useGetProjectResourcePoolsQuery({ projectName }, { skip: !projectName });
     const secrets = useGetAllSecretsQuery({ project_name: projectName });
     const events = useGetAllEventsQuery({ within_projects: [projectName], limit: 20 });
     const [updateProject, updateProjectState] = useUpdateProjectMutation();
+    const [updateResourcePoolAssignment, updateResourcePoolAssignmentState] = useUpdateResourcePoolAssignmentMutation();
     const [deleteProjects] = useDeleteProjectsMutation();
     const [addMember, addMemberState] = useAddProjectMemberMutation();
     const [removeMember] = useRemoveProjectMemberMutation();
@@ -1573,6 +1954,11 @@ export const ProjectDetailsPage: React.FC = () => {
     const [settings, setSettings] = useState({
         projectName,
         isPublic: false,
+    });
+    const [resourceAssignment, setResourceAssignment] = useState({
+        resourcePoolName: '',
+        assignWholePool: true,
+        instanceIds: [] as string[],
     });
 
     useEffect(() => {
@@ -1591,6 +1977,18 @@ export const ProjectDetailsPage: React.FC = () => {
         () => (userSearch.data?.data ?? []).filter((candidate) => !existingMemberNames.has(candidate.username)),
         [existingMemberNames, userSearch.data?.data],
     );
+    const selectedResourcePool = useMemo(
+        () => resourcePools.data?.find((pool) => pool.name === resourceAssignment.resourcePoolName),
+        [resourceAssignment.resourcePoolName, resourcePools.data],
+    );
+
+    useEffect(() => {
+        if (resourceAssignment.resourcePoolName || !resourcePools.data?.length) return;
+        setResourceAssignment((current) => ({
+            ...current,
+            resourcePoolName: resourcePools.data[0].name,
+        }));
+    }, [resourceAssignment.resourcePoolName, resourcePools.data]);
 
     const submitSettings = async (event: FormEvent) => {
         event.preventDefault();
@@ -1635,6 +2033,27 @@ export const ProjectDetailsPage: React.FC = () => {
                 }
             },
         });
+
+    const submitResourceAssignment = async (event: FormEvent) => {
+        event.preventDefault();
+        if (!resourceAssignment.resourcePoolName) return;
+        await updateResourcePoolAssignment({
+            resource_pool_name: resourceAssignment.resourcePoolName,
+            project_name: projectName,
+            assign_whole_pool: resourceAssignment.assignWholePool,
+            instance_ids: resourceAssignment.assignWholePool ? [] : resourceAssignment.instanceIds,
+        }).unwrap();
+        pushNotification({ type: 'success', header: text('资源授权已更新', 'Resource assignment updated') });
+    };
+
+    const toggleAssignedInstance = (instanceId: string) => {
+        setResourceAssignment((current) => ({
+            ...current,
+            instanceIds: current.instanceIds.includes(instanceId)
+                ? current.instanceIds.filter((id) => id !== instanceId)
+                : [...current.instanceIds, instanceId],
+        }));
+    };
 
     return (
         <>
@@ -1723,17 +2142,15 @@ export const ProjectDetailsPage: React.FC = () => {
                                         ))
                                     ) : (
                                         <div className="px-4 py-3 text-sm text-slate-500 dark:text-slate-400">
-                                            {userSearch.isFetching ? text('搜索中...', 'Searching...') : text('没有可添加的用户', 'No users to add')}
+                                            {userSearch.isFetching
+                                                ? text('搜索中...', 'Searching...')
+                                                : text('没有可添加的用户', 'No users to add')}
                                         </div>
                                     )}
                                 </div>
                             )}
                         </div>
-                        <Button
-                            loading={addMemberState.isLoading}
-                            disabled={!selectedMember}
-                            onClick={addSelectedMember}
-                        >
+                        <Button loading={addMemberState.isLoading} disabled={!selectedMember} onClick={addSelectedMember}>
                             {text('添加成员', 'Add member')}
                         </Button>
                     </div>
@@ -1741,6 +2158,7 @@ export const ProjectDetailsPage: React.FC = () => {
                         items={project.data?.members ?? []}
                         loading={project.isLoading}
                         keyGetter={(item) => item.user.username}
+                        emptyTitle={emptyTitle}
                         columns={[
                             { id: 'user', header: text('用户', 'User'), cell: (item) => item.user.username },
                             {
@@ -1770,6 +2188,7 @@ export const ProjectDetailsPage: React.FC = () => {
                         items={backends.data ?? project.data?.backends ?? []}
                         loading={backends.isLoading}
                         keyGetter={(item) => item.name}
+                        emptyTitle={emptyTitle}
                         columns={[
                             { id: 'name', header: text('名称', 'Name'), cell: (item) => item.name },
                             { id: 'type', header: text('类型', 'Type'), cell: (item) => item.config?.type },
@@ -1777,43 +2196,104 @@ export const ProjectDetailsPage: React.FC = () => {
                     />
                 </Panel>
                 <Panel
-                    title={text('项目机器', 'Project machines')}
+                    title={text('资源授权', 'Resource assignment')}
                     description={text(
-                        '项目关联的集群和服务器实例。',
-                        'Fleets and server instances associated with this project.',
+                        '项目可使用被授权的整个资源池，或资源池中的指定实例。',
+                        'A project can use an assigned whole fleet or selected instances within a fleet.',
                     )}
-                    actions={
-                        <Button
-                            variant="primary"
-                            icon={<Plus className="h-4 w-4" />}
-                            onClick={() =>
-                                navigate(CONSOLE_ROUTES.RESOURCES_FLEET_CREATE, { state: { projectName } })
-                            }
-                        >
-                            {text('创建/分配集群', 'Create/assign fleet')}
-                        </Button>
-                    }
                 >
+                    <form
+                        className="mb-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(220px,320px)_auto]"
+                        onSubmit={submitResourceAssignment}
+                    >
+                        <Field label={text('资源池', 'Fleet')}>
+                            <SelectInput
+                                value={resourceAssignment.resourcePoolName}
+                                onChange={(event) =>
+                                    setResourceAssignment({
+                                        resourcePoolName: event.target.value,
+                                        assignWholePool: true,
+                                        instanceIds: [],
+                                    })
+                                }
+                                disabled={resourcePools.isLoading || !resourcePools.data?.length}
+                            >
+                                {(resourcePools.data ?? []).map((pool) => (
+                                    <option key={pool.id} value={pool.name}>
+                                        {pool.name}
+                                    </option>
+                                ))}
+                            </SelectInput>
+                        </Field>
+                        <Field label={text('授权范围', 'Scope')}>
+                            <SelectInput
+                                value={resourceAssignment.assignWholePool ? 'whole' : 'instances'}
+                                onChange={(event) =>
+                                    setResourceAssignment((current) => ({
+                                        ...current,
+                                        assignWholePool: event.target.value === 'whole',
+                                        instanceIds: event.target.value === 'whole' ? [] : current.instanceIds,
+                                    }))
+                                }
+                                disabled={!selectedResourcePool}
+                            >
+                                <option value="whole">{text('整个资源池', 'Whole fleet')}</option>
+                                <option value="instances">{text('指定实例', 'Selected instances')}</option>
+                            </SelectInput>
+                        </Field>
+                        <div className="flex items-end">
+                            <Button
+                                type="submit"
+                                variant="primary"
+                                loading={updateResourcePoolAssignmentState.isLoading}
+                                disabled={
+                                    !resourceAssignment.resourcePoolName ||
+                                    (!resourceAssignment.assignWholePool && resourceAssignment.instanceIds.length === 0)
+                                }
+                            >
+                                {text('保存授权', 'Save assignment')}
+                            </Button>
+                        </div>
+                    </form>
+                    {!resourceAssignment.assignWholePool && selectedResourcePool && (
+                        <div className="mb-5 rounded-lg border border-slate-200 p-4 dark:border-slate-800">
+                            <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                                {text('选择实例', 'Select instances')}
+                            </div>
+                            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                                {selectedResourcePool.instances.map((instance) => (
+                                    <label
+                                        key={instance.id}
+                                        className="flex items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-sm dark:border-slate-800"
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            checked={resourceAssignment.instanceIds.includes(instance.id)}
+                                            onChange={() => toggleAssignedInstance(instance.id)}
+                                        />
+                                        <span className="font-medium">{instance.name}</span>
+                                        <span className="text-slate-500 dark:text-slate-400">
+                                            {instance.occupancy.status === 'busy' ? text('占用', 'Busy') : text('闲置', 'Idle')}
+                                        </span>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                     <DataTable
-                        items={fleets.data ?? []}
-                        loading={fleets.isLoading}
+                        items={projectResourcePools.data ?? []}
+                        loading={projectResourcePools.isLoading}
                         keyGetter={(item) => item.id}
-                        empty={<EmptyState title={text('暂无项目机器', 'No project machines')} />}
+                        empty={<EmptyState title={text('暂无资源授权', 'No resource assignments')} />}
+                        emptyTitle={emptyTitle}
                         columns={[
                             {
                                 id: 'name',
-                                header: text('集群', 'Fleet'),
+                                header: text('资源池', 'Fleet'),
                                 cell: (item) => (
                                     <button
                                         className="font-semibold text-blue-600 dark:text-blue-300"
-                                        onClick={() =>
-                                            navigate(
-                                                CONSOLE_ROUTES.RESOURCES_FLEET_DETAILS.FORMAT(
-                                                    item.project_name,
-                                                    item.id,
-                                                ),
-                                            )
-                                        }
+                                        onClick={() => navigate(CONSOLE_ROUTES.RESOURCES_FLEET_DETAILS.FORMAT('_', item.id))}
                                     >
                                         {item.name}
                                     </button>
@@ -1825,14 +2305,32 @@ export const ProjectDetailsPage: React.FC = () => {
                                 cell: (item) => <RequestStatus status={item.status} />,
                             },
                             {
-                                id: 'servers',
-                                header: text('服务器', 'Servers'),
-                                cell: (item) => item.instances.map((instance) => instance.name || instance.id).join(', ') || '-',
+                                id: 'assignment',
+                                header: text('授权范围', 'Scope'),
+                                cell: (item) => {
+                                    const assignment = item.assignments.find(
+                                        (assignment) => assignment.project_name === projectName,
+                                    );
+                                    if (!assignment) return '-';
+                                    return assignment.whole_pool
+                                        ? text('整个资源池', 'Whole fleet')
+                                        : text('指定实例', 'Selected instances');
+                                },
                             },
                             {
-                                id: 'count',
-                                header: text('数量', 'Count'),
+                                id: 'instances',
+                                header: text('实例', 'Instances'),
                                 cell: (item) => item.instances.length,
+                            },
+                            {
+                                id: 'idle',
+                                header: text('闲置', 'Idle'),
+                                cell: (item) => item.idle_instance_count,
+                            },
+                            {
+                                id: 'busy',
+                                header: text('占用', 'Busy'),
+                                cell: (item) => item.busy_instance_count,
                             },
                         ]}
                     />
@@ -1859,6 +2357,7 @@ export const ProjectDetailsPage: React.FC = () => {
                         items={secrets.data ?? []}
                         loading={secrets.isLoading}
                         keyGetter={(item) => item.id}
+                        emptyTitle={emptyTitle}
                         columns={[
                             { id: 'name', header: text('名称', 'Name'), cell: (item) => item.name },
                             {
@@ -1884,6 +2383,7 @@ export const ProjectDetailsPage: React.FC = () => {
                         items={events.data ?? []}
                         loading={events.isLoading}
                         keyGetter={(item) => item.id}
+                        emptyTitle={emptyTitle}
                         columns={[
                             { id: 'time', header: text('时间', 'Time'), cell: (item) => formatDate(item.recorded_at) },
                             {
@@ -1967,7 +2467,7 @@ export const GatewayPage: React.FC<{ create?: boolean }> = ({ create }) => {
 
 export const UsersPage: React.FC = () => {
     const navigate = useNavigate();
-    const { locale, text } = useLocaleText();
+    const { emptyTitle, locale, text } = useLocaleText();
     const users = useGetUserListQuery({ limit: 500 });
 
     return (
@@ -1989,6 +2489,7 @@ export const UsersPage: React.FC = () => {
                     items={users.data?.data ?? []}
                     loading={users.isLoading}
                     keyGetter={(item) => item.username}
+                    emptyTitle={emptyTitle}
                     columns={[
                         {
                             id: 'username',
@@ -2005,14 +2506,20 @@ export const UsersPage: React.FC = () => {
                         {
                             id: 'role',
                             header: text('角色', 'Role'),
-                            cell: (item) => <StatusBadge tone={item.global_role === 'admin' ? 'info' : 'neutral'}>{getUserRoleText(item.global_role, locale)}</StatusBadge>,
+                            cell: (item) => (
+                                <StatusBadge tone={item.global_role === 'admin' ? 'info' : 'neutral'}>
+                                    {getUserRoleText(item.global_role, locale)}
+                                </StatusBadge>
+                            ),
                         },
                         { id: 'email', header: 'Email', cell: (item) => valueOrDash(item.email) },
                         {
                             id: 'active',
                             header: text('状态', 'Status'),
                             cell: (item) => (
-                                <StatusBadge tone={item.active ? 'success' : 'danger'}>{item.active ? text('已启用', 'Active') : text('已停用', 'Inactive')}</StatusBadge>
+                                <StatusBadge tone={item.active ? 'success' : 'danger'}>
+                                    {item.active ? text('已启用', 'Active') : text('已停用', 'Inactive')}
+                                </StatusBadge>
                             ),
                         },
                         {
@@ -2164,7 +2671,9 @@ export const UserDetailsPage: React.FC = () => {
                 } catch {
                     pushNotification({
                         type: 'error',
-                        header: nextActive ? text('用户启用失败', 'Failed to activate user') : text('用户停用失败', 'Failed to deactivate user'),
+                        header: nextActive
+                            ? text('用户启用失败', 'Failed to activate user')
+                            : text('用户停用失败', 'Failed to deactivate user'),
                     });
                 }
             },
@@ -2177,7 +2686,7 @@ export const UserDetailsPage: React.FC = () => {
                 title={userName}
                 actions={
                     <Button icon={<RefreshCcw className="h-4 w-4" />} loading={refreshState.isLoading} onClick={refresh}>
-                            {text('刷新 Token', 'Refresh token')}
+                        {text('刷新 Token', 'Refresh token')}
                     </Button>
                 }
             />
@@ -2207,13 +2716,13 @@ export const UserDetailsPage: React.FC = () => {
                 </Panel>
                 <Panel
                     title={text('危险操作', 'Danger zone')}
-                    description={text('停用账号会阻止用户继续使用；删除用户不可恢复。', 'Deactivating blocks account use. Deleting a user cannot be undone.')}
+                    description={text(
+                        '停用账号会阻止用户继续使用；删除用户不可恢复。',
+                        'Deactivating blocks account use. Deleting a user cannot be undone.',
+                    )}
                     actions={
                         <>
-                            <Button
-                                variant={values.active ? 'secondary' : 'primary'}
-                                onClick={toggleUserActive}
-                            >
+                            <Button variant={values.active ? 'secondary' : 'primary'} onClick={toggleUserActive}>
                                 {values.active ? text('停用账号', 'Deactivate account') : text('启用账号', 'Activate account')}
                             </Button>
                             <Button variant="danger" onClick={removeUser}>
@@ -2237,7 +2746,9 @@ export const UserDetailsPage: React.FC = () => {
                                 label={text('支付方式', 'Payment method')}
                                 value={
                                     <StatusBadge tone={billing.data?.is_payment_method_attached ? 'success' : 'neutral'}>
-                                        {billing.data?.is_payment_method_attached ? text('已绑定', 'Attached') : text('未绑定', 'Not attached')}
+                                        {billing.data?.is_payment_method_attached
+                                            ? text('已绑定', 'Attached')
+                                            : text('未绑定', 'Not attached')}
                                     </StatusBadge>
                                 }
                             />
@@ -2335,16 +2846,17 @@ export const AdminSettingsPage: React.FC = () => {
                             label="App Secret"
                             hint={
                                 config.data?.has_app_secret
-                                    ? text('Secret 已配置；留空表示保持不变。', 'A secret is configured. Leave empty to keep it unchanged.')
+                                    ? text(
+                                          'Secret 已配置；留空表示保持不变。',
+                                          'A secret is configured. Leave empty to keep it unchanged.',
+                                      )
                                     : text('尚未配置 Secret。', 'No secret is configured.')
                             }
                         >
                             <TextInput
                                 type="password"
                                 value={values.app_secret}
-                                onChange={(event) =>
-                                    setValues((current) => ({ ...current, app_secret: event.target.value }))
-                                }
+                                onChange={(event) => setValues((current) => ({ ...current, app_secret: event.target.value }))}
                                 placeholder={config.data?.has_app_secret ? '••••••••' : 'app secret'}
                             />
                         </Field>
@@ -2368,7 +2880,7 @@ export const AdminSettingsPage: React.FC = () => {
 };
 
 export const EventsPage: React.FC = () => {
-    const { locale, text } = useLocaleText();
+    const { emptyTitle, locale, text } = useLocaleText();
     const events = useGetAllEventsQuery({ limit: 500 });
     return (
         <>
@@ -2378,6 +2890,7 @@ export const EventsPage: React.FC = () => {
                     items={events.data ?? []}
                     loading={events.isLoading}
                     keyGetter={(item) => item.id}
+                    emptyTitle={emptyTitle}
                     columns={[
                         { id: 'time', header: text('时间', 'Time'), cell: (item) => formatDate(item.recorded_at) },
                         {
@@ -2432,7 +2945,10 @@ export const AccountProfilePage: React.FC = () => {
         <>
             <PageHeader
                 title={text('个人资料', 'Profile')}
-                description={text('查看基础账号状态，并维护你的邮箱。', 'View basic account status and keep your email up to date.')}
+                description={text(
+                    '查看基础账号状态，并维护你的邮箱。',
+                    'View basic account status and keep your email up to date.',
+                )}
             />
             <div className="grid gap-6">
                 <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm shadow-slate-200/60 dark:border-slate-800 dark:bg-slate-900 dark:shadow-none">
@@ -2532,12 +3048,8 @@ export const AccountProfilePage: React.FC = () => {
     );
 };
 
-export const AccountProjectsPage: React.FC = () => {
-    return <ProjectsPage />;
-};
-
 export const AccountKeysPage: React.FC = () => {
-    const { text } = useLocaleText();
+    const { emptyTitle, text } = useLocaleText();
     const keys = useListPublicKeysQuery();
     const [addKey] = useAddPublicKeyMutation();
     const [deleteKeys] = useDeletePublicKeysMutation();
@@ -2560,6 +3072,7 @@ export const AccountKeysPage: React.FC = () => {
                         items={keys.data ?? []}
                         loading={keys.isLoading}
                         keyGetter={(item) => item.id}
+                        emptyTitle={emptyTitle}
                         columns={[
                             { id: 'name', header: text('名称', 'Name'), cell: (item) => item.name },
                             { id: 'fingerprint', header: 'Fingerprint', cell: (item) => item.fingerprint },

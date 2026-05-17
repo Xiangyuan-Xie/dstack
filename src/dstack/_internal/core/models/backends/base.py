@@ -24,6 +24,7 @@ class BackendType(str, enum.Enum):
         VASTAI (BackendType): Vast.ai Marketplace
         VERDA (BackendType): Verda Cloud
         VULTR (BackendType): Vultr
+        REGISTERED (BackendType): Registered dstack worker
     """
 
     AMDDEVCLOUD = "amddevcloud"
@@ -42,6 +43,7 @@ class BackendType(str, enum.Enum):
     LAMBDA = "lambda"
     LOCAL = "local"
     REMOTE = "remote"
+    REGISTERED = "registered"
     NEBIUS = "nebius"
     OCI = "oci"
     RUNPOD = "runpod"

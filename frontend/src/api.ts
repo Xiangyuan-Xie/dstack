@@ -72,6 +72,13 @@ export const API = {
         },
     },
 
+    ADMIN_WORKERS: {
+        BASE: () => `${API.BASE()}/admin/worker_tokens`,
+        CREATE_TOKEN: () => `${API.ADMIN_WORKERS.BASE()}/create`,
+        LIST_TOKENS: () => `${API.ADMIN_WORKERS.BASE()}/list`,
+        DELETE_TOKEN: () => `${API.ADMIN_WORKERS.BASE()}/delete`,
+    },
+
     PROJECTS: {
         BASE: () => `${API.BASE()}/projects`,
         LIST: () => `${API.PROJECTS.BASE()}/list`,
@@ -188,6 +195,17 @@ export const API = {
     FLEETS: {
         BASE: () => `${API.BASE()}/fleets`,
         LIST: () => `${API.FLEETS.BASE()}/list`,
+    },
+
+    RESOURCE_POOLS: {
+        BASE: () => `${API.BASE()}/resource_pools`,
+        LIST: () => `${API.RESOURCE_POOLS.BASE()}/list`,
+        GET: () => `${API.RESOURCE_POOLS.BASE()}/get`,
+        CREATE: () => `${API.RESOURCE_POOLS.BASE()}/create`,
+        UPDATE: () => `${API.RESOURCE_POOLS.BASE()}/update`,
+        DELETE: () => `${API.RESOURCE_POOLS.BASE()}/delete`,
+        ASSIGNMENTS_UPDATE: () => `${API.RESOURCE_POOLS.BASE()}/assignments/update`,
+        PROJECT_LIST: (projectName: IProject['project_name']) => `${API.BASE()}/project/${projectName}/resource_pools/list`,
     },
 
     INSTANCES: {

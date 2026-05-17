@@ -2,12 +2,45 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { FleetCreatePage, ProjectDetailsPage, ProjectsPage } from './pages';
+
 const mockNavigate = jest.fn();
 const mockDeleteProjects = jest.fn();
 const mockUpdateProject = jest.fn();
 const mockConfirm = jest.fn();
 const mockAddProjectMember = jest.fn();
 const mockGetUserList = jest.fn();
+const mockCreateResourcePool = jest.fn();
+const mockUpdateResourcePoolAssignment = jest.fn();
+let mockLocationState: Record<string, string> | null = null;
+
+const resourcePool = (overrides: Partial<IResourcePool> = {}): IResourcePool => ({
+    id: 'fleet-1',
+    name: 'gpu-fleet',
+    created_at: '2026-05-16T09:00:00+08:00',
+    spec: {
+        configuration: { type: 'fleet', name: 'gpu-fleet' },
+        profile: { name: 'registered', default: true },
+    },
+    status: 'active',
+    status_message: '',
+    assignments: [{ project_name: 'old-project', whole_pool: true, instance_ids: [] }],
+    instances: [
+        {
+            id: 'instance-1',
+            name: 'server-1',
+            instance_num: 0,
+            status: 'idle',
+            backend: 'registered',
+            authorized_projects: ['old-project'],
+            occupancy: { status: 'idle', project_names: [], task_count: 0 },
+        },
+    ],
+    authorized_project_names: ['old-project'],
+    idle_instance_count: 1,
+    busy_instance_count: 0,
+    ...overrides,
+});
 
 Object.defineProperty(window, 'matchMedia', {
     writable: true,
@@ -23,16 +56,26 @@ Object.defineProperty(window, 'matchMedia', {
     })),
 });
 
-const { ProjectDetailsPage, ProjectsPage } = require('./pages');
-
 jest.mock('react-router-dom', () => ({
     useNavigate: () => mockNavigate,
     useParams: () => ({ projectName: 'old-project' }),
+    useLocation: () => ({ state: mockLocationState }),
 }));
 
 jest.mock('./Layout', () => ({
     useConsoleContext: () => ({
         locale: 'zh',
+        projects: [
+            {
+                project_id: 'project-1',
+                project_name: 'old-project',
+                members: [],
+                backends: [],
+                owner: { username: 'admin' },
+                created_at: '2026-05-16T09:00:00+08:00',
+                isPublic: false,
+            },
+        ],
         role: {
             isGlobalAdmin: true,
             canUseProjectAdmin: true,
@@ -98,20 +141,22 @@ jest.mock('services/backend', () => ({
 jest.mock('services/events', () => ({
     useGetAllEventsQuery: () => ({ data: [], isLoading: false }),
 }));
-jest.mock('services/fleet', () => ({
-    useGetProjectFleetsQuery: () => ({
-        data: [
-            {
-                id: 'fleet-1',
-                name: 'gpu-fleet',
-                project_name: 'old-project',
-                status: 'active',
-                instances: [{ id: 'instance-1', name: 'server-1', status: 'running' }],
-                spec: { configuration: { type: 'fleet' } },
-            },
-        ],
+jest.mock('services/resourcePool', () => ({
+    useCreateResourcePoolMutation: () => [mockCreateResourcePool, { isLoading: false }],
+    useDeleteResourcePoolsMutation: () => [jest.fn(), { isLoading: false }],
+    useGetProjectResourcePoolsQuery: () => ({
+        data: [resourcePool()],
         isLoading: false,
     }),
+    useGetResourcePoolDetailsQuery: () => ({
+        data: resourcePool(),
+        isLoading: false,
+    }),
+    useGetResourcePoolsQuery: () => ({
+        data: [resourcePool()],
+        isLoading: false,
+    }),
+    useUpdateResourcePoolAssignmentMutation: () => [mockUpdateResourcePoolAssignment, { isLoading: false }],
 }));
 jest.mock('services/gpu', () => ({}));
 jest.mock('services/runRequest', () => ({}));
@@ -188,6 +233,62 @@ describe('ProjectsPage', () => {
     });
 });
 
+describe('FleetCreatePage', () => {
+    beforeEach(() => {
+        mockNavigate.mockReset();
+        mockCreateResourcePool.mockReset();
+        mockLocationState = null;
+    });
+
+    test('creates a registered server resource pool without exposing YAML', async () => {
+        mockCreateResourcePool.mockReturnValue({
+            unwrap: () =>
+                Promise.resolve({
+                    id: 'fleet-1',
+                    name: 'lab-pool',
+                }),
+        });
+
+        render(<FleetCreatePage />);
+
+        expect(screen.getByRole('heading', { name: '创建资源池' })).toBeInTheDocument();
+        expect(screen.queryByText('YAML')).not.toBeInTheDocument();
+        await userEvent.type(screen.getByLabelText('资源池名称'), 'lab-pool');
+        await userEvent.click(screen.getByRole('button', { name: '创建资源池' }));
+
+        expect(mockCreateResourcePool).toHaveBeenCalledWith({
+            force: true,
+            plan: {
+                spec: {
+                    configuration: {
+                        type: 'fleet',
+                        name: 'lab-pool',
+                        nodes: { min: 0 },
+                    },
+                    configuration_path: 'console.yaml',
+                    profile: { name: 'registered', default: true },
+                },
+            },
+        });
+        expect(mockNavigate).toHaveBeenCalledWith('/resources/instances', {
+            state: {
+                fleetName: 'lab-pool',
+                openConnectServer: true,
+            },
+        });
+    });
+
+    test('validates resource pool names before creating', async () => {
+        render(<FleetCreatePage />);
+
+        await userEvent.type(screen.getByLabelText('资源池名称'), 'Bad_Name');
+        await userEvent.click(screen.getByRole('button', { name: '创建资源池' }));
+
+        expect(screen.getByText("资源池名称需匹配 '^[a-z][a-z0-9-]{1,40}$'。")).toBeInTheDocument();
+        expect(mockCreateResourcePool).not.toHaveBeenCalled();
+    });
+});
+
 describe('ProjectDetailsPage', () => {
     beforeEach(() => {
         mockNavigate.mockReset();
@@ -196,6 +297,8 @@ describe('ProjectDetailsPage', () => {
         mockAddProjectMember.mockReset();
         mockGetUserList.mockReset();
         mockConfirm.mockReset();
+        mockUpdateResourcePoolAssignment.mockReset();
+        mockLocationState = null;
     });
 
     test('saves renamed project settings and navigates to the new URL', async () => {
@@ -279,16 +382,25 @@ describe('ProjectDetailsPage', () => {
         expect(mockNavigate).toHaveBeenCalledWith('/workspace/projects');
     });
 
-    test('shows project machines from project fleets and opens fleet creation with the project selected', async () => {
+    test('shows project resource assignments and updates the authorized resource pool', async () => {
+        mockUpdateResourcePoolAssignment.mockReturnValue({
+            unwrap: () => Promise.resolve(resourcePool()),
+        });
+
         render(<ProjectDetailsPage />);
 
-        expect(screen.getByText('项目机器')).toBeInTheDocument();
-        expect(screen.getByText('gpu-fleet')).toBeInTheDocument();
-        expect(screen.getByText('server-1')).toBeInTheDocument();
-        expect(screen.getByText('1')).toBeInTheDocument();
+        expect(screen.getByText('资源授权')).toBeInTheDocument();
+        expect(screen.getAllByText('gpu-fleet')).not.toHaveLength(0);
+        expect(screen.getAllByText('整个资源池')).not.toHaveLength(0);
+        expect(screen.getAllByText('1')).not.toHaveLength(0);
 
-        await userEvent.click(screen.getByRole('button', { name: '创建/分配集群' }));
+        await userEvent.click(screen.getByRole('button', { name: '保存授权' }));
 
-        expect(mockNavigate).toHaveBeenCalledWith('/resources/fleets/new', { state: { projectName: 'old-project' } });
+        expect(mockUpdateResourcePoolAssignment).toHaveBeenCalledWith({
+            resource_pool_name: 'gpu-fleet',
+            project_name: 'old-project',
+            assign_whole_pool: true,
+            instance_ids: [],
+        });
     });
 });

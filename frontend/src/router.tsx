@@ -10,7 +10,6 @@ import {
     AccountBillingPage,
     AccountKeysPage,
     AccountProfilePage,
-    AccountProjectsPage,
     AdminSettingsPage,
     BackendPage,
     DashboardPage,
@@ -19,9 +18,6 @@ import {
     FleetDetailsPage,
     FleetsPage,
     GatewayPage,
-    RunApprovalsPage,
-    RunRequestCreatePage,
-    RunRequestDetailsPage,
     InstanceDetailsPage,
     InstancesPage,
     ModelDetailsPage,
@@ -31,7 +27,10 @@ import {
     ProjectCreatePage,
     ProjectDetailsPage,
     ProjectsPage,
+    RunApprovalsPage,
     RunDetailsPage,
+    RunRequestCreatePage,
+    RunRequestDetailsPage,
     RunsPage,
     UserCreatePage,
     UserDetailsPage,
@@ -200,14 +199,6 @@ export const router = createBrowserRouter([
                         ),
                     },
                     {
-                        path: C.ADMIN_SERVERS,
-                        element: (
-                            <ProjectAdminRoute>
-                                <FleetsPage servers />
-                            </ProjectAdminRoute>
-                        ),
-                    },
-                    {
                         path: C.ADMIN_SETTINGS,
                         element: (
                             <GlobalAdminRoute>
@@ -248,7 +239,6 @@ export const router = createBrowserRouter([
                         ),
                     },
                     { path: C.ACCOUNT_PROFILE, element: <AccountProfilePage /> },
-                    { path: C.ACCOUNT_PROJECTS, element: <AccountProjectsPage /> },
                     { path: C.ACCOUNT_KEYS, element: <AccountKeysPage /> },
                     { path: C.ACCOUNT_BILLING, element: <AccountBillingPage /> },
                     { path: '*', element: <NotFoundPage /> },

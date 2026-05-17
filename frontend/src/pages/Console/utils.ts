@@ -20,7 +20,7 @@ const navCopy = {
         dashboard: '工作台',
         runs: '运行任务',
         resources: '资源',
-        fleets: '集群',
+        fleets: '资源池',
         instances: '实例',
         offers: '资源报价',
         models: '模型服务',
@@ -29,7 +29,6 @@ const navCopy = {
         projects: '项目',
         admin: '管理',
         approvals: '审批',
-        servers: '服务器管理',
         settings: '系统设置',
         users: '用户管理',
         events: '系统事件',
@@ -51,7 +50,6 @@ const navCopy = {
         projects: 'Projects',
         admin: 'Admin',
         approvals: 'Approvals',
-        servers: 'Servers',
         settings: 'System settings',
         users: 'Users',
         events: 'Events',
@@ -178,7 +176,6 @@ export const getConsoleNavSections = (
             title: text.admin,
             items: [
                 { label: text.approvals, href: CONSOLE_ROUTES.RUN_APPROVALS, icon: 'ClipboardCheck', adminOnly: true },
-                { label: text.servers, href: CONSOLE_ROUTES.ADMIN_SERVERS, icon: 'MonitorCog', adminOnly: true },
                 ...(role.canUseGlobalAdmin
                     ? [
                           { label: text.settings, href: CONSOLE_ROUTES.ADMIN_SETTINGS, icon: 'Settings', adminOnly: true },
@@ -201,7 +198,11 @@ export const getConsoleNavSections = (
     ].filter(Boolean) as IConsoleNavSection[];
 };
 
-export const canAccessConsoleRoute = (role: IConsoleUserRole, pathname: string, uiVersion = process.env.UI_VERSION): boolean => {
+export const canAccessConsoleRoute = (
+    role: IConsoleUserRole,
+    pathname: string,
+    uiVersion = process.env.UI_VERSION,
+): boolean => {
     if (isLegacyConsolePath(pathname)) {
         // Legacy paths are handled by the router's Not Found page, not by the permission guard.
         return true;
@@ -217,17 +218,13 @@ export const canAccessConsoleRoute = (role: IConsoleUserRole, pathname: string, 
     ) {
         return true;
     }
-    if (
-        pathname === CONSOLE_ROUTES.ACCOUNT_PROFILE ||
-        pathname === CONSOLE_ROUTES.ACCOUNT_KEYS ||
-        pathname === CONSOLE_ROUTES.ACCOUNT_PROJECTS
-    ) {
+    if (pathname === CONSOLE_ROUTES.ACCOUNT_PROFILE || pathname === CONSOLE_ROUTES.ACCOUNT_KEYS) {
         return true;
     }
     if (pathname === CONSOLE_ROUTES.ACCOUNT_BILLING) {
         return uiVersion === 'sky';
     }
-    if (pathname === CONSOLE_ROUTES.RUN_APPROVALS || pathname === CONSOLE_ROUTES.ADMIN_SERVERS) {
+    if (pathname === CONSOLE_ROUTES.RUN_APPROVALS) {
         return role.canUseProjectAdmin;
     }
     if (pathname.startsWith('/resources/') || pathname.startsWith('/workspace/projects')) {
@@ -239,6 +236,9 @@ export const canAccessConsoleRoute = (role: IConsoleUserRole, pathname: string, 
         pathname === CONSOLE_ROUTES.ADMIN_SETTINGS
     ) {
         return role.canUseGlobalAdmin;
+    }
+    if (pathname.startsWith('/admin/') || pathname.startsWith('/account/')) {
+        return false;
     }
     return true;
 };
@@ -282,9 +282,9 @@ export const formatEventMessage = (message: string, locale: TLocale): string => 
         'Run updated': '运行任务已更新',
         'Run deleted': '运行任务已删除',
         'Run stopped': '运行任务已停止',
-        'Fleet created': '集群已创建',
-        'Fleet updated': '集群已更新',
-        'Fleet deleted': '集群已删除',
+        'Fleet created': '资源池已创建',
+        'Fleet updated': '资源池已更新',
+        'Fleet deleted': '资源池已删除',
         'Instance created': '实例已创建',
         'Instance updated': '实例已更新',
         'Instance deleted': '实例已删除',
@@ -311,8 +311,14 @@ export const formatEventMessage = (message: string, locale: TLocale): string => 
         [/^(.+) created\. Status: (.+)$/, (match) => `${translateEventSubject(match[1])}已创建。状态：${match[2]}`],
         [/^(.+) updated\. Updated fields: (.+)$/, (match) => `${translateEventSubject(match[1])}已更新。字段：${match[2]}`],
         [/^(.+) updated\. Changed fields: (.+)$/, (match) => `${translateEventSubject(match[1])}已更新。字段：${match[2]}`],
-        [/^(.+) status changed (.+) -> (.+) \((.+)\)$/, (match) => `${translateEventSubject(match[1])}状态从 ${match[2]} 变为 ${match[3]}（${match[4]}）`],
-        [/^(.+) status changed (.+) -> (.+)$/, (match) => `${translateEventSubject(match[1])}状态从 ${match[2]} 变为 ${match[3]}`],
+        [
+            /^(.+) status changed (.+) -> (.+) \((.+)\)$/,
+            (match) => `${translateEventSubject(match[1])}状态从 ${match[2]} 变为 ${match[3]}（${match[4]}）`,
+        ],
+        [
+            /^(.+) status changed (.+) -> (.+)$/,
+            (match) => `${translateEventSubject(match[1])}状态从 ${match[2]} 变为 ${match[3]}`,
+        ],
     ];
 
     for (const [pattern, formatter] of patterns) {
@@ -332,7 +338,10 @@ export const getNotificationCenterItems = (
     const notificationItems = notifications.map<TNotificationCenterItem>((notification, index) => ({
         id: notification.id ?? `notification-${index}`,
         type: 'notification',
-        tone: notification.type === 'success' || notification.type === 'error' || notification.type === 'warning' ? notification.type : 'info',
+        tone:
+            notification.type === 'success' || notification.type === 'error' || notification.type === 'warning'
+                ? notification.type
+                : 'info',
         title: stringifyNotificationNode(notification.header) || (locale === 'zh' ? '通知' : 'Notification'),
         description: stringifyNotificationNode(notification.content),
     }));
@@ -353,7 +362,7 @@ const translateEventSubject = (subject: string): string => {
         User: '用户',
         Run: '运行任务',
         Job: '任务',
-        Fleet: '集群',
+        Fleet: '资源池',
         Instance: '实例',
         Volume: '存储卷',
         Gateway: '网关',

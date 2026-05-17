@@ -25,11 +25,11 @@ from dstack._internal.core.models.runs import (
 )
 from dstack._internal.core.models.volumes import Volume
 from dstack._internal.server.models import (
-    ExportedFleetModel,
     FleetModel,
-    ImportModel,
     InstanceModel,
     ProjectModel,
+    ProjectResourceInstanceAssignmentModel,
+    ProjectResourcePoolAssignmentModel,
     RunModel,
 )
 from dstack._internal.server.services.fleets import (
@@ -236,16 +236,17 @@ async def get_run_candidate_fleet_models_filters(
     # If another job freed the instance but is still trying to detach volumes,
     # do not provision on it to prevent attaching volumes that are currently detaching.
     detaching_instances_ids = await get_instances_ids_with_detaching_volumes(session)
-    is_fleet_imported_subquery = exists().where(
-        ImportModel.project_id == project.id,
-        ImportModel.export_id == ExportedFleetModel.export_id,
-        ExportedFleetModel.fleet_id == FleetModel.id,
+    is_whole_pool_authorized = exists().where(
+        ProjectResourcePoolAssignmentModel.project_id == project.id,
+        ProjectResourcePoolAssignmentModel.fleet_id == FleetModel.id,
+        ProjectResourcePoolAssignmentModel.whole_pool == True,
+    )
+    has_authorized_instance = exists().where(
+        ProjectResourceInstanceAssignmentModel.project_id == project.id,
+        ProjectResourceInstanceAssignmentModel.fleet_id == FleetModel.id,
     )
     fleet_filters = [
-        or_(
-            FleetModel.project_id == project.id,
-            is_fleet_imported_subquery,
-        ),
+        or_(is_whole_pool_authorized, has_authorized_instance),
         FleetModel.deleted == False,
     ]
     if run_model is not None and run_model.fleet is not None:
@@ -268,9 +269,19 @@ async def get_run_candidate_fleet_models_filters(
                     )
                 )
         fleet_filters.append(or_(*fleet_conditions))
+    is_instance_in_authorized_pool = exists().where(
+        ProjectResourcePoolAssignmentModel.project_id == project.id,
+        ProjectResourcePoolAssignmentModel.fleet_id == InstanceModel.fleet_id,
+        ProjectResourcePoolAssignmentModel.whole_pool == True,
+    )
+    is_instance_authorized = exists().where(
+        ProjectResourceInstanceAssignmentModel.project_id == project.id,
+        ProjectResourceInstanceAssignmentModel.instance_id == InstanceModel.id,
+    )
     instance_filters = [
         InstanceModel.deleted == False,
         InstanceModel.id.not_in(detaching_instances_ids),
+        or_(is_instance_in_authorized_pool, is_instance_authorized),
     ]
     return fleet_filters, instance_filters
 

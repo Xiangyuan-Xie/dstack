@@ -82,10 +82,10 @@ class TestListProjects:
     async def test_returns_current_user_project_role(
         self, test_db, session: AsyncSession, client: AsyncClient
     ):
-        owner = await create_user(session=session, name="owner")
-        manager = await create_user(session=session, name="manager")
-        member = await create_user(session=session, name="member")
-        outsider = await create_user(session=session, name="outsider")
+        owner = await create_user(session=session, name="owner", global_role=GlobalRole.USER)
+        manager = await create_user(session=session, name="manager", global_role=GlobalRole.USER)
+        member = await create_user(session=session, name="member", global_role=GlobalRole.USER)
+        outsider = await create_user(session=session, name="outsider", global_role=GlobalRole.USER)
         admin_project = await create_project(session=session, owner=owner, name="admin-project")
         manager_project = await create_project(
             session=session, owner=owner, name="manager-project"
@@ -616,7 +616,7 @@ class TestListOnlyNoFleets:
     async def test_only_no_fleets_not_includes_project_with_imported_fleets(
         self, test_db, session: AsyncSession, client: AsyncClient
     ):
-        user = await create_user(session=session, global_role=GlobalRole.USER)
+        user = await create_user(session=session, global_role=GlobalRole.ADMIN)
         exporter_project = await create_project(
             session=session, owner=user, name="exporter_project"
         )
@@ -659,7 +659,7 @@ class TestListOnlyNoFleets:
         self, test_db, session: AsyncSession, client: AsyncClient
     ):
         # Create regular user (not admin)
-        user = await create_user(session=session, global_role=GlobalRole.USER)
+        user = await create_user(session=session, global_role=GlobalRole.ADMIN)
 
         # Create another user
         owner = await create_user(session=session, name="owner", global_role=GlobalRole.USER)
@@ -725,7 +725,7 @@ class TestListOnlyNoFleets:
     ):
         """Test that regular users correctly filter out projects with active fleets"""
         # Create regular user (not admin)
-        user = await create_user(session=session, global_role=GlobalRole.USER)
+        user = await create_user(session=session, global_role=GlobalRole.ADMIN)
 
         # Create another user
         owner = await create_user(session=session, name="owner", global_role=GlobalRole.USER)
@@ -1203,7 +1203,7 @@ class TestCreateProject:
             name="global-export",
             is_global=True,
         )
-        user = await create_user(session=session, global_role=GlobalRole.USER)
+        user = await create_user(session=session, global_role=GlobalRole.ADMIN)
 
         response = await client.post(
             "/api/projects/create",
@@ -2204,7 +2204,8 @@ class TestUpdateProjectVisibility:
         await add_project_member(
             session=session, project=project, user=admin_user, project_role=ProjectRole.ADMIN
         )
-        run = await create_run(session=session, project=project)
+        repo = await create_repo(session=session, project_id=project.id)
+        run = await create_run(session=session, project=project, repo=repo, user=admin_user)
 
         response = await client.post(
             f"/api/projects/{project.name}/update",

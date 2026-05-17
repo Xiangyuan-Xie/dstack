@@ -25,6 +25,7 @@ from dstack._internal.cli.commands.secrets import SecretCommand
 from dstack._internal.cli.commands.server import ServerCommand
 from dstack._internal.cli.commands.stop import StopCommand
 from dstack._internal.cli.commands.volume import VolumeCommand
+from dstack._internal.cli.commands.worker import WorkerCommand
 from dstack._internal.cli.utils.common import _colors, console
 from dstack._internal.cli.utils.updates import check_for_updates
 from dstack._internal.core.errors import ClientError, CLIError, ConfigurationError, SSHError
@@ -84,6 +85,7 @@ def main():
     ServerCommand.register(subparsers)
     StopCommand.register(subparsers)
     VolumeCommand.register(subparsers)
+    WorkerCommand.register(subparsers)
     CompletionCommand.register(subparsers)
 
     argcomplete.autocomplete(parser, always_complete_options=False)

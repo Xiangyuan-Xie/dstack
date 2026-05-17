@@ -507,6 +507,42 @@ class TestJobRunningWorker:
         assert job.lock_token is None
         assert job.lock_owner is None
 
+    async def test_registered_worker_provisioning_waits_for_worker_report(
+        self, test_db, session: AsyncSession, worker: JobRunningWorker
+    ):
+        project = await create_project(session=session)
+        user = await create_user(session=session)
+        repo = await create_repo(session=session, project_id=project.id)
+        run = await create_run(session=session, project=project, repo=repo, user=user)
+        instance = await create_instance(
+            session=session, project=project, status=InstanceStatus.BUSY
+        )
+        job = await create_job(
+            session=session,
+            run=run,
+            status=JobStatus.PROVISIONING,
+            submitted_at=get_current_datetime(),
+            job_provisioning_data=get_job_provisioning_data(
+                dockerized=True,
+                backend=BackendType.REGISTERED,
+            ),
+            instance=instance,
+            instance_assigned=True,
+        )
+
+        with (
+            patch("dstack._internal.server.services.runner.ssh.SSHTunnel") as ssh_tunnel_cls,
+            patch("dstack._internal.server.services.runner.client.ShimClient") as shim_client_cls,
+        ):
+            await _process_job(session, worker, job)
+            ssh_tunnel_cls.assert_not_called()
+            shim_client_cls.assert_not_called()
+
+        await session.refresh(job)
+        assert job.status == JobStatus.PROVISIONING
+        assert job.lock_token is None
+        assert job.lock_owner is None
+
     @pytest.mark.parametrize(
         ["has_repo_code", "runner_version", "upload_code_call_expected"],
         [

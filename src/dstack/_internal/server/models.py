@@ -19,7 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy.sql import false
+from sqlalchemy.sql import false, true
 from sqlalchemy_utils import UUIDType
 
 from dstack._internal.core.errors import DstackError
@@ -564,6 +564,106 @@ class RunRequestModel(BaseModel):
     __table_args__ = (
         Index("ix_run_requests_project_created_at_id", project_id, created_at.desc(), id),
     )
+
+
+class WorkerRegistrationTokenModel(BaseModel):
+    __tablename__ = "worker_registration_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType(binary=False), primary_key=True, default=uuid.uuid4
+    )
+    created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by: Mapped[Optional["UserModel"]] = relationship()
+    fleet_name: Mapped[str] = mapped_column(String(100))
+    token_hash: Mapped[str] = mapped_column(String(2000), unique=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    created_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(NaiveDateTime, nullable=True)
+
+    __table_args__ = (Index("ix_worker_registration_tokens_fleet", fleet_name),)
+
+
+class RegisteredWorkerModel(BaseModel):
+    __tablename__ = "registered_workers"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType(binary=False), primary_key=True, default=uuid.uuid4
+    )
+    registration_token_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("worker_registration_tokens.id", ondelete="CASCADE"), index=True
+    )
+    registration_token: Mapped["WorkerRegistrationTokenModel"] = relationship()
+    fleet_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("fleets.id", ondelete="CASCADE"))
+    fleet: Mapped["FleetModel"] = relationship()
+    instance_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("instances.id", ondelete="CASCADE"))
+    instance: Mapped["InstanceModel"] = relationship()
+    name: Mapped[str] = mapped_column(String(100))
+    hostname: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    labels: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_heartbeat_at: Mapped[datetime] = mapped_column(
+        NaiveDateTime, default=get_current_datetime
+    )
+    version: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "registration_token_id",
+            "name",
+            name="uq_registered_workers_token_id_name",
+        ),
+        Index("ix_registered_workers_instance_id", instance_id, unique=True),
+    )
+
+
+class ProjectResourcePoolAssignmentModel(BaseModel):
+    __tablename__ = "project_resource_pool_assignments"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "fleet_id",
+            name="uq_project_resource_pool_assignments_project_fleet",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType(binary=False), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    project: Mapped["ProjectModel"] = relationship()
+    fleet_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("fleets.id", ondelete="CASCADE"))
+    fleet: Mapped["FleetModel"] = relationship()
+    whole_pool: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    created_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
+
+
+class ProjectResourceInstanceAssignmentModel(BaseModel):
+    __tablename__ = "project_resource_instance_assignments"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "instance_id",
+            name="uq_project_resource_instance_assignments_project_instance",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType(binary=False), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    project: Mapped["ProjectModel"] = relationship()
+    fleet_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("fleets.id", ondelete="CASCADE"))
+    fleet: Mapped["FleetModel"] = relationship()
+    instance_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("instances.id", ondelete="CASCADE"), index=True
+    )
+    instance: Mapped["InstanceModel"] = relationship()
+    created_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
 
 
 class JobModel(PipelineModelMixin, BaseModel):

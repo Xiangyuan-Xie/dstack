@@ -7,11 +7,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dstack._internal.core.models.configurations import TaskConfiguration
 from dstack._internal.core.models.fleets import FleetNodesSpec, InstanceGroupPlacement
 from dstack._internal.core.models.instances import InstanceAvailability
+from dstack._internal.core.models.profiles import Profile
+from dstack._internal.server.models import (
+    ProjectResourceInstanceAssignmentModel,
+    ProjectResourcePoolAssignmentModel,
+)
 from dstack._internal.server.services.jobs import get_jobs_from_run_spec
 from dstack._internal.server.services.runs.plan import (
     _freeze_offer_identity_value,
     _get_backend_offer_identity,
     _get_backend_offers_in_fleet,
+    get_run_candidate_fleet_models_filters,
+    select_run_candidate_fleet_models_with_filters,
 )
 from dstack._internal.server.testing.common import (
     create_fleet,
@@ -113,3 +120,168 @@ class TestGetBackendOffersInFleet:
             get_offers_by_requirements_mock.await_args.kwargs["master_job_provisioning_data"]
             is None
         )
+
+
+class TestRunCandidateResourcePoolAuthorization:
+    @pytest.mark.asyncio
+    async def test_excludes_unassigned_resource_pools(self, session: AsyncSession) -> None:
+        user = await create_user(session=session)
+        project = await create_project(session=session, owner=user)
+        pool = await create_fleet(
+            session=session,
+            project=project,
+            name="lab-pool",
+            assign_to_project=False,
+        )
+        await create_instance(session=session, project=project, fleet=pool)
+        run_spec = get_run_spec(repo_id="repo")
+
+        fleet_filters, instance_filters = await get_run_candidate_fleet_models_filters(
+            session=session,
+            project=project,
+            run_model=None,
+            run_spec=run_spec,
+        )
+        (
+            fleets_with_instances,
+            fleets_without_instances,
+        ) = await select_run_candidate_fleet_models_with_filters(
+            session=session,
+            fleet_filters=fleet_filters,
+            instance_filters=instance_filters,
+            lock_instances=False,
+        )
+
+        assert fleets_with_instances == []
+        assert fleets_without_instances == []
+
+    @pytest.mark.asyncio
+    async def test_whole_pool_assignment_allows_all_pool_instances(
+        self, session: AsyncSession
+    ) -> None:
+        user = await create_user(session=session)
+        project = await create_project(session=session, owner=user)
+        pool = await create_fleet(
+            session=session,
+            project=project,
+            name="lab-pool",
+            assign_to_project=False,
+        )
+        first_instance = await create_instance(
+            session=session, project=project, fleet=pool, name="gpu-box-1"
+        )
+        second_instance = await create_instance(
+            session=session,
+            project=project,
+            fleet=pool,
+            name="gpu-box-2",
+            instance_num=1,
+        )
+        session.add(
+            ProjectResourcePoolAssignmentModel(
+                project=project,
+                fleet=pool,
+                whole_pool=True,
+            )
+        )
+        await session.commit()
+        run_spec = get_run_spec(repo_id="repo")
+
+        fleet_filters, instance_filters = await get_run_candidate_fleet_models_filters(
+            session=session,
+            project=project,
+            run_model=None,
+            run_spec=run_spec,
+        )
+        fleets_with_instances, _ = await select_run_candidate_fleet_models_with_filters(
+            session=session,
+            fleet_filters=fleet_filters,
+            instance_filters=instance_filters,
+            lock_instances=False,
+        )
+
+        assert [fleet.name for fleet in fleets_with_instances] == ["lab-pool"]
+        assert {instance.id for instance in fleets_with_instances[0].instances} == {
+            first_instance.id,
+            second_instance.id,
+        }
+
+    @pytest.mark.asyncio
+    async def test_instance_assignment_limits_pool_instances(self, session: AsyncSession) -> None:
+        user = await create_user(session=session)
+        project = await create_project(session=session, owner=user)
+        pool = await create_fleet(
+            session=session,
+            project=project,
+            name="lab-pool",
+            assign_to_project=False,
+        )
+        allowed_instance = await create_instance(
+            session=session, project=project, fleet=pool, name="gpu-box-1"
+        )
+        await create_instance(
+            session=session,
+            project=project,
+            fleet=pool,
+            name="gpu-box-2",
+            instance_num=1,
+        )
+        session.add(
+            ProjectResourceInstanceAssignmentModel(
+                project=project,
+                fleet=pool,
+                instance=allowed_instance,
+            )
+        )
+        await session.commit()
+        run_spec = get_run_spec(repo_id="repo")
+
+        fleet_filters, instance_filters = await get_run_candidate_fleet_models_filters(
+            session=session,
+            project=project,
+            run_model=None,
+            run_spec=run_spec,
+        )
+        fleets_with_instances, _ = await select_run_candidate_fleet_models_with_filters(
+            session=session,
+            fleet_filters=fleet_filters,
+            instance_filters=instance_filters,
+            lock_instances=False,
+        )
+
+        assert [fleet.name for fleet in fleets_with_instances] == ["lab-pool"]
+        assert [instance.id for instance in fleets_with_instances[0].instances] == [
+            allowed_instance.id
+        ]
+
+    @pytest.mark.asyncio
+    async def test_explicit_fleet_must_still_be_authorized(self, session: AsyncSession) -> None:
+        user = await create_user(session=session)
+        project = await create_project(session=session, owner=user)
+        pool = await create_fleet(
+            session=session,
+            project=project,
+            name="lab-pool",
+            assign_to_project=False,
+        )
+        await create_instance(session=session, project=project, fleet=pool)
+        run_spec = get_run_spec(repo_id="repo", profile=Profile(fleets=["lab-pool"]))
+
+        fleet_filters, instance_filters = await get_run_candidate_fleet_models_filters(
+            session=session,
+            project=project,
+            run_model=None,
+            run_spec=run_spec,
+        )
+        (
+            fleets_with_instances,
+            fleets_without_instances,
+        ) = await select_run_candidate_fleet_models_with_filters(
+            session=session,
+            fleet_filters=fleet_filters,
+            instance_filters=instance_filters,
+            lock_instances=False,
+        )
+
+        assert fleets_with_instances == []
+        assert fleets_without_instances == []

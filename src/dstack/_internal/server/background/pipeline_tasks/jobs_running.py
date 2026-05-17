@@ -453,6 +453,10 @@ async def _process_running_job(context: _ProcessContext) -> _ProcessResult:
         )
         return result
 
+    if context.job_provisioning_data.backend == BackendType.REGISTERED:
+        result.job_update_map["skip_min_processing_interval"] = True
+        return result
+
     if context.job_model.status == JobStatus.PROVISIONING:
         startup_context = await _prepare_startup_context(context=context, result=result)
         if startup_context is None:

@@ -15,8 +15,7 @@ export const CONSOLE_ROUTES = {
     },
     RUN_DETAILS: {
         TEMPLATE: '/resources/runs/:projectName/:runId',
-        FORMAT: (projectName: string, runId: string) =>
-            buildRoute(CONSOLE_ROUTES.RUN_DETAILS.TEMPLATE, { projectName, runId }),
+        FORMAT: (projectName: string, runId: string) => buildRoute(CONSOLE_ROUTES.RUN_DETAILS.TEMPLATE, { projectName, runId }),
     },
     JOB_DETAILS: {
         TEMPLATE: '/resources/runs/:projectName/:runId/jobs/:jobName',
@@ -68,7 +67,6 @@ export const CONSOLE_ROUTES = {
         FORMAT: (projectName: string, gatewayName: string) =>
             buildRoute(CONSOLE_ROUTES.WORKSPACE_GATEWAY_DETAILS.TEMPLATE, { projectName, gatewayName }),
     },
-    ADMIN_SERVERS: '/admin/servers',
     ADMIN_SETTINGS: '/admin/settings',
     ADMIN_USERS: '/admin/users',
     ADMIN_USER_CREATE: '/admin/users/new',
@@ -78,7 +76,6 @@ export const CONSOLE_ROUTES = {
     },
     ADMIN_EVENTS: '/admin/events',
     ACCOUNT_PROFILE: '/account/profile',
-    ACCOUNT_PROJECTS: '/account/projects',
     ACCOUNT_KEYS: '/account/keys',
     ACCOUNT_BILLING: '/account/billing',
 };

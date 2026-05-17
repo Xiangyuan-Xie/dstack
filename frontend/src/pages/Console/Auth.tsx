@@ -4,21 +4,20 @@ import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { KeyRound, Loader2, LockKeyhole, Server, ShieldCheck, UsersRound } from 'lucide-react';
 import { Button, Field, TextInput } from 'ui';
 
-import { ReactComponent as FeishuIcon } from 'assets/icons/feishu.svg';
 import { useAppDispatch } from 'hooks';
 import { goToUrl } from 'libs';
 import { ROUTES } from 'routes';
 import {
     useEntraAuthorizeMutation,
     useEntraCallbackMutation,
-    useGetEntraInfoQuery,
-    useGetGoogleInfoQuery,
-    useGetNextRedirectMutation,
-    useGetServerTestUsersQuery,
-    useGetOktaInfoQuery,
     useFeishuAuthorizeMutation,
     useFeishuCallbackMutation,
+    useGetEntraInfoQuery,
     useGetFeishuInfoQuery,
+    useGetGoogleInfoQuery,
+    useGetNextRedirectMutation,
+    useGetOktaInfoQuery,
+    useGetServerTestUsersQuery,
     useGoogleAuthorizeMutation,
     useGoogleCallbackMutation,
     useOktaAuthorizeMutation,
@@ -31,6 +30,8 @@ import { getBaseUrl } from 'App/helpers';
 import { removeAuthData, setAuthData } from 'App/slice';
 
 import { CONSOLE_ROUTES } from './constants';
+
+import { ReactComponent as FeishuIcon } from 'assets/icons/feishu.svg';
 
 const AuthShell: React.FC<{ children: React.ReactNode }> = ({ children }) => (
     <main className="flex min-h-screen bg-slate-950 text-white">
@@ -50,7 +51,7 @@ const AuthShell: React.FC<{ children: React.ReactNode }> = ({ children }) => (
                 </div>
                 <h1 className="text-5xl font-bold leading-tight tracking-normal">让团队用一个控制台管理运行任务。</h1>
                 <p className="mt-5 text-base leading-7 text-slate-300">
-                    普通用户提交运行任务，项目管理员审批资源，最高管理员管理集群、项目、运行任务和用户。
+                    普通用户提交运行任务，项目管理员审批资源，最高管理员管理资源池、项目、运行任务和用户。
                 </p>
             </div>
             <div className="grid grid-cols-3 gap-4 text-sm text-slate-300">
@@ -220,7 +221,9 @@ export const LoginPage: React.FC<{ tokenOnly?: boolean }> = ({ tokenOnly }) => {
                                             登录
                                         </Button>
                                     </div>
-                                    <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">{user.description}</p>
+                                    <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                                        {user.description}
+                                    </p>
                                 </div>
                             ))}
                         </div>

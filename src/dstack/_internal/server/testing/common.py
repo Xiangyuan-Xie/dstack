@@ -115,6 +115,7 @@ from dstack._internal.server.models import (
     PlacementGroupModel,
     ProbeModel,
     ProjectModel,
+    ProjectResourcePoolAssignmentModel,
     RepoCredsModel,
     RepoModel,
     RunModel,
@@ -707,6 +708,7 @@ async def create_fleet(
     deleted: bool = False,
     name: Optional[str] = None,
     last_processed_at: datetime = datetime(2023, 1, 2, 3, 4, tzinfo=timezone.utc),
+    assign_to_project: bool = True,
 ) -> FleetModel:
     if fleet_id is None:
         fleet_id = uuid.uuid4()
@@ -727,6 +729,14 @@ async def create_fleet(
         last_processed_at=last_processed_at,
     )
     session.add(fm)
+    if assign_to_project:
+        session.add(
+            ProjectResourcePoolAssignmentModel(
+                project=project,
+                fleet=fm,
+                whole_pool=True,
+            )
+        )
     await session.commit()
     return fm
 

@@ -6,10 +6,10 @@ import {
     getConsoleNavSections,
     getConsoleUserRole,
     getNotificationCenterItems,
-    getRunSummariesFromRequests,
-    getRunRequestStats,
     getPreferredLocale,
     getPreferredThemeMode,
+    getRunRequestStats,
+    getRunSummariesFromRequests,
     isConsoleNavItemActive,
     isLegacyConsolePath,
 } from './utils';
@@ -85,6 +85,7 @@ describe('Console utils', () => {
         expect(labels).not.toContain('审批');
         expect(labels).not.toContain('项目');
         expect(labels).not.toContain('系统设置');
+        expect(labels).not.toContain('Worker 注册');
         expect(labels).not.toContain('用户管理');
         expect(labels).not.toContain('系统事件');
         expect(labels).not.toContain('账单');
@@ -97,9 +98,9 @@ describe('Console utils', () => {
         expect(getConsoleNavSections(role, 'zh').flatMap((section) => section.items.map((item) => item.label))).not.toContain(
             '账单',
         );
-        expect(getConsoleNavSections(role, 'zh', 'sky').flatMap((section) => section.items.map((item) => item.label))).toContain(
-            '账单',
-        );
+        expect(
+            getConsoleNavSections(role, 'zh', 'sky').flatMap((section) => section.items.map((item) => item.label)),
+        ).toContain('账单');
     });
 
     test('builds project admin navigation from current user role without global admin links', () => {
@@ -109,11 +110,13 @@ describe('Console utils', () => {
         const resources = sections.find((section) => section.title === '资源');
         const adminSection = sections.find((section) => section.title === '管理');
 
-        expect(labels).toEqual(expect.arrayContaining(['工作台', '运行任务', '审批', '服务器管理']));
+        expect(labels).toEqual(expect.arrayContaining(['工作台', '运行任务', '审批']));
         expect(resources?.items.map((item) => item.label)).toEqual(['运行任务']);
-        expect(adminSection?.items.map((item) => item.label)).toEqual(['审批', '服务器管理']);
+        expect(adminSection?.items.map((item) => item.label)).toEqual(['审批']);
         expect(labels).not.toContain('项目');
+        expect(labels).not.toContain('服务器管理');
         expect(labels).not.toContain('系统设置');
+        expect(labels).not.toContain('Worker 注册');
         expect(labels).not.toContain('用户管理');
         expect(labels).not.toContain('系统事件');
     });
@@ -124,10 +127,12 @@ describe('Console utils', () => {
         const labels = sections.flatMap((section) => section.items.map((item) => item.label));
         const adminSection = sections.find((section) => section.title === '管理');
 
-        expect(labels).toEqual(expect.arrayContaining(['工作台', '运行任务', '审批', '服务器管理']));
-        expect(adminSection?.items.map((item) => item.label)).toEqual(['审批', '服务器管理']);
+        expect(labels).toEqual(expect.arrayContaining(['工作台', '运行任务', '审批']));
+        expect(adminSection?.items.map((item) => item.label)).toEqual(['审批']);
         expect(labels).not.toContain('项目');
+        expect(labels).not.toContain('服务器管理');
         expect(labels).not.toContain('系统设置');
+        expect(labels).not.toContain('Worker 注册');
         expect(labels).not.toContain('用户管理');
         expect(labels).not.toContain('系统事件');
     });
@@ -139,11 +144,18 @@ describe('Console utils', () => {
         const resources = sections.find((section) => section.title === '资源');
         const adminSection = sections.find((section) => section.title === '管理');
 
-        expect(labels).toEqual(
-            expect.arrayContaining(['运行任务', '集群', '实例', '项目', '审批', '服务器管理', '用户管理', '系统事件']),
-        );
-        expect(resources?.items.map((item) => item.label)).toEqual(['运行任务', '集群', '实例', '资源报价', '模型服务', '存储卷']);
-        expect(adminSection?.items.map((item) => item.label)).toEqual(['审批', '服务器管理', '系统设置', '用户管理', '系统事件']);
+        expect(labels).toEqual(expect.arrayContaining(['运行任务', '资源池', '实例', '项目', '审批', '用户管理', '系统事件']));
+        expect(resources?.items.map((item) => item.label)).toEqual([
+            '运行任务',
+            '资源池',
+            '实例',
+            '资源报价',
+            '模型服务',
+            '存储卷',
+        ]);
+        expect(adminSection?.items.map((item) => item.label)).toEqual(['审批', '系统设置', '用户管理', '系统事件']);
+        expect(labels).not.toContain('Worker 注册');
+        expect(labels).not.toContain('服务器管理');
         expect(labels).not.toContain('高级控制台');
     });
 
@@ -177,6 +189,7 @@ describe('Console utils', () => {
         expect(canAccessConsoleRoute(role, '/resources/fleets')).toBe(false);
         expect(canAccessConsoleRoute(role, '/workspace/projects')).toBe(false);
         expect(canAccessConsoleRoute(role, '/admin/settings')).toBe(false);
+        expect(canAccessConsoleRoute(role, '/admin/workers')).toBe(false);
         expect(canAccessConsoleRoute(role, '/admin/users')).toBe(false);
         expect(canAccessConsoleRoute(role, '/admin/events')).toBe(false);
     });
@@ -186,13 +199,16 @@ describe('Console utils', () => {
         const globalRole = getConsoleUserRole([project], admin);
 
         expect(canAccessConsoleRoute(projectRole, '/admin/approvals')).toBe(true);
-        expect(canAccessConsoleRoute(projectRole, '/admin/servers')).toBe(true);
+        expect(canAccessConsoleRoute(projectRole, '/admin/servers')).toBe(false);
         expect(canAccessConsoleRoute(projectRole, '/admin/settings')).toBe(false);
+        expect(canAccessConsoleRoute(projectRole, '/admin/workers')).toBe(false);
         expect(canAccessConsoleRoute(projectRole, '/admin/users')).toBe(false);
+        expect(canAccessConsoleRoute(projectRole, '/account/projects')).toBe(false);
         expect(canAccessConsoleRoute(projectRole, '/resources/runs')).toBe(true);
         expect(canAccessConsoleRoute(projectRole, '/resources/fleets')).toBe(false);
         expect(canAccessConsoleRoute(globalRole, '/admin/users')).toBe(true);
         expect(canAccessConsoleRoute(globalRole, '/admin/settings')).toBe(true);
+        expect(canAccessConsoleRoute(globalRole, '/admin/workers')).toBe(false);
         expect(canAccessConsoleRoute(globalRole, '/resources/runs')).toBe(true);
         expect(canAccessConsoleRoute(globalRole, '/resources/fleets')).toBe(true);
     });

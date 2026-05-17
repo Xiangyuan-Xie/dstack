@@ -2,24 +2,26 @@ import confirmationReducer from 'ui/confirmation/slice';
 import notificationsReducer from 'ui/notifications/slice';
 import { configureStore } from '@reduxjs/toolkit';
 
+import { adminOAuthApi } from 'services/adminOAuth';
 import { artifactApi } from 'services/artifact';
 import { authApi } from 'services/auth';
-import { adminOAuthApi } from 'services/adminOAuth';
 import { eventApi } from 'services/events';
 import { fleetApi } from 'services/fleet';
 import { gatewayApi } from 'services/gateway';
-import { runRequestApi } from 'services/runRequest';
 import { instanceApi } from 'services/instance';
 import { mainApi } from 'services/mainApi';
 import { projectApi } from 'services/project';
 import { publicKeysApi } from 'services/publicKeys';
 import { repoApi } from 'services/repo';
+import { resourcePoolApi } from 'services/resourcePool';
 import { runApi } from 'services/run';
+import { runRequestApi } from 'services/runRequest';
 import { secretApi } from 'services/secrets';
 import { serverApi } from 'services/server';
 import { templateApi } from 'services/templates';
 import { userApi } from 'services/user';
 import { volumeApi } from 'services/volume';
+import { workerApi } from 'services/worker';
 
 import appReducer from 'App/slice';
 
@@ -47,8 +49,10 @@ export const store = configureStore({
         [repoApi.reducerPath]: repoApi.reducer,
         [mainApi.reducerPath]: mainApi.reducer,
         [publicKeysApi.reducerPath]: publicKeysApi.reducer,
+        [resourcePoolApi.reducerPath]: resourcePoolApi.reducer,
         [eventApi.reducerPath]: eventApi.reducer,
         [templateApi.reducerPath]: templateApi.reducer,
+        [workerApi.reducerPath]: workerApi.reducer,
     },
 
     middleware: (getDefaultMiddleware) =>
@@ -70,10 +74,12 @@ export const store = configureStore({
             .concat(gpuApi.middleware)
             .concat(runRequestApi.middleware)
             .concat(publicKeysApi.middleware)
+            .concat(resourcePoolApi.middleware)
             .concat(eventApi.middleware)
             .concat(repoApi.middleware)
             .concat(templateApi.middleware)
-            .concat(mainApi.middleware),
+            .concat(mainApi.middleware)
+            .concat(workerApi.middleware),
 });
 
 export type RootState = ReturnType<typeof store.getState>;

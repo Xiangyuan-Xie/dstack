@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
 from alembic import command, config
-from sqlalchemy import AsyncAdaptedQueuePool, event
+from sqlalchemy import AsyncAdaptedQueuePool, event, make_url
 from sqlalchemy.engine.interfaces import DBAPIConnection
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -56,6 +57,9 @@ class Database:
     def get_session(self) -> AsyncSession:
         return self.session_maker()
 
+    async def dispose(self) -> None:
+        await self.engine.dispose()
+
 
 def get_new_db() -> Database:
     """
@@ -76,6 +80,27 @@ def get_db() -> Database:
 def override_db(new_db: Database):
     global _db
     _db = new_db
+
+
+async def reset_sqlite_database_for_test_users() -> None:
+    """
+    Test-user mode is for local development and should always start from the current schema.
+    Drop the SQLite file before migrations so edited development migrations cannot leave stale
+    tables behind between server restarts.
+    """
+    if not settings.SERVER_TEST_USERS_ENABLED or _db.dialect_name != "sqlite":
+        return
+
+    database_path = make_url(_db.url).database
+    if database_path is None or database_path in ("", ":memory:"):
+        return
+
+    await _db.dispose()
+    path = Path(database_path)
+    for suffix in ("", "-wal", "-shm"):
+        path.with_name(path.name + suffix).unlink(missing_ok=True)
+
+    override_db(get_new_db())
 
 
 async def migrate():

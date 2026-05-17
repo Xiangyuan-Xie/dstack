@@ -25,7 +25,12 @@ from dstack._internal.server import settings
 from dstack._internal.server.background.pipeline_tasks import start_pipeline_tasks
 from dstack._internal.server.background.scheduled_tasks import start_scheduled_tasks
 from dstack._internal.server.background.scheduled_tasks.probes import PROBES_SCHEDULER
-from dstack._internal.server.db import get_db, get_session_ctx, migrate
+from dstack._internal.server.db import (
+    get_db,
+    get_session_ctx,
+    migrate,
+    reset_sqlite_database_for_test_users,
+)
 from dstack._internal.server.routers import (
     admin_oauth,
     auth,
@@ -45,6 +50,7 @@ from dstack._internal.server.routers import (
     prometheus,
     public_keys,
     repos,
+    resource_pools,
     run_requests,
     runs,
     secrets,
@@ -53,6 +59,7 @@ from dstack._internal.server.routers import (
     templates,
     users,
     volumes,
+    workers,
 )
 from dstack._internal.server.services.config import ServerConfigManager
 from dstack._internal.server.services.gateways import gateway_connections_pool
@@ -129,6 +136,7 @@ async def lifespan(app: FastAPI):
         )
     server_executor = ThreadPoolExecutor(max_workers=settings.SERVER_EXECUTOR_MAX_WORKERS)
     asyncio.get_running_loop().set_default_executor(server_executor)
+    await reset_sqlite_database_for_test_users()
     await migrate()
     _print_dstack_logo()
     if not check_required_ssh_version():
@@ -254,6 +262,8 @@ def register_routes(app: FastAPI, ui: bool = True):
     app.include_router(backends.project_router)
     app.include_router(fleets.root_router)
     app.include_router(fleets.project_router)
+    app.include_router(resource_pools.root_router)
+    app.include_router(resource_pools.project_router)
     app.include_router(run_requests.root_router)
     app.include_router(run_requests.router)
     app.include_router(instances.root_router)
@@ -278,6 +288,8 @@ def register_routes(app: FastAPI, ui: bool = True):
     app.include_router(imports.project_router)
     app.include_router(sshproxy.router)
     app.include_router(public_keys.router)
+    app.include_router(workers.admin_router)
+    app.include_router(workers.worker_router)
 
     @app.exception_handler(ForbiddenError)
     async def forbidden_error_handler(request: Request, exc: ForbiddenError):

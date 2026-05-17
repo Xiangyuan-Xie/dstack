@@ -44,7 +44,7 @@ from dstack._internal.core.models.runs import (
 )
 from dstack._internal.core.models.users import GlobalRole, ProjectRole
 from dstack._internal.core.models.volumes import InstanceMountPoint, MountPoint
-from dstack._internal.server.models import JobModel, RunModel
+from dstack._internal.server.models import JobModel, ProjectResourcePoolAssignmentModel, RunModel
 from dstack._internal.server.schemas.runs import ApplyRunPlanRequest
 from dstack._internal.server.services.projects import add_project_member
 from dstack._internal.server.services.resources import (
@@ -1797,6 +1797,14 @@ class TestGetRunPlan:
             importer_projects=[importer_project],
             exported_fleets=[fleet],
         )
+        session.add(
+            ProjectResourcePoolAssignmentModel(
+                project=importer_project,
+                fleet=fleet,
+                whole_pool=True,
+            )
+        )
+        await session.commit()
 
         run_spec = {"configuration": configuration}
         body = {"run_spec": run_spec}
@@ -1933,6 +1941,21 @@ class TestGetRunPlan:
             importer_projects=[importer],
             exported_fleets=[fleet_b],
         )
+        session.add_all(
+            [
+                ProjectResourcePoolAssignmentModel(
+                    project=importer,
+                    fleet=fleet_a,
+                    whole_pool=True,
+                ),
+                ProjectResourcePoolAssignmentModel(
+                    project=importer,
+                    fleet=fleet_b,
+                    whole_pool=True,
+                ),
+            ]
+        )
+        await session.commit()
 
         run_spec = {
             "configuration": {

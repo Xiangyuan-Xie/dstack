@@ -39,6 +39,7 @@ from dstack._internal.server.models import (
     InstanceModel,
     JobModel,
     PlacementGroupModel,
+    ProjectResourcePoolAssignmentModel,
     VolumeAttachmentModel,
 )
 from dstack._internal.server.services.docker import ImageConfig
@@ -1107,6 +1108,14 @@ class TestJobSubmittedWorker:
             importer_projects=[importer_project],
             exported_fleets=[fleet],
         )
+        session.add(
+            ProjectResourcePoolAssignmentModel(
+                project=importer_project,
+                fleet=fleet,
+                whole_pool=True,
+            )
+        )
+        await session.commit()
         run = await create_run(
             session=session,
             project=importer_project,

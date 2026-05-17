@@ -37,7 +37,7 @@
         "dashboard": "工作台",
         "requests": "审批",
         "runs": "运行任务",
-        "fleets": "集群",
+        "fleets": "资源池",
         "instances": "实例",
         "projects": "项目",
         "settings": "系统设置",
