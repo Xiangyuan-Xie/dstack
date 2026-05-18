@@ -194,14 +194,7 @@ export const projectApi = createApi({
             providesTags: () => ['ProjectRepos'],
         }),
 
-        updateProject: builder.mutation<
-            IProject,
-            {
-                project_name: string;
-                new_project_name?: string;
-                is_public?: boolean;
-            }
-        >({
+        updateProject: builder.mutation<IProject, TUpdateProjectParams>({
             query: ({ project_name, new_project_name, ...body }) => ({
                 url: API.PROJECTS.UPDATE(project_name),
                 method: 'POST',

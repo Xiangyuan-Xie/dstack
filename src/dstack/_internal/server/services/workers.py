@@ -12,6 +12,7 @@ from dstack._internal.core.errors import ForbiddenError, ResourceNotExistsError,
 from dstack._internal.core.models.backends.base import BackendType
 from dstack._internal.core.models.instances import (
     Disk,
+    Gpu,
     InstanceAvailability,
     InstanceOfferWithAvailability,
     InstanceRuntime,
@@ -26,11 +27,14 @@ from dstack._internal.server.models import (
     FleetModel,
     InstanceModel,
     JobModel,
+    RegisteredWorkerGpuAllocationModel,
     RegisteredWorkerModel,
+    RunModel,
     UserModel,
     WorkerRegistrationTokenModel,
 )
 from dstack._internal.server.schemas.workers import (
+    DEFAULT_WORKER_TOTAL_BLOCKS,
     RegisteredWorkerResources,
     RegisteredWorkerResourceUsage,
     RegisterWorkerRequest,
@@ -38,9 +42,14 @@ from dstack._internal.server.schemas.workers import (
     WorkerJobReportRequest,
     WorkerRegistrationToken,
 )
-from dstack._internal.server.services.jobs import switch_job_status
+from dstack._internal.server.services.jobs import (
+    get_job_runtime_data,
+    get_job_spec,
+    switch_job_status,
+)
 from dstack._internal.server.services.users import get_token_hash
 from dstack._internal.utils.common import get_current_datetime
+from dstack._internal.utils.gpu import convert_nvidia_gpu_name
 
 
 def worker_registration_token_model_to_schema(
@@ -134,6 +143,9 @@ async def register_worker(
     )
     instance_type = _resources_to_instance_type(body.resources)
     offer = _resources_to_offer(body.resources, instance_type)
+    total_blocks = body.total_blocks
+    if body.resources.gpus and body.total_blocks == DEFAULT_WORKER_TOTAL_BLOCKS:
+        total_blocks = len(body.resources.gpus)
     job_provisioning_data = JobProvisioningData(
         backend=BackendType.REGISTERED,
         instance_type=instance_type,
@@ -164,7 +176,7 @@ async def register_worker(
         instance_model = InstanceModel(
             name=body.worker_name,
             instance_num=instance_num,
-            project=fleet_model.project,
+            project=None,
             fleet=fleet_model,
             status=InstanceStatus.IDLE,
             unreachable=False,
@@ -177,7 +189,7 @@ async def register_worker(
             job_provisioning_data=job_provisioning_data.json(),
             termination_policy=TerminationPolicy.DONT_DESTROY,
             termination_idle_time=0,
-            total_blocks=body.total_blocks,
+            total_blocks=total_blocks,
             busy_blocks=0,
             volume_attachments=[],
         )
@@ -196,11 +208,12 @@ async def register_worker(
         instance_model.backend = BackendType.REGISTERED
         instance_model.offer = offer.json()
         instance_model.job_provisioning_data = job_provisioning_data.json()
-        instance_model.total_blocks = body.total_blocks
+        instance_model.total_blocks = total_blocks
     worker_model.hostname = body.hostname
     worker_model.labels = json.dumps(body.labels)
     worker_model.last_heartbeat_at = now
     worker_model.version = body.version
+    worker_model.gpus = json.dumps([_worker_gpu_to_payload(gpu) for gpu in body.resources.gpus])
     await session.commit()
     await session.refresh(worker_model, ["fleet", "instance"])
     return worker_model
@@ -248,13 +261,25 @@ async def poll_worker_assignments(
     worker_model = await _get_worker_for_token(session, token_model, worker_id)
     res = await session.execute(
         select(JobModel)
+        .join(JobModel.run)
         .where(
             JobModel.instance_id == worker_model.instance_id,
             JobModel.status.in_([JobStatus.PROVISIONING, JobStatus.PULLING, JobStatus.RUNNING]),
         )
+        .options(joinedload(JobModel.run).joinedload(RunModel.user))
         .order_by(JobModel.submitted_at.asc(), JobModel.id)
     )
-    return [WorkerAssignment(job_id=job.id) for job in res.scalars().unique().all()]
+    jobs = list(res.scalars().unique().all())
+    allocations_by_job = await _load_active_gpu_allocations_by_job(
+        session, [job.id for job in jobs]
+    )
+    return [
+        _job_to_worker_assignment(
+            job_model=job,
+            gpu_uuids=allocations_by_job.get(job.id, []),
+        )
+        for job in jobs
+    ]
 
 
 async def report_worker_job(
@@ -294,8 +319,27 @@ async def report_worker_job(
         switch_job_status(session, job_model, body.status)
     else:
         raise ServerClientError(f"Unsupported worker job status: {body.status}")
+    if body.status in [
+        JobStatus.DONE,
+        JobStatus.FAILED,
+        JobStatus.TERMINATED,
+        JobStatus.ABORTED,
+    ]:
+        await release_job_gpu_allocations(session=session, job_id=job_model.id)
     await session.commit()
     return job_model
+
+
+async def release_job_gpu_allocations(session: AsyncSession, job_id: UUID) -> None:
+    now = get_current_datetime()
+    res = await session.execute(
+        select(RegisteredWorkerGpuAllocationModel).where(
+            RegisteredWorkerGpuAllocationModel.job_id == job_id,
+            RegisteredWorkerGpuAllocationModel.released_at.is_(None),
+        )
+    )
+    for allocation in res.scalars().all():
+        allocation.released_at = now
 
 
 async def _get_worker_for_token(
@@ -327,7 +371,7 @@ async def _get_registered_fleet_by_name(
             FleetModel.name == fleet_name,
             FleetModel.deleted == False,
         )
-        .options(joinedload(FleetModel.instances), joinedload(FleetModel.project))
+        .options(joinedload(FleetModel.instances))
         .limit(2)
     )
     fleet_models = list(res.scalars().unique().all())
@@ -349,6 +393,68 @@ def _resources_to_instance_type(resources: RegisteredWorkerResources) -> Instanc
             disk=Disk(size_mib=resources.disk_mib),
         ),
     )
+
+
+async def _load_active_gpu_allocations_by_job(
+    session: AsyncSession,
+    job_ids: list[UUID],
+) -> dict[UUID, list[str]]:
+    if not job_ids:
+        return {}
+    res = await session.execute(
+        select(
+            RegisteredWorkerGpuAllocationModel.job_id,
+            RegisteredWorkerGpuAllocationModel.gpu_uuid,
+        )
+        .where(
+            RegisteredWorkerGpuAllocationModel.job_id.in_(job_ids),
+            RegisteredWorkerGpuAllocationModel.released_at.is_(None),
+        )
+        .order_by(RegisteredWorkerGpuAllocationModel.created_at.asc())
+    )
+    gpu_uuids_by_job: dict[UUID, list[str]] = {}
+    for job_id, gpu_uuid in res.all():
+        gpu_uuids_by_job.setdefault(job_id, []).append(gpu_uuid)
+    return gpu_uuids_by_job
+
+
+def _job_to_worker_assignment(job_model: JobModel, gpu_uuids: list[str]) -> WorkerAssignment:
+    job_spec = get_job_spec(job_model)
+    runtime_data = get_job_runtime_data(job_model)
+    resources = job_spec.requirements.resources
+    memory_gib = float(runtime_data.memory) if runtime_data and runtime_data.memory else None
+    if memory_gib is None and resources.memory is not None:
+        memory_gib = float(resources.memory.max or resources.memory.min or 0) or None
+    cpu = runtime_data.cpu if runtime_data else None
+    if cpu is None and resources.cpu is not None:
+        cpu = float(resources.cpu.count.max or resources.cpu.count.min or 0) or None
+    shm_size_gib = float(resources.shm_size) if resources.shm_size is not None else None
+    return WorkerAssignment(
+        job_id=job_model.id,
+        run_name=job_model.run_name,
+        image=job_spec.image_name,
+        command=job_spec.commands,
+        env=job_spec.env,
+        cpu=cpu,
+        memory_gib=memory_gib,
+        shm_size_gib=shm_size_gib,
+        gpu_uuids=gpu_uuids,
+        username=job_model.run.user.name,
+        workspace_mount_path="/workspace",
+    )
+
+
+def _worker_gpu_to_payload(gpu: Gpu) -> dict:
+    name = gpu.name
+    if gpu.vendor and gpu.vendor.value == "nvidia":
+        name = convert_nvidia_gpu_name(name)
+    return {
+        "uuid": gpu.uuid,
+        "index": gpu.index,
+        "name": name,
+        "memory_mib": gpu.memory_mib,
+        "vendor": gpu.vendor.value if gpu.vendor is not None else None,
+    }
 
 
 def _resources_to_offer(

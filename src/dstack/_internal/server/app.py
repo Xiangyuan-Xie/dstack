@@ -18,7 +18,6 @@ from prometheus_client import Counter, Histogram
 from dstack._internal import settings as core_settings
 from dstack._internal.cli.utils.common import console
 from dstack._internal.core.errors import ForbiddenError, ServerClientError
-from dstack._internal.core.services.configs import update_default_project
 from dstack._internal.proxy.lib.deps import get_injector_from_app
 from dstack._internal.proxy.lib.routers import model_proxy
 from dstack._internal.server import settings
@@ -65,10 +64,6 @@ from dstack._internal.server.routers import (
 from dstack._internal.server.services.config import ServerConfigManager
 from dstack._internal.server.services.gateways import gateway_connections_pool
 from dstack._internal.server.services.locking import advisory_lock_ctx
-from dstack._internal.server.services.projects import (
-    get_or_create_default_project,
-    get_project_model_by_name_or_error,
-)
 from dstack._internal.server.services.proxy.deps import ServerProxyDependencyInjector
 from dstack._internal.server.services.proxy.routers import service_proxy
 from dstack._internal.server.services.storage import init_default_storage
@@ -77,11 +72,8 @@ from dstack._internal.server.services.users import (
     get_or_create_admin_user,
 )
 from dstack._internal.server.settings import (
-    DEFAULT_PROJECT_NAME,
-    DO_NOT_UPDATE_DEFAULT_PROJECT,
     SERVER_CONFIG_FILE_PATH,
     SERVER_URL,
-    UPDATE_DEFAULT_PROJECT,
 )
 from dstack._internal.server.utils import sentry_utils
 from dstack._internal.server.utils.logging import configure_logging
@@ -156,16 +148,8 @@ async def lifespan(app: FastAPI):
             resource="server_init",
         ):
             admin, _ = await get_or_create_admin_user(session=session)
-            await get_or_create_default_project(
-                session=session,
-                user=admin,
-            )
             if settings.SERVER_TEST_USERS_ENABLED:
-                default_project = await get_project_model_by_name_or_error(
-                    session=session,
-                    project_name=DEFAULT_PROJECT_NAME,
-                )
-                await ensure_server_test_users(session=session, project=default_project)
+                await ensure_server_test_users(session=session)
             if server_config_manager is not None:
                 server_config_dir = _get_server_config_dir()
                 if not server_config_loaded:
@@ -181,14 +165,6 @@ async def lifespan(app: FastAPI):
                         {"show_path": False},
                     )
                     await server_config_manager.apply_config(session=session, owner=admin)
-
-    update_default_project(
-        project_name=DEFAULT_PROJECT_NAME,
-        url=SERVER_URL,
-        token=admin.token.get_plaintext_or_error(),
-        yes=UPDATE_DEFAULT_PROJECT,
-        no=DO_NOT_UPDATE_DEFAULT_PROJECT,
-    )
     if settings.SERVER_S3_BUCKET is not None or settings.SERVER_GCS_BUCKET is not None:
         init_default_storage()
     scheduler = None

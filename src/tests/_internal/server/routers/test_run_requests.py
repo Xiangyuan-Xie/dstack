@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from unittest.mock import patch
 from uuid import UUID
@@ -35,6 +36,30 @@ def _request_body(name: str = "train-job") -> dict:
                 "disk": "200GB",
             },
             "max_duration": "2h",
+        }
+    }
+
+
+def _auto_approvable_request_body(name: str = "cpu-job") -> dict:
+    return {
+        "request": {
+            "name": name,
+            "image": "ubuntu:22.04",
+            "entrypoint": "/bin/bash",
+            "working_dir": "/workspace",
+            "commands": ["echo hello"],
+            "env": {"MODEL": "qwen"},
+            "ports": [8080, "8081:81"],
+            "nodes": 1,
+            "resources": {
+                "cpu": "4",
+                "memory": "16GB",
+                "gpu": "0",
+                "disk": "200GB",
+            },
+            "max_duration": "2h",
+            "privileged": True,
+            "volumes": ["/data:/data"],
         }
     }
 
@@ -124,6 +149,139 @@ class TestRunRequests:
         )
         assert manager_list.status_code == 200, manager_list.json()
         assert [item["id"] for item in manager_list.json()] == [created["id"]]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_auto_approves_matching_cpu_only_request_and_forwards_startup_fields(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        project, applicant, *_ = await _create_project_with_users(session)
+        project.auto_approval_enabled = True
+        project.auto_approval_max_cpu = 4
+        project.auto_approval_max_memory_gib = 16
+        project.auto_approval_max_duration_hours = 2
+        await session.commit()
+
+        response = await client.post(
+            f"/api/project/{project.name}/run_requests/create",
+            headers=get_auth_headers(applicant.token),
+            json=_auto_approvable_request_body(),
+        )
+
+        assert response.status_code == 200, response.json()
+        created = response.json()
+        assert created["status"] == "approved"
+        assert created["reviewed_by"] == applicant.name
+        assert created["run_id"] is not None
+
+        run_model = await session.get(RunModel, UUID(created["run_id"]))
+        assert run_model is not None
+        assert run_model.user_id == applicant.id
+        run_spec = json.loads(run_model.run_spec)
+        configuration = run_spec["configuration"]
+        assert configuration["type"] == "task"
+        assert configuration["entrypoint"] == "/bin/bash"
+        assert configuration["working_dir"] == "/workspace"
+        assert configuration["privileged"] is True
+        assert configuration["ports"] == [
+            {"local_port": 8080, "container_port": 8080},
+            {"local_port": 8081, "container_port": 81},
+        ]
+        assert configuration["volumes"][0]["instance_path"] == "/data"
+        assert configuration["volumes"][0]["path"] == "/data"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_auto_approval_policy_defaults_to_pending(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        project, applicant, *_ = await _create_project_with_users(session)
+
+        response = await client.post(
+            f"/api/project/{project.name}/run_requests/create",
+            headers=get_auth_headers(applicant.token),
+            json=_auto_approvable_request_body(),
+        )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["status"] == "pending"
+        assert response.json()["run_id"] is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    @pytest.mark.parametrize(
+        ("request_patch", "expected_status"),
+        [
+            (
+                {"resources": {"cpu": "5", "memory": "16GB", "gpu": "0", "disk": "200GB"}},
+                "pending",
+            ),
+            (
+                {"resources": {"cpu": "4", "memory": "17GB", "gpu": "0", "disk": "200GB"}},
+                "pending",
+            ),
+            (
+                {"resources": {"cpu": "4", "memory": "16GB", "gpu": "1", "disk": "200GB"}},
+                "pending",
+            ),
+            ({"max_duration": "3h"}, "pending"),
+            ({"max_duration": None}, "pending"),
+        ],
+    )
+    async def test_auto_approval_leaves_non_matching_requests_pending(
+        self,
+        test_db,
+        session: AsyncSession,
+        client: AsyncClient,
+        request_patch: dict,
+        expected_status: str,
+    ):
+        project, applicant, *_ = await _create_project_with_users(session)
+        project.auto_approval_enabled = True
+        project.auto_approval_max_cpu = 4
+        project.auto_approval_max_memory_gib = 16
+        project.auto_approval_max_duration_hours = 2
+        await session.commit()
+        body = _auto_approvable_request_body()
+        body["request"].update(request_patch)
+
+        response = await client.post(
+            f"/api/project/{project.name}/run_requests/create",
+            headers=get_auth_headers(applicant.token),
+            json=body,
+        )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["status"] == expected_status
+        assert response.json()["run_id"] is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_auto_approval_failure_marks_request_failed(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        project, applicant, *_ = await _create_project_with_users(session)
+        project.auto_approval_enabled = True
+        project.auto_approval_max_cpu = 4
+        project.auto_approval_max_memory_gib = 16
+        project.auto_approval_max_duration_hours = 2
+        await session.commit()
+
+        with patch(
+            "dstack._internal.server.services.run_requests.runs_services.apply_plan",
+            side_effect=RuntimeError("auto boom"),
+        ):
+            response = await client.post(
+                f"/api/project/{project.name}/run_requests/create",
+                headers=get_auth_headers(applicant.token),
+                json=_auto_approvable_request_body(),
+            )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["status"] == "failed"
+        assert response.json()["run_id"] is None
+        assert response.json()["reviewed_by"] == applicant.name
+        assert response.json()["review_message"] == "auto boom"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)

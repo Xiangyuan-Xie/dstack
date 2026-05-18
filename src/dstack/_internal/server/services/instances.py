@@ -48,6 +48,8 @@ from dstack._internal.server.models import (
     InstanceHealthCheckModel,
     InstanceModel,
     ProjectModel,
+    ProjectResourceInstanceAssignmentModel,
+    ProjectResourcePoolAssignmentModel,
     UserModel,
 )
 from dstack._internal.server.schemas.health.dcgm import DCGMHealthResponse
@@ -225,7 +227,7 @@ async def get_instance(
 def instance_model_to_instance(instance_model: InstanceModel) -> Instance:
     instance = Instance(
         id=instance_model.id,
-        project_name=instance_model.project.name,
+        project_name=instance_model.project.name if instance_model.project else None,
         name=instance_model.name,
         fleet_id=instance_model.fleet_id,
         fleet_name=instance_model.fleet.name if instance_model.fleet else None,
@@ -547,17 +549,19 @@ async def get_pool_instances(
     session: AsyncSession,
     project: ProjectModel,
 ) -> List[InstanceModel]:
+    is_instance_in_authorized_pool = exists().where(
+        ProjectResourcePoolAssignmentModel.project_id == project.id,
+        ProjectResourcePoolAssignmentModel.fleet_id == InstanceModel.fleet_id,
+        ProjectResourcePoolAssignmentModel.whole_pool == True,
+    )
+    is_instance_authorized = exists().where(
+        ProjectResourceInstanceAssignmentModel.project_id == project.id,
+        ProjectResourceInstanceAssignmentModel.instance_id == InstanceModel.id,
+    )
     res = await session.execute(
         select(InstanceModel)
         .where(
-            or_(
-                InstanceModel.project_id == project.id,
-                exists().where(
-                    ImportModel.project_id == project.id,
-                    ImportModel.export_id == ExportedFleetModel.export_id,
-                    ExportedFleetModel.fleet_id == InstanceModel.fleet_id,
-                ),
-            ),
+            or_(is_instance_in_authorized_pool, is_instance_authorized),
             InstanceModel.deleted == False,
         )
         .options(joinedload(InstanceModel.fleet))

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import uuid
 from datetime import timedelta
 from typing import cast
@@ -15,9 +16,10 @@ from dstack._internal.core.models.common import RegistryAuth
 from dstack._internal.core.models.configurations import TaskConfiguration
 from dstack._internal.core.models.envs import Env
 from dstack._internal.core.models.fleets import FleetNodesSpec, InstanceGroupPlacement
-from dstack._internal.core.models.instances import InstanceStatus
+from dstack._internal.core.models.instances import Gpu, InstanceStatus
 from dstack._internal.core.models.placement import PlacementGroup
 from dstack._internal.core.models.profiles import Profile
+from dstack._internal.core.models.resources import GPUSpec, Range, ResourcesSpec
 from dstack._internal.core.models.runs import JobStatus, JobTerminationReason
 from dstack._internal.core.models.users import GlobalRole
 from dstack._internal.core.models.volumes import (
@@ -40,7 +42,10 @@ from dstack._internal.server.models import (
     JobModel,
     PlacementGroupModel,
     ProjectResourcePoolAssignmentModel,
+    RegisteredWorkerGpuAllocationModel,
+    RegisteredWorkerModel,
     VolumeAttachmentModel,
+    WorkerRegistrationTokenModel,
 )
 from dstack._internal.server.services.docker import ImageConfig
 from dstack._internal.server.services.jobs.configurators.base import JobConfigurator
@@ -1074,6 +1079,180 @@ class TestJobSubmittedWorker:
         assert job.lock_expires_at is None
         assert instance.status == InstanceStatus.BUSY
         assert instance.busy_blocks == 1
+
+    async def test_assigns_registered_worker_gpu_uuid_to_job(
+        self, test_db, session: AsyncSession, worker: JobSubmittedWorker
+    ):
+        project = await create_project(session=session)
+        user = await create_user(session=session)
+        repo = await create_repo(session=session, project_id=project.id)
+        fleet = await create_fleet(session=session, project=project)
+        offer = get_instance_offer_with_availability(
+            backend=BackendType.REGISTERED,
+            gpu_count=0,
+            cpu_count=16,
+            memory_gib=128,
+        )
+        offer.instance.resources.gpus = [
+            Gpu(uuid="GPU-111", index=0, name="RTX4090D", memory_mib=24564),
+            Gpu(uuid="GPU-222", index=1, name="RTX4090D", memory_mib=24564),
+        ]
+        provisioning_data = get_job_provisioning_data(
+            dockerized=True,
+            backend=BackendType.REGISTERED,
+            instance_type=offer.instance,
+        )
+        instance = await create_instance(
+            session=session,
+            project=project,
+            fleet=fleet,
+            status=InstanceStatus.IDLE,
+            backend=BackendType.REGISTERED,
+            offer=offer,
+            job_provisioning_data=provisioning_data,
+            total_blocks=2,
+            name="gpu-box-1",
+        )
+        token = WorkerRegistrationTokenModel(
+            created_by=user,
+            fleet_name=fleet.name,
+            token_hash="worker-token-hash",
+            enabled=True,
+        )
+        session.add(token)
+        await session.flush()
+        worker_model = RegisteredWorkerModel(
+            registration_token=token,
+            fleet=fleet,
+            instance=instance,
+            name="gpu-box-1",
+            gpus=(
+                '[{"uuid":"GPU-111","index":0,"name":"RTX4090D","memory_mib":24564,'
+                '"vendor":"nvidia"},{"uuid":"GPU-222","index":1,"name":"RTX4090D",'
+                '"memory_mib":24564,"vendor":"nvidia"}]'
+            ),
+        )
+        session.add(worker_model)
+        run_spec = get_run_spec(
+            run_name="test-run",
+            repo_id=repo.name,
+            configuration=TaskConfiguration(
+                image="ubuntu",
+                resources=ResourcesSpec(gpu=GPUSpec(count=Range[int](min=1, max=1))),
+            ),
+        )
+        run = await create_run(
+            session=session, project=project, repo=repo, user=user, run_spec=run_spec
+        )
+        job = await create_job(session=session, run=run)
+
+        await _process_job(session=session, worker=worker, job_model=job)
+
+        job = await _get_job(session, job.id)
+        allocation = (
+            await session.execute(select(RegisteredWorkerGpuAllocationModel))
+        ).scalar_one()
+        assert allocation.gpu_uuid == "GPU-111"
+        assert job.job_runtime_data is not None
+        assert json.loads(job.job_runtime_data)["gpu_uuids"] == ["GPU-111"]
+
+    async def test_skips_registered_worker_without_free_gpu_uuid(
+        self, test_db, session: AsyncSession, worker: JobSubmittedWorker
+    ):
+        project = await create_project(session=session)
+        user = await create_user(session=session)
+        repo = await create_repo(session=session, project_id=project.id)
+        fleet = await create_fleet(session=session, project=project)
+        offer = get_instance_offer_with_availability(
+            backend=BackendType.REGISTERED,
+            gpu_count=0,
+            cpu_count=16,
+            memory_gib=128,
+        )
+        offer.instance.resources.gpus = [
+            Gpu(uuid="GPU-111", index=0, name="RTX4090D", memory_mib=24564),
+            Gpu(uuid="GPU-222", index=1, name="RTX4090D", memory_mib=24564),
+        ]
+        provisioning_data = get_job_provisioning_data(
+            dockerized=True,
+            backend=BackendType.REGISTERED,
+            instance_type=offer.instance,
+        )
+        instance = await create_instance(
+            session=session,
+            project=project,
+            fleet=fleet,
+            status=InstanceStatus.IDLE,
+            backend=BackendType.REGISTERED,
+            offer=offer,
+            job_provisioning_data=provisioning_data,
+            total_blocks=2,
+            busy_blocks=0,
+            name="gpu-box-1",
+        )
+        token = WorkerRegistrationTokenModel(
+            created_by=user,
+            fleet_name=fleet.name,
+            token_hash="worker-token-hash",
+            enabled=True,
+        )
+        session.add(token)
+        await session.flush()
+        worker_model = RegisteredWorkerModel(
+            registration_token=token,
+            fleet=fleet,
+            instance=instance,
+            name="gpu-box-1",
+            gpus=(
+                '[{"uuid":"GPU-111","index":0,"name":"RTX4090D","memory_mib":24564,'
+                '"vendor":"nvidia"},{"uuid":"GPU-222","index":1,"name":"RTX4090D",'
+                '"memory_mib":24564,"vendor":"nvidia"}]'
+            ),
+        )
+        session.add(worker_model)
+        blocking_run = await create_run(session=session, project=project, repo=repo, user=user)
+        blocking_job = await create_job(
+            session=session,
+            run=blocking_run,
+            status=JobStatus.RUNNING,
+            instance=instance,
+            instance_assigned=True,
+        )
+        session.add_all(
+            [
+                RegisteredWorkerGpuAllocationModel(
+                    worker=worker_model,
+                    instance=instance,
+                    job=blocking_job,
+                    gpu_uuid="GPU-111",
+                ),
+                RegisteredWorkerGpuAllocationModel(
+                    worker=worker_model,
+                    instance=instance,
+                    job=blocking_job,
+                    gpu_uuid="GPU-222",
+                ),
+            ]
+        )
+        run_spec = get_run_spec(
+            run_name="test-run",
+            repo_id=repo.name,
+            configuration=TaskConfiguration(
+                image="ubuntu",
+                resources=ResourcesSpec(gpu=GPUSpec(count=Range[int](min=1, max=1))),
+            ),
+        )
+        run = await create_run(
+            session=session, project=project, repo=repo, user=user, run_spec=run_spec
+        )
+        job = await create_job(session=session, run=run)
+
+        await _process_job(session=session, worker=worker, job_model=job)
+
+        job = await _get_job(session, job.id)
+        assert job.instance is None
+        assert job.lock_token is None
+        assert job.status == JobStatus.SUBMITTED
 
     async def test_assigns_job_to_imported_fleet(
         self, test_db, session: AsyncSession, worker: JobSubmittedWorker

@@ -2,13 +2,15 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
+from pydantic import parse_obj_as
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from dstack._internal.core.errors import ForbiddenError, ResourceNotExistsError, ServerClientError
 from dstack._internal.core.models.configurations import TaskConfiguration
-from dstack._internal.core.models.profiles import Profile
+from dstack._internal.core.models.profiles import Profile, parse_duration
+from dstack._internal.core.models.resources import CPUSpec, Memory
 from dstack._internal.core.models.runs import ApplyRunPlanInput, RunSpec
 from dstack._internal.core.models.users import GlobalRole, ProjectRole
 from dstack._internal.server.models import (
@@ -31,6 +33,7 @@ async def create_run_request(
     project: ProjectModel,
     applicant: UserModel,
     request: RunRequestSpec,
+    pipeline_hinter: Optional[PipelineHinterProtocol] = None,
 ) -> RunRequest:
     request_model = RunRequestModel(
         project_id=project.id,
@@ -47,6 +50,14 @@ async def create_run_request(
         project=project,
         request_id=request_model.id,
     )
+    if _should_auto_approve(project=project, request=request):
+        return await _submit_request_run(
+            session=session,
+            project=project,
+            reviewer=applicant,
+            request_model=request_model,
+            pipeline_hinter=pipeline_hinter,
+        )
     return run_request_model_to_schema(request_model)
 
 
@@ -318,6 +329,7 @@ async def _submit_request_run(
         )
         request_model.status = RunRequestStatus.FAILED
         request_model.reviewer_id = reviewer_id
+        request_model.reviewer = reviewer
         request_model.reviewed_at = get_current_datetime()
         request_model.review_message = str(exc) or exc.__class__.__name__
         await session.commit()
@@ -360,6 +372,10 @@ def _build_run_spec(request: RunRequestSpec, applicant: UserModel) -> RunSpec:
         resources=request.resources,
         max_duration=request.max_duration,
         fleets=request.fleets,
+        entrypoint=request.entrypoint,
+        working_dir=request.working_dir,
+        volumes=request.volumes,
+        privileged=request.privileged,
     )
     return RunSpec(
         run_name=request.name,
@@ -420,6 +436,42 @@ def _can_review_run_requests(user: UserModel, project: ProjectModel) -> bool:
         ProjectRole.ADMIN,
         ProjectRole.MANAGER,
     }
+
+
+def _should_auto_approve(project: ProjectModel, request: RunRequestSpec) -> bool:
+    if not project.auto_approval_enabled:
+        return False
+    if request.max_duration is None:
+        return False
+    if parse_duration(request.max_duration) > project.auto_approval_max_duration_hours * 3600:
+        return False
+    if _requested_gpu_count(request) != 0:
+        return False
+    return (
+        _requested_cpu_count(request) <= project.auto_approval_max_cpu
+        and _requested_memory_gib(request) <= project.auto_approval_max_memory_gib
+    )
+
+
+def _requested_cpu_count(request: RunRequestSpec) -> int:
+    cpu = parse_obj_as(CPUSpec, request.resources.cpu)
+    if cpu.count.max is not None:
+        return int(cpu.count.max)
+    return int(cpu.count.min or 0)
+
+
+def _requested_memory_gib(request: RunRequestSpec) -> float:
+    memory = request.resources.memory.max or request.resources.memory.min or Memory.parse("0GB")
+    return float(memory)
+
+
+def _requested_gpu_count(request: RunRequestSpec) -> int:
+    if request.resources.gpu is None:
+        return 0
+    gpu_count = request.resources.gpu.count.max
+    if gpu_count is None:
+        gpu_count = request.resources.gpu.count.min
+    return int(gpu_count or 0)
 
 
 def _get_visible_run_request_filters(user: UserModel, include_all: bool) -> list:

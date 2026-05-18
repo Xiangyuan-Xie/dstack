@@ -14,6 +14,7 @@ from dstack._internal.server.models import (
     FleetModel,
     InstanceModel,
     JobModel,
+    RegisteredWorkerGpuAllocationModel,
     RegisteredWorkerModel,
     WorkerRegistrationTokenModel,
 )
@@ -114,6 +115,67 @@ class TestRegisteredWorkers:
         offer = InstanceOfferWithAvailability.__response__.parse_raw(instance.offer)
         assert [gpu.name for gpu in offer.instance.resources.gpus] == ["NVIDIA A100"]
         assert [gpu.memory_mib for gpu in offer.instance.resources.gpus] == [81920]
+
+    async def test_worker_registers_gpu_uuids_for_single_card_assignment(
+        self, session: AsyncSession, client: AsyncClient
+    ):
+        admin = await create_user(session, global_role=GlobalRole.ADMIN)
+        project = await create_project(session, name="main-project", owner=admin)
+        await create_fleet(session=session, project=project, name="lab-workers")
+        token = (
+            await client.post(
+                "/api/admin/worker_tokens/create",
+                headers=get_auth_headers(admin.token),
+                json={"fleet_name": "lab-workers"},
+            )
+        ).json()["token"]
+
+        response = await client.post(
+            "/api/workers/register",
+            headers=get_auth_headers(token),
+            json={
+                "worker_name": "gpu-box-1",
+                "hostname": "gpu-box-1.local",
+                "resources": {
+                    "cpus": 32,
+                    "memory_mib": 65536,
+                    "gpus": [
+                        {
+                            "uuid": "GPU-111",
+                            "index": 0,
+                            "name": "NVIDIA RTX 4090 D",
+                            "memory_mib": 24564,
+                        },
+                        {
+                            "uuid": "GPU-222",
+                            "index": 1,
+                            "name": "NVIDIA RTX 4090 D",
+                            "memory_mib": 24564,
+                        },
+                    ],
+                },
+            },
+        )
+
+        response_json = response.json()
+        assert response.status_code == 200, response_json
+        worker = (await session.execute(select(RegisteredWorkerModel))).scalar_one()
+        assert json.loads(worker.gpus) == [
+            {
+                "uuid": "GPU-111",
+                "index": 0,
+                "name": "RTX4090D",
+                "memory_mib": 24564,
+                "vendor": "nvidia",
+            },
+            {
+                "uuid": "GPU-222",
+                "index": 1,
+                "name": "RTX4090D",
+                "memory_mib": 24564,
+                "vendor": "nvidia",
+            },
+        ]
 
     async def test_worker_heartbeat_updates_instance_status(
         self, session: AsyncSession, client: AsyncClient
@@ -286,6 +348,79 @@ class TestRegisteredWorkers:
         assert response.status_code == 200, response_json
         assert response_json["assignments"][0]["job_id"] == str(job.id)
 
+    async def test_worker_poll_returns_container_assignment_with_reserved_gpu(
+        self, session: AsyncSession, client: AsyncClient
+    ):
+        admin = await create_user(session, name="admin", global_role=GlobalRole.ADMIN)
+        project = await create_project(session, name="main-project", owner=admin)
+        repo = await create_repo(session=session, project_id=project.id)
+        run = await create_run(session=session, project=project, repo=repo, user=admin)
+        await create_fleet(session=session, project=project, name="lab-workers")
+        token = (
+            await client.post(
+                "/api/admin/worker_tokens/create",
+                headers=get_auth_headers(admin.token),
+                json={"fleet_name": "lab-workers"},
+            )
+        ).json()["token"]
+        register_response = await client.post(
+            "/api/workers/register",
+            headers=get_auth_headers(token),
+            json={
+                "worker_name": "gpu-box-1",
+                "hostname": "gpu-box-1.local",
+                "resources": {
+                    "cpus": 8,
+                    "memory_mib": 32768,
+                    "gpus": [
+                        {
+                            "uuid": "GPU-111",
+                            "index": 0,
+                            "name": "NVIDIA RTX 4090 D",
+                            "memory_mib": 24564,
+                        }
+                    ],
+                },
+            },
+        )
+        instance = (await session.execute(select(InstanceModel))).scalar_one()
+        job = await create_job(
+            session=session,
+            run=run,
+            status=JobStatus.PROVISIONING,
+            instance=instance,
+            instance_assigned=True,
+        )
+        job.job_provisioning_data = instance.job_provisioning_data
+        await session.commit()
+        session.add(
+            RegisteredWorkerGpuAllocationModel(
+                worker_id=register_response.json()["worker_id"],
+                instance_id=instance.id,
+                job_id=job.id,
+                gpu_uuid="GPU-111",
+            )
+        )
+        await session.commit()
+
+        response = await client.post(
+            "/api/workers/poll",
+            headers=get_auth_headers(token),
+            json={"worker_id": register_response.json()["worker_id"]},
+        )
+
+        response_json = response.json()
+        assert response.status_code == 200, response_json
+        assignment = response_json["assignments"][0]
+        assert assignment["job_id"] == str(job.id)
+        assert assignment["run_name"] == "test-run"
+        assert assignment["image"]
+        assert assignment["gpu_uuids"] == ["GPU-111"]
+        assert assignment["cpu"] is not None
+        assert assignment["memory_gib"] is not None
+        assert assignment["username"] == "admin"
+        assert assignment["workspace_mount_path"] == "/workspace"
+
     async def test_worker_report_updates_job_status(
         self, session: AsyncSession, client: AsyncClient
     ):
@@ -336,3 +471,71 @@ class TestRegisteredWorkers:
         await session.refresh(updated_job)
         assert updated_job.status == JobStatus.TERMINATING
         assert updated_job.termination_reason == JobTerminationReason.DONE_BY_RUNNER
+
+    async def test_worker_report_releases_gpu_allocation(
+        self, session: AsyncSession, client: AsyncClient
+    ):
+        admin = await create_user(session, global_role=GlobalRole.ADMIN)
+        project = await create_project(session, name="main-project", owner=admin)
+        repo = await create_repo(session=session, project_id=project.id)
+        run = await create_run(session=session, project=project, repo=repo, user=admin)
+        await create_fleet(session=session, project=project, name="lab-workers")
+        token = (
+            await client.post(
+                "/api/admin/worker_tokens/create",
+                headers=get_auth_headers(admin.token),
+                json={"fleet_name": "lab-workers"},
+            )
+        ).json()["token"]
+        register_response = await client.post(
+            "/api/workers/register",
+            headers=get_auth_headers(token),
+            json={
+                "worker_name": "gpu-box-1",
+                "hostname": "gpu-box-1.local",
+                "resources": {
+                    "cpus": 4,
+                    "memory_mib": 8192,
+                    "gpus": [
+                        {
+                            "uuid": "GPU-111",
+                            "index": 0,
+                            "name": "NVIDIA RTX 4090 D",
+                            "memory_mib": 24564,
+                        }
+                    ],
+                },
+            },
+        )
+        instance = (await session.execute(select(InstanceModel))).scalar_one()
+        job = await create_job(
+            session=session,
+            run=run,
+            status=JobStatus.RUNNING,
+            instance=instance,
+            instance_assigned=True,
+        )
+        allocation = RegisteredWorkerGpuAllocationModel(
+            worker_id=register_response.json()["worker_id"],
+            instance_id=instance.id,
+            job_id=job.id,
+            gpu_uuid="GPU-111",
+        )
+        session.add(allocation)
+        await session.commit()
+
+        response = await client.post(
+            "/api/workers/report",
+            headers=get_auth_headers(token),
+            json={
+                "worker_id": register_response.json()["worker_id"],
+                "job_id": str(job.id),
+                "status": "done",
+                "termination_reason": "done_by_runner",
+            },
+        )
+
+        response_json = response.json()
+        assert response.status_code == 200, response_json
+        await session.refresh(allocation)
+        assert allocation.released_at is not None

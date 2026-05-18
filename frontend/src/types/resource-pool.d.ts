@@ -4,12 +4,24 @@ declare interface IResourcePoolGpuSummary {
     memory_gib?: number | null;
 }
 
+declare interface IResourcePoolGpuDevice {
+    uuid?: string | null;
+    index?: number | null;
+    name: string;
+    memory_gib?: number | null;
+    occupied: boolean;
+    project_name?: string | null;
+    run_name?: string | null;
+    job_id?: string | null;
+}
+
 declare interface IResourcePoolResources {
     cpu_count?: number | null;
     memory_gib?: number | null;
     disk_gib?: number | null;
     gpu_count: number;
     gpus: IResourcePoolGpuSummary[];
+    gpu_devices?: IResourcePoolGpuDevice[];
 }
 
 declare interface IResourcePoolResourceSummary {

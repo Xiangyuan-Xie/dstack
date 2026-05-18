@@ -112,6 +112,9 @@ class ServerConfigManager:
             raise ValueError("Config is not loaded")
         if self.config.default_permissions is not None:
             set_default_permissions(self.config.default_permissions)
+        if settings.SERVER_TEST_USERS_ENABLED:
+            load_plugins(enabled_plugins=self.config.plugins or [])
+            return
         for project_config in self.config.projects:
             await self._apply_project_config(
                 session=session, owner=owner, project_config=project_config

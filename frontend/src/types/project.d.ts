@@ -31,6 +31,14 @@ declare interface IProject {
     created_at: string;
     isPublic: boolean;
     current_user_project_role?: TProjectRole | null;
+    auto_approval?: IProjectRunAutoApprovalPolicy;
+}
+
+declare interface IProjectRunAutoApprovalPolicy {
+    enabled: boolean;
+    max_cpu: number;
+    max_memory_gib: number;
+    max_duration_hours: number;
 }
 
 declare interface IProjectMemberPermissions {
@@ -62,4 +70,11 @@ declare interface IProjectSecret {
 
 declare type IProjectCreateRequestParams = Pick<IProject, 'project_name'> & {
     is_public: boolean;
+};
+
+declare type TUpdateProjectParams = {
+    project_name: string;
+    new_project_name?: string;
+    is_public?: boolean;
+    auto_approval?: IProjectRunAutoApprovalPolicy;
 };

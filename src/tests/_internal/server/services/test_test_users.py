@@ -2,8 +2,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from dstack._internal.core.models.users import GlobalRole, ProjectRole
-from dstack._internal.server.models import DecryptedString, ProjectModel, UserModel
+from dstack._internal.core.models.users import GlobalRole
+from dstack._internal.server.models import DecryptedString, UserModel
 from dstack._internal.server.services import users
 
 
@@ -25,12 +25,10 @@ class TestListServerTestUserTokens:
 
 class TestEnsureServerTestUsers:
     @pytest.mark.asyncio
-    async def test_creates_fixed_tokens_and_project_roles(
+    async def test_creates_fixed_tokens_without_project_roles(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         created_users = {}
-        ensured_roles = []
-        project = Mock(spec=ProjectModel)
         session = Mock()
 
         async def get_user_model_by_name(session, username: str):
@@ -44,14 +42,10 @@ class TestEnsureServerTestUsers:
             created_users[username] = user
             return user
 
-        async def ensure_project_member_role(session, project, user, project_role):
-            ensured_roles.append((user.name, project_role))
-
         monkeypatch.setattr(users, "get_user_model_by_name", get_user_model_by_name)
         monkeypatch.setattr(users, "create_user", create_user)
-        monkeypatch.setattr(users, "_ensure_project_member_role", ensure_project_member_role)
 
-        created = await users.ensure_server_test_users(session=session, project=project)
+        created = await users.ensure_server_test_users(session=session)
 
         assert [user.username for user in created] == [
             "test-admin",
@@ -60,10 +54,6 @@ class TestEnsureServerTestUsers:
         ]
         assert created_users["test-admin"].global_role == GlobalRole.ADMIN
         assert created_users["test-user"].global_role == GlobalRole.USER
-        assert ensured_roles == [
-            ("test-manager", ProjectRole.MANAGER),
-            ("test-user", ProjectRole.USER),
-        ]
 
     @pytest.mark.asyncio
     async def test_reconciles_existing_test_user_tokens(
@@ -90,9 +80,7 @@ class TestEnsureServerTestUsers:
 
         monkeypatch.setattr(users, "get_user_model_by_name", get_user_model_by_name)
         monkeypatch.setattr(users, "create_user", create_user)
-        monkeypatch.setattr(users, "_ensure_project_member_role", AsyncMock())
-
-        await users.ensure_server_test_users(session=session, project=Mock(spec=ProjectModel))
+        await users.ensure_server_test_users(session=session)
 
         assert existing_user.global_role == GlobalRole.USER
         assert existing_user.active is True
@@ -122,9 +110,7 @@ class TestEnsureServerTestUsers:
 
         monkeypatch.setattr(users, "get_user_model_by_name", get_user_model_by_name)
         monkeypatch.setattr(users, "create_user", create_user)
-        monkeypatch.setattr(users, "_ensure_project_member_role", AsyncMock())
-
-        await users.ensure_server_test_users(session=session, project=Mock(spec=ProjectModel))
+        await users.ensure_server_test_users(session=session)
 
         assert removed_user.active is False
         session.commit.assert_awaited_once()

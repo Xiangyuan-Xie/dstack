@@ -8,6 +8,8 @@ from dstack._internal.core.models.common import CoreModel
 from dstack._internal.core.models.instances import Gpu
 from dstack._internal.core.models.runs import JobStatus, JobTerminationReason
 
+DEFAULT_WORKER_TOTAL_BLOCKS = 1
+
 
 class RegisteredWorkerResources(CoreModel):
     cpus: int
@@ -52,7 +54,7 @@ class RegisterWorkerRequest(CoreModel):
     labels: dict[str, str] = Field(default_factory=dict)
     resources: RegisteredWorkerResources
     version: Optional[str] = None
-    total_blocks: int = 1
+    total_blocks: int = DEFAULT_WORKER_TOTAL_BLOCKS
 
 
 class RegisterWorkerResponse(CoreModel):
@@ -81,6 +83,16 @@ class WorkerPollRequest(CoreModel):
 
 class WorkerAssignment(CoreModel):
     job_id: UUID
+    run_name: str
+    image: str
+    command: list[str]
+    env: dict[str, str]
+    cpu: Optional[float] = None
+    memory_gib: Optional[float] = None
+    shm_size_gib: Optional[float] = None
+    gpu_uuids: list[str] = Field(default_factory=list)
+    username: str
+    workspace_mount_path: str = "/workspace"
 
 
 class WorkerPollResponse(CoreModel):

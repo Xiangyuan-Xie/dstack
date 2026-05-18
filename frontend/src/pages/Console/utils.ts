@@ -72,13 +72,20 @@ const splitComma = (value: string) =>
         .map((item) => item.trim())
         .filter(Boolean);
 
-const parseEnv = (value: string): Record<string, string> | undefined => {
-    const env = splitLines(value).reduce<Record<string, string>>((result, line) => {
-        const separatorIndex = line.indexOf('=');
-        if (separatorIndex < 0) {
-            result[line] = '';
-        } else {
-            result[line.slice(0, separatorIndex).trim()] = line.slice(separatorIndex + 1);
+const parseEnv = (value: string | TRunRequestEnvRow[]): Record<string, string> | undefined => {
+    const env = (
+        Array.isArray(value)
+            ? value
+            : splitLines(value).map((line) => {
+                  const separatorIndex = line.indexOf('=');
+                  return separatorIndex < 0
+                      ? { key: line, value: '' }
+                      : { key: line.slice(0, separatorIndex).trim(), value: line.slice(separatorIndex + 1) };
+              })
+    ).reduce<Record<string, string>>((result, row) => {
+        const key = row.key.trim();
+        if (key) {
+            result[key] = row.value;
         }
         return result;
     }, {});
@@ -86,11 +93,33 @@ const parseEnv = (value: string): Record<string, string> | undefined => {
     return Object.keys(env).length ? env : undefined;
 };
 
-const parsePorts = (value: string): number[] | undefined => {
-    const ports = splitComma(value)
-        .map((port) => Number(port))
-        .filter((port) => Number.isInteger(port) && port > 0);
+const parsePorts = (value: string | TRunRequestPortRow[]): Array<number | string> | undefined => {
+    const ports = Array.isArray(value)
+        ? value
+              .map((row) => {
+                  const container = row.container.trim();
+                  const host = row.host.trim();
+                  if (!container) return null;
+                  const mapped = host ? `${host}:${container}` : container;
+                  return row.protocol === 'udp' ? `${mapped}/udp` : mapped;
+              })
+              .filter((port): port is string => Boolean(port))
+        : splitComma(value)
+              .map((port) => Number(port))
+              .filter((port) => Number.isInteger(port) && port > 0);
     return ports.length ? ports : undefined;
+};
+
+const parseVolumes = (value: TRunRequestVolumeRow[]): string[] | undefined => {
+    const volumes = value
+        .map((row) => {
+            const source = row.source.trim();
+            const target = row.target.trim();
+            if (!source || !target) return null;
+            return row.read_only ? `${source}:${target}:ro` : `${source}:${target}`;
+        })
+        .filter((volume): volume is string => Boolean(volume));
+    return volumes.length ? volumes : undefined;
 };
 
 export const getPreferredLocale = (storedLocale: string | null, browserLanguage?: string): TLocale => {
@@ -453,7 +482,6 @@ export const buildRunRequestCreateParams = (values: IRunRequestFormValues): TRun
     if (values.cpu.trim()) resources.cpu = values.cpu.trim();
     if (values.memory.trim()) resources.memory = values.memory.trim();
     if (values.gpu.trim()) resources.gpu = values.gpu.trim();
-    if (values.disk.trim()) resources.disk = values.disk.trim();
 
     const fleets = splitComma(values.fleets);
 
@@ -463,9 +491,13 @@ export const buildRunRequestCreateParams = (values: IRunRequestFormValues): TRun
             image: values.image.trim(),
             commands: splitLines(values.commands),
             name: values.name.trim() || undefined,
+            entrypoint: values.entrypoint.trim() || undefined,
+            working_dir: values.working_dir.trim() || undefined,
             env: parseEnv(values.env),
             ports: parsePorts(values.ports),
-            nodes: Number(values.nodes) || 1,
+            volumes: parseVolumes(values.volumes),
+            privileged: values.privileged || undefined,
+            nodes: 1,
             resources: Object.keys(resources).length ? resources : undefined,
             max_duration: values.max_duration.trim() || undefined,
             fleets: fleets.length ? fleets : undefined,

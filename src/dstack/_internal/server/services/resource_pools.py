@@ -20,12 +20,15 @@ from dstack._internal.server.models import (
     ProjectModel,
     ProjectResourceInstanceAssignmentModel,
     ProjectResourcePoolAssignmentModel,
+    RegisteredWorkerGpuAllocationModel,
     RegisteredWorkerModel,
+    RunModel,
     WorkerRegistrationTokenModel,
 )
 from dstack._internal.server.schemas.resource_pools import (
     ResourcePool,
     ResourcePoolAssignment,
+    ResourcePoolGpuDevice,
     ResourcePoolGpuSummary,
     ResourcePoolInstance,
     ResourcePoolOccupancy,
@@ -34,13 +37,9 @@ from dstack._internal.server.schemas.resource_pools import (
     ResourcePoolUsage,
     ResourcePoolUsageSummary,
 )
-from dstack._internal.server.services import fleets as fleets_services
 from dstack._internal.server.services.fleets import get_fleet_spec
 from dstack._internal.server.services.pipelines import PipelineHinterProtocol
-from dstack._internal.server.services.projects import (
-    get_or_create_default_project,
-    get_project_model_by_name_or_error,
-)
+from dstack._internal.utils.common import get_current_datetime
 
 
 async def list_resource_pools(
@@ -122,19 +121,35 @@ async def apply_resource_pool(
 ) -> ResourcePool:
     if user.global_role != GlobalRole.ADMIN:
         raise ForbiddenError("Only global administrators can manage resource pools")
-    default_project, _ = await get_or_create_default_project(session=session, user=user)
-    default_project_model = await get_project_model_by_name_or_error(
-        session=session,
-        project_name=default_project.project_name,
+    spec = plan.spec
+    resource_pool_name = spec.configuration.name
+    if resource_pool_name is None:
+        raise ServerClientError("Resource pool name must be specified")
+    validate_dstack_resource_name(resource_pool_name)
+    existing = await session.execute(
+        select(FleetModel).where(
+            FleetModel.name == resource_pool_name,
+            FleetModel.deleted == False,
+        )
     )
-    fleet = await fleets_services.apply_plan(
-        session=session,
-        user=user,
-        project=default_project_model,
-        plan=plan,
-        force=force,
-        pipeline_hinter=pipeline_hinter,
-    )
+    existing_fleet = existing.scalar_one_or_none()
+    if existing_fleet is not None and not force:
+        raise ServerClientError(f"Resource pool {resource_pool_name!r} already exists")
+    if existing_fleet is None:
+        fleet = FleetModel(
+            name=resource_pool_name,
+            project=None,
+            status=FleetStatus.ACTIVE,
+            spec=spec.json(),
+            instances=[],
+        )
+        session.add(fleet)
+    else:
+        existing_fleet.spec = spec.json()
+        existing_fleet.status_message = None
+        fleet = existing_fleet
+    await session.commit()
+    pipeline_hinter.hint_fetch(FleetModel.__name__)
     return await get_resource_pool(session=session, id=fleet.id)
 
 
@@ -146,18 +161,28 @@ async def delete_resource_pools(
 ) -> None:
     if user.global_role != GlobalRole.ADMIN:
         raise ForbiddenError("Only global administrators can manage resource pools")
-    default_project, _ = await get_or_create_default_project(session=session, user=user)
-    default_project_model = await get_project_model_by_name_or_error(
-        session=session,
-        project_name=default_project.project_name,
+    res = await session.execute(
+        select(FleetModel)
+        .where(
+            FleetModel.name.in_(names),
+            FleetModel.deleted == False,
+        )
+        .options(selectinload(FleetModel.instances))
     )
-    await fleets_services.delete_fleets(
-        session=session,
-        project=default_project_model,
-        user=user,
-        names=names,
-        pipeline_hinter=pipeline_hinter,
-    )
+    fleets = list(res.scalars().all())
+    found_names = {fleet.name for fleet in fleets}
+    missing_names = sorted(set(names) - found_names)
+    if missing_names:
+        raise ResourceNotExistsError(f"Resource pools {missing_names!r} not found")
+    for fleet in fleets:
+        fleet.deleted = True
+        fleet.deleted_at = get_current_datetime()
+        for instance in fleet.instances:
+            instance.deleted = True
+            instance.deleted_at = fleet.deleted_at
+    await session.commit()
+    pipeline_hinter.hint_fetch(FleetModel.__name__)
+    pipeline_hinter.hint_fetch(InstanceModel.__name__)
 
 
 async def rename_resource_pool(
@@ -295,6 +320,9 @@ async def _fleet_models_to_resource_pools(
     occupancy_by_instance = await _load_occupancy(
         session, [i.id for f in fleets for i in f.instances]
     )
+    gpu_occupancy_by_instance = await _load_gpu_occupancy(
+        session, [i.id for f in fleets for i in f.instances]
+    )
     usage_by_instance = await _load_registered_worker_usage(
         session, [i.id for f in fleets for i in f.instances]
     )
@@ -304,6 +332,7 @@ async def _fleet_models_to_resource_pools(
             assignments_by_fleet.get(fleet.id, []),
             instance_assignments_by_fleet.get(fleet.id, []),
             occupancy_by_instance,
+            gpu_occupancy_by_instance,
             usage_by_instance,
         )
         for fleet in fleets
@@ -368,6 +397,35 @@ async def _load_occupancy(
     }
 
 
+async def _load_gpu_occupancy(
+    session: AsyncSession,
+    instance_ids: list[UUID],
+) -> dict[UUID, dict[str, tuple[str, str, UUID]]]:
+    if not instance_ids:
+        return {}
+    res = await session.execute(
+        select(
+            RegisteredWorkerGpuAllocationModel.instance_id,
+            RegisteredWorkerGpuAllocationModel.gpu_uuid,
+            ProjectModel.name,
+            RunModel.run_name,
+            RegisteredWorkerGpuAllocationModel.job_id,
+        )
+        .join(JobModel, JobModel.id == RegisteredWorkerGpuAllocationModel.job_id)
+        .join(ProjectModel, ProjectModel.id == JobModel.project_id)
+        .join(RunModel, RunModel.id == JobModel.run_id)
+        .where(
+            RegisteredWorkerGpuAllocationModel.instance_id.in_(instance_ids),
+            RegisteredWorkerGpuAllocationModel.released_at.is_(None),
+            JobModel.status.not_in(JobStatus.finished_statuses()),
+        )
+    )
+    occupancy: dict[UUID, dict[str, tuple[str, str, UUID]]] = defaultdict(dict)
+    for instance_id, gpu_uuid, project_name, run_name, job_id in res.all():
+        occupancy[instance_id][gpu_uuid] = (project_name, run_name, job_id)
+    return occupancy
+
+
 async def _load_registered_worker_usage(
     session: AsyncSession,
     instance_ids: list[UUID],
@@ -393,6 +451,7 @@ def _fleet_model_to_resource_pool(
     pool_assignments: list[ProjectResourcePoolAssignmentModel],
     instance_assignments: list[ProjectResourceInstanceAssignmentModel],
     occupancy_by_instance: dict[UUID, ResourcePoolOccupancy],
+    gpu_occupancy_by_instance: dict[UUID, dict[str, tuple[str, str, UUID]]],
     usage_by_instance: dict[UUID, ResourcePoolUsage],
 ) -> ResourcePool:
     whole_pool_project_names = sorted({assignment.project.name for assignment in pool_assignments})
@@ -432,7 +491,10 @@ def _fleet_model_to_resource_pool(
             busy_count += 1
         elif instance.status == InstanceStatus.IDLE:
             idle_count += 1
-        resources = _get_instance_resources(instance)
+        resources = _get_instance_resources(
+            instance,
+            gpu_occupancy_by_instance.get(instance.id, {}),
+        )
         usage = usage_by_instance.get(instance.id)
         instance_resources.append(resources)
         if usage is not None:
@@ -470,7 +532,10 @@ def _fleet_model_to_resource_pool(
     )
 
 
-def _get_instance_resources(instance: InstanceModel) -> ResourcePoolResources:
+def _get_instance_resources(
+    instance: InstanceModel,
+    gpu_occupancy: dict[str, tuple[str, str, UUID]],
+) -> ResourcePoolResources:
     if instance.offer:
         resources = InstanceOfferWithAvailability.__response__.parse_raw(
             instance.offer
@@ -483,6 +548,7 @@ def _get_instance_resources(instance: InstanceModel) -> ResourcePoolResources:
         return ResourcePoolResources()
 
     gpus_by_name: dict[str, ResourcePoolGpuSummary] = {}
+    gpu_devices = []
     for gpu in resources.gpus:
         name = gpu.name or "GPU"
         memory_gib = round(gpu.memory_mib / 1024, 2) if gpu.memory_mib else None
@@ -493,6 +559,22 @@ def _get_instance_resources(instance: InstanceModel) -> ResourcePoolResources:
                 memory_gib=memory_gib,
             )
         gpus_by_name[name].count += 1
+        gpu_uuid = gpu.uuid
+        project_name = run_name = job_id = None
+        if gpu_uuid is not None and gpu_uuid in gpu_occupancy:
+            project_name, run_name, job_id = gpu_occupancy[gpu_uuid]
+        gpu_devices.append(
+            ResourcePoolGpuDevice(
+                uuid=gpu_uuid,
+                index=gpu.index,
+                name=name,
+                memory_gib=memory_gib,
+                occupied=project_name is not None,
+                project_name=project_name,
+                run_name=run_name,
+                job_id=job_id,
+            )
+        )
 
     return ResourcePoolResources(
         cpu_count=resources.cpus,
@@ -500,6 +582,10 @@ def _get_instance_resources(instance: InstanceModel) -> ResourcePoolResources:
         disk_gib=round(resources.disk.size_mib / 1024, 2) if resources.disk else None,
         gpu_count=len(resources.gpus),
         gpus=sorted(gpus_by_name.values(), key=lambda gpu: gpu.name),
+        gpu_devices=sorted(
+            gpu_devices,
+            key=lambda gpu: (gpu.index if gpu.index is not None else 10**9, gpu.name),
+        ),
     )
 
 

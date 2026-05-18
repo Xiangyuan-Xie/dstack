@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import Field
 
 from dstack._internal.core.models.common import CoreModel
+from dstack._internal.core.models.projects import ProjectRunAutoApprovalPolicy
 from dstack._internal.core.models.users import ProjectRole
 
 
@@ -56,6 +57,7 @@ class CreateProjectRequest(CoreModel):
 class UpdateProjectRequest(CoreModel):
     project_name: Optional[str] = None
     is_public: Optional[bool] = None
+    auto_approval: Optional[ProjectRunAutoApprovalPolicy] = None
 
 
 class DeleteProjectsRequest(CoreModel):

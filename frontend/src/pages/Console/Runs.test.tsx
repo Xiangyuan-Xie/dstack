@@ -20,6 +20,10 @@ const regularRole = {
     manageableProjectNames: [],
 };
 let mockRole = regularRole;
+let mockProjects = [
+    { project_name: 'research', project_id: 'project-1' },
+    { project_name: 'small', project_id: 'project-2' },
+];
 
 Object.defineProperty(window, 'matchMedia', {
     writable: true,
@@ -43,10 +47,7 @@ jest.mock('react-router-dom', () => ({
 jest.mock('./Layout', () => ({
     useConsoleContext: () => ({
         locale: 'zh',
-        projects: [
-            { project_name: 'research', project_id: 'project-1' },
-            { project_name: 'small', project_id: 'project-2' },
-        ],
+        projects: mockProjects,
         role: mockRole,
     }),
 }));
@@ -195,25 +196,41 @@ describe('RunRequestCreatePage', () => {
         mockStopRuns.mockReset();
         mockConfirm.mockReset();
         mockRole = regularRole;
+        mockProjects = [
+            { project_name: 'research', project_id: 'project-1' },
+            { project_name: 'small', project_id: 'project-2' },
+        ];
         mockGetProjectResourcePoolsQuery.mockReset();
         mockGetProjectResourcePoolsQuery.mockReturnValue({ data: [bigPool, smallPool], isLoading: false });
         mockGetRuntimeImagesQuery.mockReset();
         mockGetRuntimeImagesQuery.mockReturnValue({
-            data: [{ name: 'PyTorch CUDA', image: 'pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime' }],
+            data: [
+                {
+                    name: 'PyTorch CUDA',
+                    image: 'pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime',
+                    category: 'PyTorch',
+                },
+                {
+                    name: 'Isaac Sim 6.0',
+                    image: 'nvcr.io/nvidia/isaac-sim:6.0.0-dev2',
+                    category: 'Isaac Sim',
+                },
+            ],
             isLoading: false,
         });
     });
 
-    test('bounds resource sliders and max duration by allowed ranges', () => {
+    test('bounds resource sliders and run duration by allowed ranges', () => {
         render(<RunRequestCreatePage />);
 
+        expect(screen.queryByLabelText('节点数 滑条')).not.toBeInTheDocument();
         expect(screen.getByLabelText('GPU 数量')).toHaveAttribute('max', '1');
         expect(screen.getByLabelText('CPU 核心')).toHaveAttribute('max', '32');
         expect(screen.getByLabelText('内存 GiB')).toHaveAttribute('max', '64');
-        expect(screen.getByLabelText('磁盘 GiB')).toHaveAttribute('max', '500');
-        expect(screen.getByLabelText('最长运行 小时')).toHaveAttribute('min', '1');
-        expect(screen.getByLabelText('最长运行 小时')).toHaveAttribute('max', '168');
-        expect(screen.getByLabelText('最长运行 数值')).toHaveValue(4);
+        expect(screen.queryByLabelText('磁盘 GiB')).not.toBeInTheDocument();
+        expect(screen.getByLabelText('运行时间 小时')).toHaveAttribute('min', '1');
+        expect(screen.getByLabelText('运行时间 小时')).toHaveAttribute('max', '168');
+        expect(screen.getByLabelText('运行时间 数值')).toHaveValue(4);
     });
 
     test('recomputes resource slider limits from the selected resource pool and clamps values', async () => {
@@ -235,7 +252,10 @@ describe('RunRequestCreatePage', () => {
 
         render(<RunRequestCreatePage />);
 
-        await userEvent.type(screen.getByPlaceholderText('train-qwen'), 'train-a');
+        expect(screen.queryByPlaceholderText('train-qwen')).not.toBeInTheDocument();
+        expect(screen.getByRole('group', { name: 'PyTorch' })).toBeInTheDocument();
+        expect(screen.getByRole('group', { name: 'Isaac Sim' })).toBeInTheDocument();
+        await userEvent.type(screen.getByLabelText('任务名称'), 'train-a');
         await userEvent.selectOptions(screen.getByLabelText('镜像'), 'pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime');
         await userEvent.type(screen.getByPlaceholderText('python train.py'), 'python train.py');
         await userEvent.clear(screen.getByLabelText('GPU 数值'));
@@ -244,10 +264,8 @@ describe('RunRequestCreatePage', () => {
         await userEvent.type(screen.getByLabelText('CPU 数值'), '16');
         await userEvent.clear(screen.getByLabelText('内存 数值'));
         await userEvent.type(screen.getByLabelText('内存 数值'), '32');
-        await userEvent.clear(screen.getByLabelText('磁盘 数值'));
-        await userEvent.type(screen.getByLabelText('磁盘 数值'), '200');
-        await userEvent.clear(screen.getByLabelText('最长运行 数值'));
-        await userEvent.type(screen.getByLabelText('最长运行 数值'), '168');
+        await userEvent.clear(screen.getByLabelText('运行时间 数值'));
+        await userEvent.type(screen.getByLabelText('运行时间 数值'), '168');
         await userEvent.click(screen.getByRole('button', { name: '提交审批' }));
 
         expect(mockCreateRunRequest).toHaveBeenCalledWith(
@@ -259,26 +277,77 @@ describe('RunRequestCreatePage', () => {
                         gpu: '1',
                         cpu: '16',
                         memory: '32GB',
-                        disk: '200GB',
                     },
                 }),
             }),
         );
     });
 
-    test('requires an administrator configured runtime image whitelist', async () => {
+    test('submits structured Docker startup options', async () => {
+        mockCreateRunRequest.mockReturnValue({
+            unwrap: () => Promise.resolve({ id: 'req-1', project_name: 'research' }),
+        });
+
+        render(<RunRequestCreatePage />);
+
+        await userEvent.type(screen.getByLabelText('任务名称'), 'dev-box');
+        await userEvent.type(screen.getByPlaceholderText('python train.py'), 'python train.py');
+        await userEvent.type(screen.getByLabelText('入口点'), '/bin/bash');
+        await userEvent.type(screen.getByLabelText('工作目录'), '/workspace/project');
+        await userEvent.type(screen.getByLabelText('环境变量名'), 'MODEL');
+        await userEvent.type(screen.getByLabelText('环境变量值'), 'qwen');
+        await userEvent.type(screen.getByLabelText('宿主端口'), '18080');
+        await userEvent.type(screen.getByLabelText('容器端口'), '8080');
+        await userEvent.type(screen.getByLabelText('来源路径'), '/data/shared');
+        await userEvent.type(screen.getByLabelText('容器路径'), '/workspace/data');
+        await userEvent.click(screen.getByLabelText('只读'));
+        await userEvent.click(screen.getByText('特权模式'));
+        await userEvent.click(screen.getByRole('button', { name: '提交审批' }));
+
+        expect(mockCreateRunRequest).toHaveBeenCalledWith(
+            expect.objectContaining({
+                request: expect.objectContaining({
+                    entrypoint: '/bin/bash',
+                    working_dir: '/workspace/project',
+                    env: { MODEL: 'qwen' },
+                    ports: ['18080:8080'],
+                    volumes: ['/data/shared:/workspace/data:ro'],
+                    privileged: true,
+                }),
+            }),
+        );
+    });
+
+    test('requires a runtime image before submitting', async () => {
         mockGetRuntimeImagesQuery.mockReturnValue({ data: [], isLoading: false });
 
         render(<RunRequestCreatePage />);
 
-        expect(screen.getByText('请最高管理员先在系统设置配置镜像')).toBeInTheDocument();
+        expect(screen.getByText('暂无可用任务镜像')).toBeInTheDocument();
         await userEvent.click(screen.getByRole('button', { name: '提交审批' }));
 
         expect(mockCreateRunRequest).not.toHaveBeenCalled();
         expect(mockPushNotification).toHaveBeenCalledWith(
             expect.objectContaining({
                 type: 'error',
-                header: '请先配置任务镜像',
+                header: '请选择任务镜像',
+            }),
+        );
+    });
+
+    test('shows an empty project state before any project is created', async () => {
+        mockProjects = [];
+
+        render(<RunRequestCreatePage />);
+
+        expect(screen.getByText('暂无项目，请最高管理员先创建项目。')).toBeInTheDocument();
+        await userEvent.click(screen.getByRole('button', { name: '提交审批' }));
+
+        expect(mockCreateRunRequest).not.toHaveBeenCalled();
+        expect(mockPushNotification).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'error',
+                header: '请先创建项目',
             }),
         );
     });

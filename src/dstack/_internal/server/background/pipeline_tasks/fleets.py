@@ -719,7 +719,7 @@ def _maintain_fleet_nodes_in_min_max_range(
 
 
 def _should_delete_fleet(fleet_model: FleetModel) -> bool:
-    if fleet_model.project.deleted:
+    if fleet_model.project is not None and fleet_model.project.deleted:
         # It used to be possible to delete project with active resources:
         # https://github.com/dstackai/dstack/issues/3077
         logger.info("Fleet %s deleted due to deleted project", fleet_model.name)
@@ -784,6 +784,12 @@ async def _create_missing_fleet_instances(
     fleet_model: FleetModel,
     new_instance_creates: Sequence[_NewInstanceCreate],
 ):
+    if fleet_model.project is None:
+        logger.info(
+            "Skipping automatic instance creation for global resource pool %s",
+            fleet_model.name,
+        )
+        return
     fleet_spec = get_fleet_spec(fleet_model)
     for new_instance_create in new_instance_creates:
         instance_model = create_fleet_instance_model(

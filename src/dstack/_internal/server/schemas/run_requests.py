@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, Dict, List, Optional
+from typing import Annotated, Dict, List, Optional, Union
 from uuid import UUID
 
 from pydantic import Field, validator
@@ -15,11 +15,18 @@ class RunRequestSpec(CoreModel):
         Field(description="The run name. If not specified, a random name is generated."),
     ] = None
     image: Annotated[str, Field(description="The Docker image to run")]
+    entrypoint: Annotated[Optional[str], Field(description="The Docker entrypoint")] = None
+    working_dir: Annotated[
+        Optional[str],
+        Field(description="The absolute path to the working directory inside the container"),
+    ] = None
     commands: Annotated[List[str], Field(description="The shell commands to run")]
     env: Annotated[
         Dict[str, str], Field(description="Environment variables for the container")
     ] = {}
-    ports: Annotated[List[int], Field(description="Container ports to expose")] = []
+    ports: Annotated[
+        List[Union[int, str]], Field(description="Container ports or host:container mappings")
+    ] = []
     nodes: Annotated[int, Field(description="Number of nodes", ge=1)] = 1
     resources: Annotated[
         ResourcesSpec, Field(description="Resources required by the requested task")
@@ -32,6 +39,8 @@ class RunRequestSpec(CoreModel):
         Optional[List[str]],
         Field(description="Fleets considered for reuse/provisioning"),
     ] = None
+    volumes: Annotated[List[str], Field(description="Container mount points")] = []
+    privileged: Annotated[bool, Field(description="Run the container in privileged mode")] = False
 
     @validator("commands")
     def validate_commands(cls, v: List[str]) -> List[str]:

@@ -59,6 +59,7 @@ async def create_run_request(
     body: CreateRunRequestRequest,
     session: AsyncSession = Depends(get_session),
     user_project: Tuple[UserModel, ProjectModel] = Depends(ProjectMember()),
+    pipeline_hinter: PipelineHinterProtocol = Depends(get_pipeline_hinter),
 ):
     user, project = user_project
     request = await run_requests_services.create_run_request(
@@ -66,6 +67,7 @@ async def create_run_request(
         project=project,
         applicant=user,
         request=body.request,
+        pipeline_hinter=pipeline_hinter,
     )
     return CustomORJSONResponse(request)
 

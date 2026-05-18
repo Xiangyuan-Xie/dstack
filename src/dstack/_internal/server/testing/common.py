@@ -700,7 +700,7 @@ def get_gateway_compute_configuration(
 
 async def create_fleet(
     session: AsyncSession,
-    project: ProjectModel,
+    project: Optional[ProjectModel] = None,
     created_at: datetime = datetime(2023, 1, 2, 3, 4, tzinfo=timezone.utc),
     spec: Optional[FleetSpec] = None,
     fleet_id: Optional[UUID] = None,
@@ -799,7 +799,7 @@ def get_ssh_fleet_configuration(
 
 async def create_instance(
     session: AsyncSession,
-    project: ProjectModel,
+    project: Optional[ProjectModel] = None,
     fleet: Optional[FleetModel] = None,
     status: InstanceStatus = InstanceStatus.IDLE,
     unreachable: bool = False,

@@ -896,7 +896,7 @@ def fleet_model_to_fleet(
     return Fleet(
         id=fleet_model.id,
         name=fleet_model.name,
-        project_name=fleet_model.project.name,
+        project_name=fleet_model.project.name if fleet_model.project else None,
         spec=spec,
         created_at=fleet_model.created_at,
         status=fleet_model.status,

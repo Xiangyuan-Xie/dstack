@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional, Union
 
-from pydantic import UUID4
+from pydantic import UUID4, Field
 
 from dstack._internal.core.backends.models import BackendInfo
 from dstack._internal.core.models.common import CoreModel
@@ -21,6 +21,13 @@ class Member(CoreModel):
     permissions: MemberPermissions
 
 
+class ProjectRunAutoApprovalPolicy(CoreModel):
+    enabled: bool = False
+    max_cpu: int = Field(ge=0)
+    max_memory_gib: int = Field(ge=0)
+    max_duration_hours: int = Field(ge=0)
+
+
 class Project(CoreModel):
     project_id: UUID4
     project_name: str
@@ -31,6 +38,7 @@ class Project(CoreModel):
     current_user_project_role: Optional[ProjectRole] = None
     """The requesting user's role in the project. Set on project list responses."""
     is_public: bool = False
+    auto_approval: ProjectRunAutoApprovalPolicy
 
 
 class ProjectsInfoList(CoreModel):

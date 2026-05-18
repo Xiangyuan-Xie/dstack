@@ -60,13 +60,15 @@ declare interface IRunRequestFormValues {
     name: string;
     image: string;
     commands: string;
-    env: string;
-    ports: string;
-    nodes: string;
+    entrypoint: string;
+    working_dir: string;
+    env: TRunRequestEnvRow[];
+    ports: TRunRequestPortRow[];
+    volumes: TRunRequestVolumeRow[];
+    privileged: boolean;
     cpu: string;
     memory: string;
     gpu: string;
-    disk: string;
     max_duration: string;
     fleets: string;
 }

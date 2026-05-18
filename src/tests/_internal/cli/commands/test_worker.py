@@ -1,7 +1,12 @@
 from subprocess import CompletedProcess
 from unittest.mock import Mock
 
-from dstack._internal.cli.commands.worker import _detect_resources, _detect_usage
+from dstack._internal.cli.commands.worker import (
+    _build_docker_run_command,
+    _detect_resources,
+    _detect_usage,
+    _WorkerAssignment,
+)
 
 
 def test_detect_resources_reports_nvidia_gpus(monkeypatch):
@@ -15,7 +20,10 @@ def test_detect_resources_reports_nvidia_gpus(monkeypatch):
         return CompletedProcess(
             args=args[0],
             returncode=0,
-            stdout="NVIDIA A100-SXM4-40GB, 40960\nNVIDIA A100-SXM4-40GB, 40960\n",
+            stdout=(
+                "GPU-111, 0, NVIDIA A100-SXM4-40GB, 40960\n"
+                "GPU-222, 1, NVIDIA A100-SXM4-40GB, 40960\n"
+            ),
             stderr="",
         )
 
@@ -28,8 +36,8 @@ def test_detect_resources_reports_nvidia_gpus(monkeypatch):
     assert resources["memory_mib"] == 64 * 1024
     assert resources["disk_mib"] == 1024 * 1024
     assert resources["gpus"] == [
-        {"vendor": "nvidia", "name": "A100", "memory_mib": 40960},
-        {"vendor": "nvidia", "name": "A100", "memory_mib": 40960},
+        {"uuid": "GPU-111", "index": 0, "vendor": "nvidia", "name": "A100", "memory_mib": 40960},
+        {"uuid": "GPU-222", "index": 1, "vendor": "nvidia", "name": "A100", "memory_mib": 40960},
     ]
 
 
@@ -109,3 +117,41 @@ def test_detect_usage_does_not_fake_gpus_when_nvidia_smi_is_unavailable(monkeypa
     assert usage["gpu_memory_used_gib"] is None
     assert usage["gpu_memory_total_gib"] is None
     assert usage["gpu_util_percent"] is None
+
+
+def test_build_docker_run_command_applies_assignment_limits():
+    assignment = _WorkerAssignment(
+        job_id="job-1",
+        run_name="train",
+        image="pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime",
+        command=["python", "train.py"],
+        env={"EPOCHS": "1"},
+        cpu=4,
+        memory_gib=16,
+        shm_size_gib=2,
+        gpu_uuids=["GPU-111"],
+        username="alice",
+        workspace_mount_path="/workspace",
+    )
+
+    command = _build_docker_run_command(
+        assignment=assignment,
+        container_name="dstack-job-1",
+        host_workspace="/var/lib/dstack/worker/users/alice",
+    )
+
+    assert command[:3] == ["docker", "run", "--name"]
+    assert "--cpus" in command
+    assert command[command.index("--cpus") + 1] == "4"
+    assert "--memory" in command
+    assert command[command.index("--memory") + 1] == "16g"
+    assert "--shm-size" in command
+    assert command[command.index("--shm-size") + 1] == "2g"
+    assert "--gpus" in command
+    assert command[command.index("--gpus") + 1] == "device=GPU-111"
+    assert "-v" in command
+    assert command[command.index("-v") + 1] == "/var/lib/dstack/worker/users/alice:/workspace"
+    assert "-w" in command
+    assert command[command.index("-w") + 1] == "/workspace"
+    image_index = command.index("pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime")
+    assert command[image_index + 1 :] == ["python", "train.py"]

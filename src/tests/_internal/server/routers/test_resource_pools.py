@@ -1,19 +1,20 @@
 import json
-from unittest.mock import AsyncMock
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dstack._internal.core.models.instances import InstanceStatus
+from dstack._internal.core.models.instances import Gpu, InstanceStatus
+from dstack._internal.core.models.runs import JobStatus
 from dstack._internal.core.models.users import GlobalRole, ProjectRole
 from dstack._internal.server.models import (
     MemberModel,
+    ProjectModel,
+    RegisteredWorkerGpuAllocationModel,
     RegisteredWorkerModel,
     WorkerRegistrationTokenModel,
 )
-from dstack._internal.server.services import resource_pools as resource_pools_services
-from dstack._internal.server.settings import DEFAULT_PROJECT_NAME
 from dstack._internal.server.testing.common import (
     create_fleet,
     create_instance,
@@ -31,24 +32,12 @@ pytestmark = pytest.mark.asyncio
 
 
 class TestResourcePoolManagement:
-    async def test_global_admin_creates_resource_pool_using_default_project(
+    async def test_global_admin_creates_resource_pool_without_creating_project(
         self, session: AsyncSession, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
     ):
         admin = await create_user(session, name="admin", global_role=GlobalRole.ADMIN)
         spec = get_fleet_spec()
         spec.configuration.name = "lab-pool"
-
-        async def apply_plan(*, session, project, plan, **_kwargs):
-            assert project.name == DEFAULT_PROJECT_NAME
-            return await create_fleet(
-                session=session,
-                project=project,
-                spec=plan.spec,
-                assign_to_project=False,
-            )
-
-        apply_plan_mock = AsyncMock(side_effect=apply_plan)
-        monkeypatch.setattr(resource_pools_services.fleets_services, "apply_plan", apply_plan_mock)
 
         response = await client.post(
             "/api/resource_pools/create",
@@ -59,23 +48,21 @@ class TestResourcePoolManagement:
         response_json = response.json()
         assert response.status_code == 200, response_json
         assert response_json["name"] == "lab-pool"
-        apply_plan_mock.assert_awaited_once()
+        projects = (await session.execute(select(ProjectModel))).scalars().all()
+        assert projects == []
 
-    async def test_global_admin_deletes_resource_pool_using_default_project(
-        self, session: AsyncSession, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    async def test_global_admin_deletes_resource_pool_without_project(
+        self, session: AsyncSession, client: AsyncClient
     ):
         admin = await create_user(session, name="admin", global_role=GlobalRole.ADMIN)
-
-        async def delete_fleets(*, project, names, **_kwargs):
-            assert project.name == DEFAULT_PROJECT_NAME
-            assert names == ["lab-pool"]
-
-        delete_fleets_mock = AsyncMock(side_effect=delete_fleets)
-        monkeypatch.setattr(
-            resource_pools_services.fleets_services,
-            "delete_fleets",
-            delete_fleets_mock,
+        spec = get_fleet_spec()
+        spec.configuration.name = "lab-pool"
+        create_response = await client.post(
+            "/api/resource_pools/create",
+            headers=get_auth_headers(admin.token),
+            json={"plan": {"spec": spec.dict()}, "force": False},
         )
+        assert create_response.status_code == 200, create_response.json()
 
         response = await client.post(
             "/api/resource_pools/delete",
@@ -84,7 +71,12 @@ class TestResourcePoolManagement:
         )
 
         assert response.status_code == 200, response.json()
-        delete_fleets_mock.assert_awaited_once()
+        get_response = await client.post(
+            "/api/resource_pools/get",
+            headers=get_auth_headers(admin.token),
+            json={"name": "lab-pool"},
+        )
+        assert get_response.status_code == 400
 
     async def test_global_admin_renames_resource_pool(
         self, session: AsyncSession, client: AsyncClient
@@ -374,7 +366,136 @@ class TestResourcePoolAssignments:
             "disk_gib": 500,
             "gpu_count": 2,
             "gpus": [{"name": "A100", "count": 2, "memory_gib": 40}],
+            "gpu_devices": [
+                {
+                    "uuid": None,
+                    "index": None,
+                    "name": "A100",
+                    "memory_gib": 40,
+                    "occupied": False,
+                    "project_name": None,
+                    "run_name": None,
+                    "job_id": None,
+                },
+                {
+                    "uuid": None,
+                    "index": None,
+                    "name": "A100",
+                    "memory_gib": 40,
+                    "occupied": False,
+                    "project_name": None,
+                    "run_name": None,
+                    "job_id": None,
+                },
+            ],
         }
+
+    async def test_resource_pool_detail_reports_per_gpu_occupancy(
+        self, session: AsyncSession, client: AsyncClient
+    ):
+        admin = await create_user(session, name="admin", global_role=GlobalRole.ADMIN)
+        project = await create_project(session, name="research", owner=admin)
+        repo = await create_repo(session=session, project_id=project.id)
+        run = await create_run(session=session, project=project, repo=repo, user=admin)
+        pool = await create_fleet(session=session, project=project, name="lab-pool")
+        offer = get_instance_offer_with_availability(
+            gpu_count=0,
+            cpu_count=16,
+            memory_gib=128,
+            disk_gib=500,
+        )
+        offer.instance.resources.gpus = [
+            Gpu(uuid="GPU-111", index=0, name="RTX4090D", memory_mib=24564),
+            Gpu(uuid="GPU-222", index=1, name="RTX4090D", memory_mib=24564),
+        ]
+        instance = await create_instance(
+            session=session,
+            project=project,
+            fleet=pool,
+            name="gpu-box-1",
+            offer=offer,
+        )
+        token = WorkerRegistrationTokenModel(
+            created_by=admin,
+            fleet_name=pool.name,
+            token_hash="worker-token-hash",
+            enabled=True,
+        )
+        session.add(token)
+        await session.flush()
+        worker = RegisteredWorkerModel(
+            registration_token=token,
+            fleet=pool,
+            instance=instance,
+            name="gpu-box-1",
+            gpus=json.dumps(
+                [
+                    {
+                        "uuid": "GPU-111",
+                        "index": 0,
+                        "name": "RTX4090D",
+                        "memory_mib": 24564,
+                        "vendor": "nvidia",
+                    },
+                    {
+                        "uuid": "GPU-222",
+                        "index": 1,
+                        "name": "RTX4090D",
+                        "memory_mib": 24564,
+                        "vendor": "nvidia",
+                    },
+                ]
+            ),
+        )
+        session.add(worker)
+        job = await create_job(
+            session=session,
+            run=run,
+            status=JobStatus.RUNNING,
+            fleet=pool,
+            instance=instance,
+            instance_assigned=True,
+        )
+        session.add(
+            RegisteredWorkerGpuAllocationModel(
+                worker=worker,
+                instance=instance,
+                job=job,
+                gpu_uuid="GPU-111",
+            )
+        )
+        await session.commit()
+
+        response = await client.post(
+            "/api/resource_pools/get",
+            headers=get_auth_headers(admin.token),
+            json={"name": "lab-pool"},
+        )
+
+        response_json = response.json()
+        assert response.status_code == 200, response_json
+        assert response_json["instances"][0]["resources"]["gpu_devices"] == [
+            {
+                "uuid": "GPU-111",
+                "index": 0,
+                "name": "RTX4090D",
+                "memory_gib": 23.99,
+                "occupied": True,
+                "project_name": "research",
+                "run_name": "test-run",
+                "job_id": str(job.id),
+            },
+            {
+                "uuid": "GPU-222",
+                "index": 1,
+                "name": "RTX4090D",
+                "memory_gib": 23.99,
+                "occupied": False,
+                "project_name": None,
+                "run_name": None,
+                "job_id": None,
+            },
+        ]
 
     async def test_resource_pool_list_and_detail_report_same_resource_summary(
         self, session: AsyncSession, client: AsyncClient

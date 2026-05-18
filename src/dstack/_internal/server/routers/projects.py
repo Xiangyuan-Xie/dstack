@@ -209,6 +209,7 @@ async def update_project(
         project=project,
         project_name=body.project_name,
         is_public=body.is_public,
+        auto_approval=body.auto_approval,
     )
     await session.refresh(project)
     return CustomORJSONResponse(projects.project_model_to_project(project))

@@ -1,7 +1,7 @@
 import React, { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { format } from 'date-fns';
-import { Activity, ArrowLeft, Check, Copy, Pencil, Plus, RefreshCcw, Save, UserCircle, X } from 'lucide-react';
+import { Activity, ArrowLeft, Check, Copy, Pencil, Plus, RefreshCcw, Save, Trash2, UserCircle, X } from 'lucide-react';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
     Button,
@@ -30,7 +30,6 @@ import { useGetFeishuConfigQuery, useUpdateFeishuConfigMutation } from 'services
 import { useDeleteProjectBackendMutation, useGetProjectBackendsQuery } from 'services/backend';
 import { useGetAllEventsQuery } from 'services/events';
 import { useGetGpusListQuery } from 'services/gpu';
-import { useGetInstancesQuery } from 'services/instance';
 import {
     useAddProjectMemberMutation,
     useCreateProjectMutation,
@@ -61,7 +60,6 @@ import {
     useGetRunsQuery,
     useStopRunsMutation,
 } from 'services/run';
-import { useGetRuntimeImagesQuery, useUpdateRuntimeImagesMutation } from 'services/runtimeImages';
 import {
     useApproveRunRequestMutation,
     useCreateRunRequestMutation,
@@ -70,6 +68,7 @@ import {
     useRejectRunRequestMutation,
     useRetryRunRequestMutation,
 } from 'services/runRequest';
+import { useGetRuntimeImagesQuery, useUpdateRuntimeImagesMutation } from 'services/runtimeImages';
 import { useDeleteSecretsMutation, useGetAllSecretsQuery, useUpdateSecretMutation } from 'services/secrets';
 import {
     useCreateUserMutation,
@@ -223,6 +222,46 @@ const formatDetailedGpuCapacity = (
     return gpuText || `${resources.gpu_count} GPU`;
 };
 
+const GpuDeviceChips = ({ devices, locale }: { devices: IResourcePoolGpuDevice[] | null | undefined; locale: TLocale }) => {
+    const text = (zh: string, en: string) => (locale === 'zh' ? zh : en);
+    if (!devices?.length) {
+        return <span className="text-sm text-slate-500 dark:text-slate-400">{text('无 GPU', 'No GPU')}</span>;
+    }
+    return (
+        <div className="flex min-w-0 flex-wrap gap-2">
+            {devices.map((device, index) => {
+                const title = [
+                    device.index !== null && device.index !== undefined ? `#${device.index}` : `#${index}`,
+                    device.name,
+                    device.memory_gib ? `${device.memory_gib}GiB` : '',
+                ]
+                    .filter(Boolean)
+                    .join(' / ');
+                const key = device.uuid || `${device.name}-${index}`;
+                return (
+                    <span
+                        key={key}
+                        className={`inline-flex max-w-full flex-col rounded-lg border px-2.5 py-2 text-xs ${
+                            device.occupied
+                                ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200'
+                                : 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200'
+                        }`}
+                    >
+                        <span className="truncate font-semibold">{title}</span>
+                        <span className="mt-1 truncate text-[11px] opacity-80">
+                            {device.occupied
+                                ? `${text('占用', 'Occupied')}${device.project_name ? ` · ${device.project_name}` : ''}${
+                                      device.run_name ? ` · ${device.run_name}` : ''
+                                  }`
+                                : text('空闲', 'Idle')}
+                        </span>
+                    </span>
+                );
+            })}
+        </div>
+    );
+};
+
 const ProjectChips = ({ names }: { names: string[] | null | undefined }) => {
     const visibleNames = (names ?? []).filter(Boolean);
     if (visibleNames.length === 0) {
@@ -269,7 +308,9 @@ const ResourceSummaryStack = ({
             {rows.map((row) => (
                 <div key={row.label} className="flex min-w-0 items-center justify-between gap-3">
                     <span className="shrink-0 text-xs font-semibold text-slate-500 dark:text-slate-400">{row.label}</span>
-                    <span className="min-w-0 whitespace-normal break-words text-right font-semibold">{row.value}</span>
+                    <span className="min-w-0 whitespace-normal break-words text-right font-semibold" title={row.value}>
+                        {row.value}
+                    </span>
                 </div>
             ))}
         </div>
@@ -371,24 +412,20 @@ const ResourceUsageDashboard = ({
     );
 };
 
-type RunResourceLimitKey = 'nodes' | 'gpu' | 'cpu' | 'memory' | 'disk';
+type RunResourceLimitKey = 'gpu' | 'cpu' | 'memory';
 
 type RunResourceLimits = Record<RunResourceLimitKey, number>;
 
 const getRunResourceLimits = (resourcePools: IResourcePool[], selectedFleetName: string): RunResourceLimits => {
-    const selectedPools = selectedFleetName
-        ? resourcePools.filter((pool) => pool.name === selectedFleetName)
-        : resourcePools;
+    const selectedPools = selectedFleetName ? resourcePools.filter((pool) => pool.name === selectedFleetName) : resourcePools;
     const instances = selectedPools.flatMap((pool) => pool.instances);
     return instances.reduce<RunResourceLimits>(
         (limits, instance) => ({
-            nodes: limits.nodes + 1,
             gpu: Math.max(limits.gpu, instance.resources.gpu_count ?? 0),
             cpu: Math.max(limits.cpu, instance.resources.cpu_count ?? 0),
             memory: Math.max(limits.memory, instance.resources.memory_gib ?? 0),
-            disk: Math.max(limits.disk, instance.resources.disk_gib ?? 0),
         }),
-        { nodes: 0, gpu: 0, cpu: 0, memory: 0, disk: 0 },
+        { gpu: 0, cpu: 0, memory: 0 },
     );
 };
 
@@ -398,13 +435,12 @@ const parseResourceNumber = (value: string): number | null => {
     return Number.isFinite(parsed) ? parsed : null;
 };
 
-const formatResourceFormValue = (key: RunResourceLimitKey, value: number) =>
-    key === 'memory' || key === 'disk' ? `${value}GB` : String(value);
+const formatResourceFormValue = (key: RunResourceLimitKey, value: number) => (key === 'memory' ? `${value}GB` : String(value));
 
 const clampResourceFormValue = (key: RunResourceLimitKey, value: string, max: number) => {
     const parsed = parseResourceNumber(value);
     if (parsed === null) return value;
-    const min = key === 'nodes' ? 1 : 0;
+    const min = 0;
     return formatResourceFormValue(key, Math.max(min, Math.min(parsed, Math.max(max, min))));
 };
 
@@ -458,11 +494,7 @@ const ResourceSliderField = ({
                         className="h-8 w-20 border-0 bg-transparent px-1 text-right text-sm font-semibold shadow-none focus:ring-0"
                         onChange={(event) => onChange(event.target.value)}
                     />
-                    {unit && (
-                        <span className="shrink-0 text-xs font-semibold text-slate-500 dark:text-slate-400">
-                            {unit}
-                        </span>
-                    )}
+                    {unit && <span className="shrink-0 text-xs font-semibold text-slate-500 dark:text-slate-400">{unit}</span>}
                 </div>
             </div>
             <input
@@ -573,14 +605,11 @@ export const DashboardPage: React.FC = () => {
     const requests = useGetAllRunRequestsQuery({ include_all: role.canUseProjectAdmin, limit: 100 });
     const runs = useGetRunsQuery({ limit: 100, job_submissions_limit: 1 });
     const resourcePools = useGetResourcePoolsQuery({ only_active: false, limit: 100 }, { skip: !role.canUseGlobalAdmin });
-    const instances = useGetInstancesQuery(
-        { only_active: true, include_imported: true, limit: 100 },
-        { skip: !role.canUseProjectAdmin },
-    );
     const events = useGetAllEventsQuery({ limit: 8 }, { skip: !role.canUseGlobalAdmin });
     const stats = getRunRequestStats(requests.data ?? []);
     const runItems = getUnifiedRunItems(requests.data ?? [], runs.data ?? []);
     const runningRuns = (runs.data ?? []).filter((run) => run.status === 'running').length;
+    const activeInstanceCount = (resourcePools.data ?? []).reduce((count, pool) => count + pool.instances.length, 0);
 
     return (
         <>
@@ -601,11 +630,7 @@ export const DashboardPage: React.FC = () => {
                 {role.canUseProjectAdmin ? (
                     <>
                         <MetricCard label={text('资源池', 'Fleets')} value={resourcePools.data?.length ?? 0} accent="blue" />
-                        <MetricCard
-                            label={text('活跃实例', 'Active instances')}
-                            value={instances.data?.length ?? 0}
-                            accent="slate"
-                        />
+                        <MetricCard label={text('活跃实例', 'Active instances')} value={activeInstanceCount} accent="slate" />
                     </>
                 ) : (
                     <>
@@ -793,13 +818,15 @@ export const RunRequestCreatePage: React.FC = () => {
         name: '',
         image: '',
         commands: '',
-        env: '',
-        ports: '',
-        nodes: '1',
+        entrypoint: '',
+        working_dir: '',
+        env: [{ key: '', value: '' }],
+        ports: [{ host: '', container: '', protocol: 'tcp' }],
+        volumes: [{ source: '', target: '', read_only: false }],
+        privileged: false,
         cpu: '',
         memory: '',
         gpu: '',
-        disk: '',
         max_duration: '4h',
         fleets: '',
     });
@@ -814,6 +841,24 @@ export const RunRequestCreatePage: React.FC = () => {
     );
 
     const update = (key: keyof IRunRequestFormValues, value: string) => setValues((current) => ({ ...current, [key]: value }));
+    const updateEnvRow = (index: number, field: keyof TRunRequestEnvRow, value: string) => {
+        setValues((current) => ({
+            ...current,
+            env: current.env.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value } : row)),
+        }));
+    };
+    const updatePortRow = (index: number, field: keyof TRunRequestPortRow, value: string) => {
+        setValues((current) => ({
+            ...current,
+            ports: current.ports.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value } : row)),
+        }));
+    };
+    const updateVolumeRow = (index: number, field: keyof TRunRequestVolumeRow, value: string | boolean) => {
+        setValues((current) => ({
+            ...current,
+            volumes: current.volumes.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value } : row)),
+        }));
+    };
     const updateResource = (key: RunResourceLimitKey, value: string) => {
         const formattedValue = value.trim() ? formatResourceFormValue(key, Number(value)) : '';
         setValues((current) => ({
@@ -831,35 +876,39 @@ export const RunRequestCreatePage: React.FC = () => {
     const updateProject = (projectName: string) => {
         setValues((current) => ({ ...current, project_name: projectName, fleets: '' }));
     };
+    const runtimeImageGroups = useMemo(() => {
+        const groups = new Map<string, IRuntimeImage[]>();
+        for (const image of runtimeImages.data ?? []) {
+            const category = image.category || text('其他', 'Other');
+            groups.set(category, [...(groups.get(category) ?? []), image]);
+        }
+        return Array.from(groups.entries());
+    }, [runtimeImages.data, text]);
 
     useEffect(() => {
         setValues((current) => ({
             ...current,
-            image:
-                current.image || runtimeImages.data?.length
-                    ? current.image || runtimeImages.data?.[0]?.image || ''
-                    : '',
-            nodes: clampResourceFormValue('nodes', current.nodes || '1', resourceLimits.nodes || 1),
+            project_name: current.project_name || projects[0]?.project_name || '',
+            image: current.image || runtimeImages.data?.length ? current.image || runtimeImages.data?.[0]?.image || '' : '',
             gpu: clampResourceFormValue('gpu', current.gpu, resourceLimits.gpu),
             cpu: clampResourceFormValue('cpu', current.cpu, resourceLimits.cpu),
             memory: clampResourceFormValue('memory', current.memory, resourceLimits.memory),
-            disk: clampResourceFormValue('disk', current.disk, resourceLimits.disk),
         }));
-    }, [
-        resourceLimits.cpu,
-        resourceLimits.disk,
-        resourceLimits.gpu,
-        resourceLimits.memory,
-        resourceLimits.nodes,
-        runtimeImages.data,
-    ]);
+    }, [projects, resourceLimits.cpu, resourceLimits.gpu, resourceLimits.memory, runtimeImages.data]);
 
     const onSubmit = async (event: FormEvent) => {
         event.preventDefault();
+        if (!projects.length) {
+            pushNotification({
+                type: 'error',
+                header: text('请先创建项目', 'Create a project first'),
+            });
+            return;
+        }
         if (!runtimeImages.data?.length) {
             pushNotification({
                 type: 'error',
-                header: text('请先配置任务镜像', 'Configure runtime images first'),
+                header: text('请选择任务镜像', 'Select a runtime image'),
             });
             return;
         }
@@ -884,6 +933,10 @@ export const RunRequestCreatePage: React.FC = () => {
                 resources: createParams.request.resources,
                 max_duration: createParams.request.max_duration ?? undefined,
                 fleets: createParams.request.fleets ?? undefined,
+                entrypoint: createParams.request.entrypoint ?? undefined,
+                working_dir: createParams.request.working_dir ?? undefined,
+                volumes: createParams.request.volumes ?? undefined,
+                privileged: createParams.request.privileged ?? undefined,
             };
             const result = await applyRun({
                 project_name: values.project_name,
@@ -928,13 +981,17 @@ export const RunRequestCreatePage: React.FC = () => {
                                     </option>
                                 ))}
                             </SelectInput>
+                            {!projects.length && (
+                                <span className="mt-1.5 block text-xs text-amber-700 dark:text-amber-300">
+                                    {text(
+                                        '暂无项目，请最高管理员先创建项目。',
+                                        'No projects yet. Ask a global administrator to create one first.',
+                                    )}
+                                </span>
+                            )}
                         </Field>
                         <Field label={text('任务名称', 'Name')}>
-                            <TextInput
-                                value={values.name}
-                                onChange={(event) => update('name', event.target.value)}
-                                placeholder="train-qwen"
-                            />
+                            <TextInput value={values.name} onChange={(event) => update('name', event.target.value)} />
                         </Field>
                         <Field label={text('镜像', 'Image')}>
                             <SelectInput
@@ -943,18 +1000,19 @@ export const RunRequestCreatePage: React.FC = () => {
                                 onChange={(event) => update('image', event.target.value)}
                                 disabled={runtimeImages.isLoading || !runtimeImages.data?.length}
                             >
-                                {(runtimeImages.data ?? []).map((image) => (
-                                    <option key={image.image} value={image.image}>
-                                        {image.name} - {image.image}
-                                    </option>
+                                {runtimeImageGroups.map(([category, images]) => (
+                                    <optgroup key={category} label={category}>
+                                        {images.map((image) => (
+                                            <option key={image.image} value={image.image}>
+                                                {image.name} - {image.image}
+                                            </option>
+                                        ))}
+                                    </optgroup>
                                 ))}
                             </SelectInput>
                             {!runtimeImages.isLoading && !runtimeImages.data?.length && (
                                 <span className="mt-1.5 block text-xs text-amber-700 dark:text-amber-300">
-                                    {text(
-                                        '请最高管理员先在系统设置配置镜像',
-                                        'Ask a global administrator to configure runtime images first.',
-                                    )}
+                                    {text('暂无可用任务镜像', 'No runtime images available')}
                                 </span>
                             )}
                         </Field>
@@ -991,46 +1049,211 @@ export const RunRequestCreatePage: React.FC = () => {
                             />
                         </Field>
                         <div className="grid gap-4 md:grid-cols-2">
-                            <Field label={text('环境变量', 'Environment variables')}>
-                                <TextArea
-                                    value={values.env}
-                                    onChange={(event) => update('env', event.target.value)}
-                                    placeholder="KEY=value"
+                            <Field
+                                label={text('入口点', 'Entrypoint')}
+                                hint={text('可选，例如 /bin/bash。', 'Optional, for example /bin/bash.')}
+                            >
+                                <TextInput
+                                    aria-label={text('入口点', 'Entrypoint')}
+                                    value={values.entrypoint}
+                                    onChange={(event) => update('entrypoint', event.target.value)}
+                                    placeholder="/bin/bash"
                                 />
                             </Field>
-                            <Field label={text('端口', 'Ports')}>
-                                <TextArea
-                                    value={values.ports}
-                                    onChange={(event) => update('ports', event.target.value)}
-                                    placeholder="8888, 6006"
+                            <Field
+                                label={text('工作目录', 'Working directory')}
+                                hint={text('容器内路径。', 'Path inside the container.')}
+                            >
+                                <TextInput
+                                    aria-label={text('工作目录', 'Working directory')}
+                                    value={values.working_dir}
+                                    onChange={(event) => update('working_dir', event.target.value)}
+                                    placeholder="/workspace"
                                 />
                             </Field>
                         </div>
+                        <div className="grid gap-4 md:grid-cols-2">
+                            <Panel title={text('环境变量', 'Environment variables')}>
+                                <div className="grid gap-3">
+                                    {values.env.map((row, index) => (
+                                        <div key={index} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+                                            <TextInput
+                                                aria-label={text('环境变量名', 'Environment key')}
+                                                value={row.key}
+                                                onChange={(event) => updateEnvRow(index, 'key', event.target.value)}
+                                                placeholder="KEY"
+                                            />
+                                            <TextInput
+                                                aria-label={text('环境变量值', 'Environment value')}
+                                                value={row.value}
+                                                onChange={(event) => updateEnvRow(index, 'value', event.target.value)}
+                                                placeholder="value"
+                                            />
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                icon={<Trash2 className="h-4 w-4" />}
+                                                onClick={() =>
+                                                    setValues((current) => ({
+                                                        ...current,
+                                                        env: current.env.filter((_, rowIndex) => rowIndex !== index),
+                                                    }))
+                                                }
+                                            >
+                                                {text('删除', 'Delete')}
+                                            </Button>
+                                        </div>
+                                    ))}
+                                    <Button
+                                        type="button"
+                                        icon={<Plus className="h-4 w-4" />}
+                                        onClick={() =>
+                                            setValues((current) => ({
+                                                ...current,
+                                                env: [...current.env, { key: '', value: '' }],
+                                            }))
+                                        }
+                                    >
+                                        {text('添加变量', 'Add variable')}
+                                    </Button>
+                                </div>
+                            </Panel>
+                            <Panel title={text('端口映射', 'Port mappings')}>
+                                <div className="grid gap-3">
+                                    {values.ports.map((row, index) => (
+                                        <div
+                                            key={index}
+                                            className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px_auto]"
+                                        >
+                                            <TextInput
+                                                aria-label={text('宿主端口', 'Host port')}
+                                                value={row.host}
+                                                onChange={(event) => updatePortRow(index, 'host', event.target.value)}
+                                                placeholder={text('宿主端口', 'Host port')}
+                                            />
+                                            <TextInput
+                                                aria-label={text('容器端口', 'Container port')}
+                                                value={row.container}
+                                                onChange={(event) => updatePortRow(index, 'container', event.target.value)}
+                                                placeholder={text('容器端口', 'Container port')}
+                                            />
+                                            <SelectInput
+                                                aria-label={text('协议', 'Protocol')}
+                                                value={row.protocol}
+                                                onChange={(event) => updatePortRow(index, 'protocol', event.target.value)}
+                                            >
+                                                <option value="tcp">TCP</option>
+                                                <option value="udp">UDP</option>
+                                            </SelectInput>
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                icon={<Trash2 className="h-4 w-4" />}
+                                                onClick={() =>
+                                                    setValues((current) => ({
+                                                        ...current,
+                                                        ports: current.ports.filter((_, rowIndex) => rowIndex !== index),
+                                                    }))
+                                                }
+                                            >
+                                                {text('删除', 'Delete')}
+                                            </Button>
+                                        </div>
+                                    ))}
+                                    <Button
+                                        type="button"
+                                        icon={<Plus className="h-4 w-4" />}
+                                        onClick={() =>
+                                            setValues((current) => ({
+                                                ...current,
+                                                ports: [...current.ports, { host: '', container: '', protocol: 'tcp' }],
+                                            }))
+                                        }
+                                    >
+                                        {text('添加端口', 'Add port')}
+                                    </Button>
+                                </div>
+                            </Panel>
+                        </div>
+                        <Panel title={text('卷挂载', 'Volume mounts')}>
+                            <div className="grid gap-3">
+                                {values.volumes.map((row, index) => (
+                                    <div
+                                        key={index}
+                                        className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_120px_auto]"
+                                    >
+                                        <TextInput
+                                            aria-label={text('来源路径', 'Source path')}
+                                            value={row.source}
+                                            onChange={(event) => updateVolumeRow(index, 'source', event.target.value)}
+                                            placeholder="/data"
+                                        />
+                                        <TextInput
+                                            aria-label={text('容器路径', 'Container path')}
+                                            value={row.target}
+                                            onChange={(event) => updateVolumeRow(index, 'target', event.target.value)}
+                                            placeholder="/workspace/data"
+                                        />
+                                        <label className="flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">
+                                            <input
+                                                type="checkbox"
+                                                checked={row.read_only}
+                                                onChange={(event) => updateVolumeRow(index, 'read_only', event.target.checked)}
+                                            />
+                                            {text('只读', 'Read-only')}
+                                        </label>
+                                        <Button
+                                            type="button"
+                                            variant="ghost"
+                                            icon={<Trash2 className="h-4 w-4" />}
+                                            onClick={() =>
+                                                setValues((current) => ({
+                                                    ...current,
+                                                    volumes: current.volumes.filter((_, rowIndex) => rowIndex !== index),
+                                                }))
+                                            }
+                                        >
+                                            {text('删除', 'Delete')}
+                                        </Button>
+                                    </div>
+                                ))}
+                                <Button
+                                    type="button"
+                                    icon={<Plus className="h-4 w-4" />}
+                                    onClick={() =>
+                                        setValues((current) => ({
+                                            ...current,
+                                            volumes: [...current.volumes, { source: '', target: '', read_only: false }],
+                                        }))
+                                    }
+                                >
+                                    {text('添加挂载', 'Add mount')}
+                                </Button>
+                            </div>
+                        </Panel>
+                        <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm dark:border-slate-800 dark:bg-slate-950/40">
+                            <input
+                                className="mt-1"
+                                type="checkbox"
+                                checked={values.privileged}
+                                onChange={(event) => setValues((current) => ({ ...current, privileged: event.target.checked }))}
+                            />
+                            <span>
+                                <span className="block font-semibold text-slate-900 dark:text-slate-100">
+                                    {text('特权模式', 'Privileged mode')}
+                                </span>
+                                <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">
+                                    {text(
+                                        '仅在容器需要访问宿主机设备或 Docker-in-Docker 时开启。',
+                                        'Enable only when the container needs host devices or Docker-in-Docker.',
+                                    )}
+                                </span>
+                            </span>
+                        </label>
                     </div>
                 </Panel>
                 <Panel title={text('资源规格', 'Resources')}>
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                        <ResourceSliderField
-                            label={text('节点数', 'Nodes')}
-                            sliderLabel={text('节点数 滑条', 'Nodes slider')}
-                            inputLabel={text('节点数 数值', 'Nodes value')}
-                            value={values.nodes}
-                            min={1}
-                            max={resourceLimits.nodes || 1}
-                            unit={text('台', 'nodes')}
-                            maxLabel={text('可用上限', 'Available max')}
-                            onChange={(value) => updateResource('nodes', value)}
-                        />
-                        <ResourceSliderField
-                            label="GPU"
-                            sliderLabel={text('GPU 数量', 'GPU count')}
-                            inputLabel={text('GPU 数值', 'GPU value')}
-                            value={values.gpu}
-                            max={resourceLimits.gpu}
-                            unit={locale === 'zh' ? '张' : 'GPU'}
-                            maxLabel={text('可用上限', 'Available max')}
-                            onChange={(value) => updateResource('gpu', value)}
-                        />
+                    <div className="grid gap-4 md:grid-cols-2">
                         <ResourceSliderField
                             label="CPU"
                             sliderLabel={text('CPU 核心', 'CPU cores')}
@@ -1052,19 +1275,19 @@ export const RunRequestCreatePage: React.FC = () => {
                             onChange={(value) => updateResource('memory', value)}
                         />
                         <ResourceSliderField
-                            label={text('磁盘', 'Disk')}
-                            sliderLabel={text('磁盘 GiB', 'Disk GiB')}
-                            inputLabel={text('磁盘 数值', 'Disk value')}
-                            value={values.disk}
-                            max={resourceLimits.disk}
-                            unit="GiB"
+                            label="GPU"
+                            sliderLabel={text('GPU 数量', 'GPU count')}
+                            inputLabel={text('GPU 数值', 'GPU value')}
+                            value={values.gpu}
+                            max={resourceLimits.gpu}
+                            unit={locale === 'zh' ? '张' : 'GPU'}
                             maxLabel={text('可用上限', 'Available max')}
-                            onChange={(value) => updateResource('disk', value)}
+                            onChange={(value) => updateResource('gpu', value)}
                         />
                         <ResourceSliderField
-                            label={text('最长运行', 'Max duration')}
-                            sliderLabel={text('最长运行 小时', 'Max duration hours')}
-                            inputLabel={text('最长运行 数值', 'Max duration value')}
+                            label={text('运行时间', 'Run duration')}
+                            sliderLabel={text('运行时间 小时', 'Run duration hours')}
+                            inputLabel={text('运行时间 数值', 'Run duration value')}
                             value={values.max_duration}
                             min={1}
                             max={168}
@@ -1182,15 +1405,11 @@ export const RunRequestDetailsPage: React.FC = () => {
                                     value: request.data.request.ports?.join(', '),
                                 },
                                 {
-                                    label: text('节点数', 'Nodes'),
-                                    value: request.data.request.nodes ?? 1,
-                                },
-                                {
                                     label: text('资源', 'Resources'),
                                     value: formatRunRequestResourcesText(request.data.request),
                                 },
                                 {
-                                    label: text('最长运行时间', 'Max duration'),
+                                    label: text('运行时间', 'Run duration'),
                                     value: request.data.request.max_duration,
                                 },
                                 {
@@ -1871,8 +2090,13 @@ export const FleetDetailsPage: React.FC = () => {
                             {
                                 id: 'resources',
                                 header: text('资源', 'Resources'),
-                                cell: (item) => <ResourceSummaryStack resources={item.resources} locale={locale} detailedGpu />,
-                                className: 'min-w-64 whitespace-normal',
+                                cell: (item) => (
+                                    <div className="grid gap-3">
+                                        <ResourceSummaryStack resources={item.resources} locale={locale} detailedGpu />
+                                        <GpuDeviceChips devices={item.resources.gpu_devices} locale={locale} />
+                                    </div>
+                                ),
+                                className: 'min-w-80 whitespace-normal',
                             },
                             {
                                 id: 'usage',
@@ -1911,9 +2135,7 @@ export const FleetDetailsPage: React.FC = () => {
                                             </div>
                                         </div>
                                         <StatusBadge tone={assignment.whole_pool ? 'info' : 'neutral'}>
-                                            {assignment.whole_pool
-                                                ? text('整池', 'Whole')
-                                                : text('实例', 'Instances')}
+                                            {assignment.whole_pool ? text('整池', 'Whole') : text('实例', 'Instances')}
                                         </StatusBadge>
                                     </div>
                                     <div className="mt-4 text-sm text-slate-600 dark:text-slate-300">
@@ -1960,7 +2182,10 @@ export const FleetDetailsPage: React.FC = () => {
                             {text('危险操作', 'Danger zone')}
                         </div>
                         <p className="mt-1 text-sm text-red-600 dark:text-red-200">
-                            {text('删除资源池会移除该资源池及其接入信息。', 'Deleting a resource pool removes it and its connection information.')}
+                            {text(
+                                '删除资源池会移除该资源池及其接入信息。',
+                                'Deleting a resource pool removes it and its connection information.',
+                            )}
                         </p>
                         <Button
                             type="button"
@@ -1984,10 +2209,6 @@ export const InstancesPage: React.FC = () => {
     const { emptyTitle, locale, text } = useLocaleText();
     const [confirm] = useConfirmationDialog();
     const [pushNotification] = useNotifications();
-    const instances = useGetInstancesQuery(
-        { include_imported: true, limit: 500 },
-        { pollingInterval: 5000, refetchOnMountOrArgChange: true },
-    );
     const tokens = useGetWorkerRegistrationTokensQuery();
     const resourcePools = useGetResourcePoolsQuery(
         { only_active: false, limit: 500 },
@@ -1999,15 +2220,17 @@ export const InstancesPage: React.FC = () => {
     const [connectOpen, setConnectOpen] = useState(false);
     const [latestToken, setLatestToken] = useState<IWorkerRegistrationToken | null>(null);
     const availableFleets = useMemo(() => resourcePools.data ?? [], [resourcePools.data]);
-    const instanceResourceDetails = useMemo(() => {
-        const details = new Map<string, { pool: IResourcePool; instance: IResourcePoolInstance }>();
-        for (const pool of resourcePools.data ?? []) {
-            for (const instance of pool.instances) {
-                details.set(instance.id, { pool, instance });
-            }
-        }
-        return details;
-    }, [resourcePools.data]);
+    const instanceRows = useMemo(
+        () =>
+            (resourcePools.data ?? []).flatMap((pool) =>
+                pool.instances.map((instance) => ({
+                    ...instance,
+                    fleet_id: pool.id,
+                    fleet_name: pool.name,
+                })),
+            ),
+        [resourcePools.data],
+    );
     const connectState =
         typeof location.state === 'object' && location.state
             ? (location.state as { fleetName?: string; openConnectServer?: boolean })
@@ -2101,8 +2324,8 @@ export const InstancesPage: React.FC = () => {
             />
             <Panel title={text('实例列表', 'Instances')}>
                 <DataTable
-                    items={instances.data ?? []}
-                    loading={instances.isLoading}
+                    items={instanceRows}
+                    loading={resourcePools.isLoading}
                     keyGetter={(item) => item.id}
                     emptyTitle={emptyTitle}
                     columns={[
@@ -2128,39 +2351,35 @@ export const InstancesPage: React.FC = () => {
                             id: 'resources',
                             header: text('配置', 'Configuration'),
                             cell: (item) => (
-                                <ResourceSummaryStack
-                                    resources={instanceResourceDetails.get(item.id)?.instance.resources}
-                                    locale={locale}
-                                    detailedGpu
-                                />
+                                <div className="grid gap-3">
+                                    <ResourceSummaryStack resources={item.resources} locale={locale} detailedGpu />
+                                    <GpuDeviceChips devices={item.resources.gpu_devices} locale={locale} />
+                                </div>
                             ),
-                            className: 'min-w-64 whitespace-normal',
+                            className: 'min-w-80 whitespace-normal',
                         },
                         {
                             id: 'usage',
                             header: text('当前使用', 'Current usage'),
-                            cell: (item) => {
-                                const usage =
-                                    instanceResourceDetails.get(item.id)?.instance.usage ??
-                                    (item as IInstance & { usage?: IResourcePoolUsage | null }).usage;
-                                return <ResourceUsageDashboard usage={usage} locale={locale} compact />;
-                            },
+                            cell: (item) => <ResourceUsageDashboard usage={item.usage} locale={locale} compact />,
                             className: 'min-w-[28rem] whitespace-normal',
                         },
                         {
                             id: 'reported',
                             header: text('最近上报', 'Last report'),
-                            cell: (item) => {
-                                const usage =
-                                    instanceResourceDetails.get(item.id)?.instance.usage ??
-                                    (item as IInstance & { usage?: IResourcePoolUsage | null }).usage;
-                                return formatDateWithSeconds(usage?.updated_at);
-                            },
+                            cell: (item) => formatDateWithSeconds(item.usage?.updated_at),
                         },
                     ]}
                 />
             </Panel>
-            <Panel className="mt-5" title={text('注册 Token', 'Registration tokens')}>
+            <Panel
+                className="mt-5"
+                title={text('注册 Token', 'Registration tokens')}
+                description={text(
+                    '注册 Token 用于授权物理服务器接入资源池，生成后放入 dstack worker 启动命令，不是用户登录 Token。',
+                    'Registration tokens authorize physical servers to join a fleet through the dstack worker command. They are not user login tokens.',
+                )}
+            >
                 <DataTable
                     items={tokens.data ?? []}
                     loading={tokens.isLoading}
@@ -2326,7 +2545,11 @@ export const InstanceDetailsPage: React.FC = () => {
                             },
                             {
                                 label: 'GPU',
-                                value: formatDetailedGpuCapacity(instance.resources, locale),
+                                value: instance.resources.gpu_devices?.length ? (
+                                    <GpuDeviceChips devices={instance.resources.gpu_devices} locale={locale} />
+                                ) : (
+                                    formatDetailedGpuCapacity(instance.resources, locale)
+                                ),
                             },
                             {
                                 label: text('磁盘', 'Disk'),
@@ -2646,6 +2869,10 @@ export const ProjectDetailsPage: React.FC = () => {
     const [settings, setSettings] = useState({
         projectName,
         isPublic: false,
+        autoApprovalEnabled: false,
+        autoApprovalMaxCpu: 4,
+        autoApprovalMaxMemoryGib: 16,
+        autoApprovalMaxDurationHours: 8,
     });
     const [resourceAssignment, setResourceAssignment] = useState({
         resourcePoolName: '',
@@ -2658,8 +2885,19 @@ export const ProjectDetailsPage: React.FC = () => {
         setSettings({
             projectName: project.data.project_name,
             isPublic: project.data.isPublic,
+            autoApprovalEnabled: project.data.auto_approval?.enabled ?? false,
+            autoApprovalMaxCpu: project.data.auto_approval?.max_cpu ?? 4,
+            autoApprovalMaxMemoryGib: project.data.auto_approval?.max_memory_gib ?? 16,
+            autoApprovalMaxDurationHours: project.data.auto_approval?.max_duration_hours ?? 8,
         });
-    }, [project.data?.project_name, project.data?.isPublic]);
+    }, [
+        project.data?.project_name,
+        project.data?.isPublic,
+        project.data?.auto_approval?.enabled,
+        project.data?.auto_approval?.max_cpu,
+        project.data?.auto_approval?.max_memory_gib,
+        project.data?.auto_approval?.max_duration_hours,
+    ]);
 
     const existingMemberNames = useMemo(
         () => new Set((project.data?.members ?? []).map((member) => member.user.username)),
@@ -2688,6 +2926,12 @@ export const ProjectDetailsPage: React.FC = () => {
             project_name: projectName,
             new_project_name: settings.projectName.trim(),
             is_public: settings.isPublic,
+            auto_approval: {
+                enabled: settings.autoApprovalEnabled,
+                max_cpu: Math.max(0, Number(settings.autoApprovalMaxCpu) || 0),
+                max_memory_gib: Math.max(0, Number(settings.autoApprovalMaxMemoryGib) || 0),
+                max_duration_hours: Math.max(0, Number(settings.autoApprovalMaxDurationHours) || 0),
+            },
         }).unwrap();
         if (updatedProject.project_name !== projectName) {
             navigate(CONSOLE_ROUTES.WORKSPACE_PROJECT_DETAILS.FORMAT(updatedProject.project_name));
@@ -2776,7 +3020,10 @@ export const ProjectDetailsPage: React.FC = () => {
                 <form onSubmit={submitSettings}>
                     <Panel
                         title={text('项目设置', 'Project settings')}
-                        description={text('修改项目名称和可见性。', 'Edit project name and visibility.')}
+                        description={text(
+                            '修改项目名称、可见性和无 GPU 任务自动审批策略。',
+                            'Edit project name, visibility, and CPU-only auto approval policy.',
+                        )}
                         actions={
                             <>
                                 <Button type="button" variant="danger" onClick={removeProject}>
@@ -2816,6 +3063,76 @@ export const ProjectDetailsPage: React.FC = () => {
                                     <option value="public">{text('公开', 'Public')}</option>
                                 </SelectInput>
                             </Field>
+                        </div>
+                        <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-900/40">
+                            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                <div>
+                                    <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                                        {text('自动审批', 'Auto approval')}
+                                    </h3>
+                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                                        {text(
+                                            '仅对 GPU 数量为 0 且资源不超过上限的运行任务生效，CPU 和内存作为容器资源上限。',
+                                            'Only applies to GPU-free run requests within these limits. CPU and memory are container limits.',
+                                        )}
+                                    </p>
+                                </div>
+                                <label className="inline-flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200">
+                                    <input
+                                        type="checkbox"
+                                        className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                        checked={settings.autoApprovalEnabled}
+                                        onChange={(event) =>
+                                            setSettings((current) => ({
+                                                ...current,
+                                                autoApprovalEnabled: event.target.checked,
+                                            }))
+                                        }
+                                    />
+                                    {text('启用', 'Enabled')}
+                                </label>
+                            </div>
+                            <div className="mt-4 grid gap-4 md:grid-cols-3">
+                                <Field label={text('CPU 上限', 'CPU limit')}>
+                                    <TextInput
+                                        type="number"
+                                        min={0}
+                                        value={settings.autoApprovalMaxCpu}
+                                        onChange={(event) =>
+                                            setSettings((current) => ({
+                                                ...current,
+                                                autoApprovalMaxCpu: Number(event.target.value),
+                                            }))
+                                        }
+                                    />
+                                </Field>
+                                <Field label={text('内存上限 GiB', 'Memory limit GiB')}>
+                                    <TextInput
+                                        type="number"
+                                        min={0}
+                                        value={settings.autoApprovalMaxMemoryGib}
+                                        onChange={(event) =>
+                                            setSettings((current) => ({
+                                                ...current,
+                                                autoApprovalMaxMemoryGib: Number(event.target.value),
+                                            }))
+                                        }
+                                    />
+                                </Field>
+                                <Field label={text('运行时间上限 小时', 'Duration limit hours')}>
+                                    <TextInput
+                                        type="number"
+                                        min={0}
+                                        value={settings.autoApprovalMaxDurationHours}
+                                        onChange={(event) =>
+                                            setSettings((current) => ({
+                                                ...current,
+                                                autoApprovalMaxDurationHours: Number(event.target.value),
+                                            }))
+                                        }
+                                    />
+                                </Field>
+                            </div>
                         </div>
                     </Panel>
                 </form>
@@ -3514,9 +3831,7 @@ export const AdminSettingsPage: React.FC = () => {
     }, [runtimeImages.data]);
 
     const updateRuntimeImageRow = (index: number, key: keyof IRuntimeImage, value: string) => {
-        setRuntimeImageRows((rows) =>
-            rows.map((row, rowIndex) => (rowIndex === index ? { ...row, [key]: value } : row)),
-        );
+        setRuntimeImageRows((rows) => rows.map((row, rowIndex) => (rowIndex === index ? { ...row, [key]: value } : row)));
     };
 
     const addRuntimeImageRow = () => {
@@ -3649,7 +3964,10 @@ export const AdminSettingsPage: React.FC = () => {
                 >
                     <div className="space-y-3">
                         {runtimeImageRows.map((row, index) => (
-                            <div key={index} className="grid gap-3 rounded-xl border border-slate-200 p-4 dark:border-slate-800 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)_auto]">
+                            <div
+                                key={index}
+                                className="grid gap-3 rounded-xl border border-slate-200 p-4 dark:border-slate-800 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)_auto]"
+                            >
                                 <Field label={text('显示名称', 'Display name')}>
                                     <TextInput
                                         value={row.name}
@@ -3673,10 +3991,7 @@ export const AdminSettingsPage: React.FC = () => {
                         ))}
                     </div>
                     <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-                        {text(
-                            '未配置时，用户无法新建运行任务申请。',
-                            'When empty, users cannot create new run requests.',
-                        )}
+                        {text('未配置时，用户无法新建运行任务申请。', 'When empty, users cannot create new run requests.')}
                     </p>
                     <div className="mt-5 flex justify-end">
                         <Button

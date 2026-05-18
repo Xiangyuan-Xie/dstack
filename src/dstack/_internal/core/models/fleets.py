@@ -419,7 +419,7 @@ class FleetSpec(generate_dual_core_model(FleetSpecConfig)):
 class Fleet(CoreModel):
     id: uuid.UUID
     name: str
-    project_name: str
+    project_name: Optional[str] = None
     spec: FleetSpec
     created_at: datetime
     status: FleetStatus

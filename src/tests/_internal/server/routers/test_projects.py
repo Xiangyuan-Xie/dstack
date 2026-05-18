@@ -2147,6 +2147,73 @@ class TestUpdateProjectVisibility:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_project_admin_can_update_auto_approval_policy(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        admin_user = await create_user(session=session, name="admin", global_role=GlobalRole.USER)
+        project = await create_project(session=session, owner=admin_user, is_public=False)
+        await add_project_member(
+            session=session, project=project, user=admin_user, project_role=ProjectRole.ADMIN
+        )
+
+        response = await client.post(
+            f"/api/projects/{project.name}/update",
+            headers=get_auth_headers(admin_user.token),
+            json={
+                "auto_approval": {
+                    "enabled": True,
+                    "max_cpu": 8,
+                    "max_memory_gib": 32,
+                    "max_duration_hours": 4,
+                }
+            },
+        )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["auto_approval"] == {
+            "enabled": True,
+            "max_cpu": 8,
+            "max_memory_gib": 32,
+            "max_duration_hours": 4,
+        }
+        await session.refresh(project)
+        assert project.auto_approval_enabled is True
+        assert project.auto_approval_max_cpu == 8
+        assert project.auto_approval_max_memory_gib == 32
+        assert project.auto_approval_max_duration_hours == 4
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_regular_user_cannot_update_auto_approval_policy(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        admin_user = await create_user(session=session, name="admin", global_role=GlobalRole.USER)
+        regular_user = await create_user(session=session, name="user", global_role=GlobalRole.USER)
+        project = await create_project(session=session, owner=admin_user, is_public=False)
+        await add_project_member(
+            session=session, project=project, user=admin_user, project_role=ProjectRole.ADMIN
+        )
+        await add_project_member(
+            session=session, project=project, user=regular_user, project_role=ProjectRole.USER
+        )
+
+        response = await client.post(
+            f"/api/projects/{project.name}/update",
+            headers=get_auth_headers(regular_user.token),
+            json={
+                "auto_approval": {
+                    "enabled": True,
+                    "max_cpu": 8,
+                    "max_memory_gib": 32,
+                    "max_duration_hours": 4,
+                }
+            },
+        )
+
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
     async def test_non_member_cannot_update_visibility(
         self, test_db, session: AsyncSession, client: AsyncClient
     ):

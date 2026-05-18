@@ -301,6 +301,10 @@ class ProjectModel(BaseModel):
     name: Mapped[str] = mapped_column(String(50), unique=True)
     created_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
     is_public: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_approval_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_approval_max_cpu: Mapped[int] = mapped_column(Integer, default=4)
+    auto_approval_max_memory_gib: Mapped[int] = mapped_column(Integer, default=16)
+    auto_approval_max_duration_hours: Mapped[int] = mapped_column(Integer, default=8)
     deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     original_name: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     """`original_name` stores the deleted project's original name while `name` is changed to a unique
@@ -628,6 +632,7 @@ class RegisteredWorkerModel(BaseModel):
     )
     heartbeat_interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     latest_usage: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    gpus: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
     version: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
     __table_args__ = (
@@ -637,6 +642,38 @@ class RegisteredWorkerModel(BaseModel):
             name="uq_registered_workers_token_id_name",
         ),
         Index("ix_registered_workers_instance_id", instance_id, unique=True),
+    )
+
+
+class RegisteredWorkerGpuAllocationModel(BaseModel):
+    __tablename__ = "registered_worker_gpu_allocations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType(binary=False), primary_key=True, default=uuid.uuid4
+    )
+    worker_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("registered_workers.id", ondelete="CASCADE"), index=True
+    )
+    worker: Mapped["RegisteredWorkerModel"] = relationship()
+    instance_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("instances.id", ondelete="CASCADE"))
+    instance: Mapped["InstanceModel"] = relationship()
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"), index=True
+    )
+    job: Mapped["JobModel"] = relationship()
+    gpu_uuid: Mapped[str] = mapped_column(String(255), index=True)
+    created_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
+    released_at: Mapped[Optional[datetime]] = mapped_column(NaiveDateTime, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "ix_registered_worker_gpu_allocations_active_gpu",
+            worker_id,
+            gpu_uuid,
+            unique=True,
+            postgresql_where=released_at.is_(None),
+            sqlite_where=released_at.is_(None),
+        ),
     )
 
 
@@ -882,8 +919,10 @@ class FleetModel(PipelineModelMixin, BaseModel):
     )
     name: Mapped[str] = mapped_column(String(100))
 
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
-    project: Mapped["ProjectModel"] = relationship(foreign_keys=[project_id])
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True
+    )
+    project: Mapped[Optional["ProjectModel"]] = relationship(foreign_keys=[project_id])
 
     created_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
     last_processed_at: Mapped[datetime] = mapped_column(
@@ -945,8 +984,10 @@ class InstanceModel(PipelineModelMixin, BaseModel):
     deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(NaiveDateTime)
 
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
-    project: Mapped["ProjectModel"] = relationship(foreign_keys=[project_id])
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True
+    )
+    project: Mapped[Optional["ProjectModel"]] = relationship(foreign_keys=[project_id])
 
     # TODO: drop `pool_id` after the release without pools.
     pool_id: Mapped[Optional[uuid.UUID]] = mapped_column(

@@ -120,6 +120,12 @@ jest.mock('./Layout', () => ({
                 owner: { username: 'admin' },
                 created_at: '2026-05-16T09:00:00+08:00',
                 isPublic: false,
+                auto_approval: {
+                    enabled: false,
+                    max_cpu: 4,
+                    max_memory_gib: 16,
+                    max_duration_hours: 8,
+                },
             },
         ],
         role: {
@@ -169,6 +175,12 @@ jest.mock('services/project', () => ({
             owner: { username: 'admin' },
             created_at: '2026-05-16T09:00:00+08:00',
             isPublic: false,
+            auto_approval: {
+                enabled: false,
+                max_cpu: 4,
+                max_memory_gib: 16,
+                max_duration_hours: 8,
+            },
         },
         isLoading: false,
     }),
@@ -485,6 +497,12 @@ describe('ProjectDetailsPage', () => {
             project_name: 'old-project',
             new_project_name: 'new-project',
             is_public: false,
+            auto_approval: {
+                enabled: false,
+                max_cpu: 4,
+                max_memory_gib: 16,
+                max_duration_hours: 8,
+            },
         });
         expect(mockNavigate).toHaveBeenCalledWith('/workspace/projects/new-project');
     });
@@ -505,6 +523,40 @@ describe('ProjectDetailsPage', () => {
             project_name: 'old-project',
             new_project_name: 'old-project',
             is_public: false,
+            auto_approval: {
+                enabled: false,
+                max_cpu: 4,
+                max_memory_gib: 16,
+                max_duration_hours: 8,
+            },
+        });
+    });
+
+    test('saves CPU-only auto approval limits with project settings', async () => {
+        mockUpdateProject.mockReturnValue({
+            unwrap: () => Promise.resolve({ project_name: 'old-project' }),
+        });
+
+        render(<ProjectDetailsPage />);
+        await userEvent.click(screen.getByLabelText('启用'));
+        await userEvent.clear(screen.getByLabelText('CPU 上限'));
+        await userEvent.type(screen.getByLabelText('CPU 上限'), '8');
+        await userEvent.clear(screen.getByLabelText('内存上限 GiB'));
+        await userEvent.type(screen.getByLabelText('内存上限 GiB'), '32');
+        await userEvent.clear(screen.getByLabelText('运行时间上限 小时'));
+        await userEvent.type(screen.getByLabelText('运行时间上限 小时'), '4');
+        await userEvent.click(screen.getAllByRole('button', { name: '保存' })[0]);
+
+        expect(mockUpdateProject).toHaveBeenCalledWith({
+            project_name: 'old-project',
+            new_project_name: 'old-project',
+            is_public: false,
+            auto_approval: {
+                enabled: true,
+                max_cpu: 8,
+                max_memory_gib: 32,
+                max_duration_hours: 4,
+            },
         });
     });
 

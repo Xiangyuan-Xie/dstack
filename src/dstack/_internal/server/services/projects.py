@@ -21,6 +21,7 @@ from dstack._internal.core.models.projects import (
     MemberPermissions,
     Project,
     ProjectHookConfig,
+    ProjectRunAutoApprovalPolicy,
     ProjectsInfoList,
     ProjectsInfoListOrProjectsList,
 )
@@ -219,6 +220,7 @@ async def update_project(
     project: ProjectModel,
     project_name: Optional[str] = None,
     is_public: Optional[bool] = None,
+    auto_approval: Optional[ProjectRunAutoApprovalPolicy] = None,
 ):
     updated_fields = []
     if project_name is not None:
@@ -235,6 +237,13 @@ async def update_project(
     if is_public is not None and is_public != project.is_public:
         project.is_public = is_public
         updated_fields.append(f"is_public={is_public}")
+
+    if auto_approval is not None:
+        project.auto_approval_enabled = auto_approval.enabled
+        project.auto_approval_max_cpu = auto_approval.max_cpu
+        project.auto_approval_max_memory_gib = auto_approval.max_memory_gib
+        project.auto_approval_max_duration_hours = auto_approval.max_duration_hours
+        updated_fields.append("auto_approval")
 
     events.emit(
         session,
@@ -712,6 +721,12 @@ def project_model_to_project(
         members=members,
         current_user_project_role=current_user_project_role,
         is_public=project_model.is_public,
+        auto_approval=ProjectRunAutoApprovalPolicy(
+            enabled=project_model.auto_approval_enabled,
+            max_cpu=project_model.auto_approval_max_cpu,
+            max_memory_gib=project_model.auto_approval_max_memory_gib,
+            max_duration_hours=project_model.auto_approval_max_duration_hours,
+        ),
     )
 
 

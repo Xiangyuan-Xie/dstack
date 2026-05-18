@@ -80,7 +80,11 @@ class Target:
     def __post_init__(self):
         if self.type == EventTargetType.USER and self.project_id is not None:
             raise ValueError("User target cannot have project_id")
-        if self.type != EventTargetType.USER and self.project_id is None:
+        if (
+            self.type
+            not in {EventTargetType.USER, EventTargetType.FLEET, EventTargetType.INSTANCE}
+            and self.project_id is None
+        ):
             raise ValueError(f"{self.type} target must have project_id")
         if self.type == EventTargetType.PROJECT and self.id != self.project_id:
             raise ValueError("Project target id must be equal to project_id")
@@ -102,7 +106,7 @@ class Target:
         if isinstance(model, FleetModel):
             return Target(
                 type=EventTargetType.FLEET,
-                project_id=model.project_id or model.project.id,
+                project_id=model.project_id or (model.project.id if model.project else None),
                 id=model.id,
                 name=model.name,
             )
@@ -116,7 +120,7 @@ class Target:
         if isinstance(model, InstanceModel):
             return Target(
                 type=EventTargetType.INSTANCE,
-                project_id=model.project_id or model.project.id,
+                project_id=model.project_id or (model.project.id if model.project else None),
                 id=model.id,
                 name=model.name,
             )

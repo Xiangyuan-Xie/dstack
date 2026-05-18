@@ -255,12 +255,7 @@ async def get_run_candidate_fleet_models_filters(
         fleet_conditions = []
         for ref in map(EntityReference.parse, run_spec.merged_profile.fleets):
             if ref.project is None:
-                fleet_conditions.append(
-                    and_(
-                        FleetModel.name == ref.name,
-                        FleetModel.project_id == project.id,
-                    )
-                )
+                fleet_conditions.append(FleetModel.name == ref.name)
             else:
                 fleet_conditions.append(
                     and_(
@@ -297,7 +292,7 @@ async def select_run_candidate_fleet_models_with_filters(
     # Then select left out fleets without instances.
     stmt = (
         select(FleetModel)
-        .join(FleetModel.project)  # can be referenced by fleet_filters
+        .outerjoin(FleetModel.project)  # can be referenced by fleet_filters
         .join(FleetModel.instances)
         .where(*fleet_filters)
         .where(*instance_filters)
@@ -316,7 +311,7 @@ async def select_run_candidate_fleet_models_with_filters(
     fleet_models_with_instances_ids = [f.id for f in fleet_models_with_instances]
     res = await session.execute(
         select(FleetModel)
-        .join(FleetModel.project)  # can be referenced by fleet_filters
+        .outerjoin(FleetModel.project)  # can be referenced by fleet_filters
         .outerjoin(FleetModel.instances)
         .where(
             *fleet_filters,

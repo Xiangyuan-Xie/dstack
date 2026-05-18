@@ -26,14 +26,11 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("deleted", sa.Boolean(), nullable=False),
         sa.Column("deleted_at", sa.DateTime(), nullable=True),
-        sa.Column(
-            "project_id", sqlalchemy_utils.types.uuid.UUIDType(binary=False), nullable=False
-        ),
+        sa.Column("project_id", sqlalchemy_utils.types.uuid.UUIDType(binary=False), nullable=True),
         sa.ForeignKeyConstraint(
             ["project_id"],
             ["projects.id"],
             name=op.f("fk_pools_project_id_projects"),
-            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_pools")),
     )
@@ -44,9 +41,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("deleted", sa.Boolean(), nullable=False),
         sa.Column("deleted_at", sa.DateTime(), nullable=True),
-        sa.Column(
-            "project_id", sqlalchemy_utils.types.uuid.UUIDType(binary=False), nullable=False
-        ),
+        sa.Column("project_id", sqlalchemy_utils.types.uuid.UUIDType(binary=False), nullable=True),
         sa.Column("pool_id", sqlalchemy_utils.types.uuid.UUIDType(binary=False), nullable=False),
         sa.Column(
             "status",
@@ -103,7 +98,6 @@ def upgrade() -> None:
             ["project_id"],
             ["projects.id"],
             name=op.f("fk_instances_project_id_projects"),
-            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_instances")),
     )

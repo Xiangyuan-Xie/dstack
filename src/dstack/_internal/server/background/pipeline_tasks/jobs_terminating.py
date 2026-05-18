@@ -71,6 +71,7 @@ from dstack._internal.server.services.runner.ssh import runner_ssh_tunnel
 from dstack._internal.server.services.volumes import (
     volume_model_to_volume,
 )
+from dstack._internal.server.services.workers import release_job_gpu_allocations
 from dstack._internal.server.utils import sentry_utils
 from dstack._internal.utils import common
 from dstack._internal.utils.common import get_current_datetime, get_or_error
@@ -426,7 +427,7 @@ async def _load_job_volume_models(
         res = await session.execute(
             select(VolumeModel)
             .where(
-                VolumeModel.project_id == instance_model.project.id,
+                VolumeModel.project_id == job_model.project_id,
                 VolumeModel.name.in_(volume_names),
                 VolumeModel.deleted == False,
             )
@@ -530,6 +531,9 @@ async def _apply_process_result(
 
         if result.volume_update_rows:
             await session.execute(update(VolumeModel), result.volume_update_rows)
+
+        if result.job_update_map.get("instance_id") is None:
+            await release_job_gpu_allocations(session=session, job_id=item.id)
 
         if result.detached_volume_ids and instance_model is not None:
             await session.execute(
@@ -886,8 +890,9 @@ async def _detach_volumes_from_job_instance(
     run_termination_reason: Optional[RunTerminationReason],
 ) -> _VolumeDetachResult:
     job_spec = get_job_spec(job_model)
+    project = instance_model.project or job_model.project
     backend = await backends_services.get_project_backend_by_type(
-        project=instance_model.project,
+        project=project,
         backend_type=jpd.backend,
     )
     if backend is None:

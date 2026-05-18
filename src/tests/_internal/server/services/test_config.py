@@ -247,3 +247,20 @@ class TestServerConfigManager:
             )
             imports = imports_res.scalars().all()
             assert len(imports) == 1
+
+        @pytest.mark.asyncio
+        async def test_test_user_mode_ignores_default_main_config(
+            self, session: AsyncSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        ):
+            owner = await create_user(session=session, name="test_owner")
+            config_filepath = tmp_path / "config.yml"
+            with open(config_filepath, "w+") as f:
+                yaml.dump({"projects": [{"name": "main"}]}, f)
+            monkeypatch.setattr(settings, "SERVER_TEST_USERS_ENABLED", True)
+            with patch.object(settings, "SERVER_CONFIG_FILE_PATH", config_filepath):
+                manager = ServerConfigManager()
+                manager.load_config()
+                await manager.apply_config(session, owner)
+
+            project_res = await session.execute(select(ProjectModel))
+            assert project_res.scalars().all() == []

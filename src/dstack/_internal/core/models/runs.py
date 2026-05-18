@@ -356,6 +356,8 @@ class JobRuntimeData(CoreModel):
     network_mode: NetworkMode
     gpu: Optional[int] = None
     """`gpu` stores the GPU resource share. `None` means all available with no limit."""
+    gpu_uuids: Optional[list[str]] = None
+    """`gpu_uuids` stores concrete GPU devices assigned to registered workers."""
     cpu: Optional[float] = None
     """`cpu` stores the CPU resource share. `None` means all available with no limit."""
     memory: Optional[Memory] = None

@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import json
 import uuid
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from dstack._internal.core.backends.features import (
     BACKENDS_WITH_PLACEMENT_GROUPS_SUPPORT,
 )
 from dstack._internal.core.errors import BackendError, ServerClientError
+from dstack._internal.core.models.backends.base import BackendType
 from dstack._internal.core.models.common import NetworkMode
 from dstack._internal.core.models.compute_groups import (
     ComputeGroupProvisioningData,
@@ -76,6 +78,8 @@ from dstack._internal.server.models import (
     JobModel,
     PlacementGroupModel,
     ProjectModel,
+    RegisteredWorkerGpuAllocationModel,
+    RegisteredWorkerModel,
     RunModel,
     UserModel,
     VolumeAttachmentModel,
@@ -144,6 +148,10 @@ from dstack._internal.utils.interpolator import InterpolatorError
 from dstack._internal.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class _RegisteredWorkerGpuUnavailable(Exception):
+    pass
 
 
 @dataclass
@@ -648,15 +656,22 @@ async def _apply_assignment_result(
                 await _reset_job_lock_for_retry(session=session, item=item)
                 return
 
-            instance_model, current_offer = current_instance_offers[0]
-            _assign_instance_to_job(
-                session=session,
-                job_model=job_model,
-                instance_model=instance_model,
-                offer=current_offer,
-                multinode=context.multinode,
-            )
-            await _mark_job_processed(session=session, job_model=job_model)
+            for instance_model, current_offer in current_instance_offers:
+                try:
+                    await _assign_instance_to_job(
+                        session=session,
+                        job_model=job_model,
+                        instance_model=instance_model,
+                        offer=current_offer,
+                        multinode=context.multinode,
+                    )
+                except _RegisteredWorkerGpuUnavailable:
+                    continue
+                await _mark_job_processed(session=session, job_model=job_model)
+                return
+
+            await _reset_job_lock_for_retry(session=session, item=item)
+            return
 
 
 async def _refetch_locked_job(
@@ -1031,7 +1046,7 @@ def _create_placeholder_instance(
         id=uuid.uuid4(),
         name=f"{fleet_model.name}-{instance_num}",
         instance_num=instance_num,
-        project=project,
+        project=fleet_model.project,
         fleet=fleet_model,
         status=InstanceStatus.PENDING,
         unreachable=False,
@@ -1054,19 +1069,29 @@ def _get_current_reusable_instance_offers(
     )
 
 
-def _assign_instance_to_job(
+async def _assign_instance_to_job(
     session: AsyncSession,
     job_model: JobModel,
     instance_model: InstanceModel,
     offer: InstanceOfferWithAvailability,
     multinode: bool,
 ) -> None:
+    assigned_gpu_uuids = await _assign_registered_worker_gpus(
+        session=session,
+        job_model=job_model,
+        instance_model=instance_model,
+        offer=offer,
+    )
     job_model.fleet_id = instance_model.fleet_id
     job_model.instance_assigned = True
     job_model.instance = instance_model
     job_model.used_instance_id = instance_model.id
     job_model.job_provisioning_data = instance_model.job_provisioning_data
-    job_model.job_runtime_data = _prepare_job_runtime_data(offer, multinode).json()
+    job_model.job_runtime_data = _prepare_job_runtime_data(
+        offer,
+        multinode,
+        gpu_uuids=assigned_gpu_uuids,
+    ).json()
     job_model.skip_min_processing_interval = True
 
     switch_instance_status(session, instance_model, InstanceStatus.BUSY)
@@ -1086,7 +1111,9 @@ def _assign_instance_to_job(
 
 
 def _prepare_job_runtime_data(
-    offer: InstanceOfferWithAvailability, multinode: bool
+    offer: InstanceOfferWithAvailability,
+    multinode: bool,
+    gpu_uuids: Optional[list[str]] = None,
 ) -> JobRuntimeData:
     if offer.blocks == offer.total_blocks:
         if settings.JOB_NETWORK_MODE == settings.JobNetworkMode.FORCED_BRIDGE:
@@ -1099,14 +1126,76 @@ def _prepare_job_runtime_data(
         return JobRuntimeData(
             network_mode=network_mode,
             offer=offer,
+            gpu_uuids=gpu_uuids,
         )
     return JobRuntimeData(
         network_mode=NetworkMode.BRIDGE,
         offer=offer,
         cpu=offer.instance.resources.cpus,
         gpu=len(offer.instance.resources.gpus),
+        gpu_uuids=gpu_uuids,
         memory=Memory(offer.instance.resources.memory_mib / 1024),
     )
+
+
+async def _assign_registered_worker_gpus(
+    session: AsyncSession,
+    job_model: JobModel,
+    instance_model: InstanceModel,
+    offer: InstanceOfferWithAvailability,
+) -> Optional[list[str]]:
+    if instance_model.backend != BackendType.REGISTERED:
+        return None
+    gpu_count = len(offer.instance.resources.gpus)
+    if gpu_count == 0:
+        return []
+    worker_model = await _get_registered_worker_for_instance(session, instance_model.id)
+    worker_gpus = json.loads(worker_model.gpus or "[]")
+    active_allocations = await _get_active_registered_gpu_allocations(session, worker_model.id)
+    available_gpu_uuids = [
+        gpu["uuid"]
+        for gpu in worker_gpus
+        if gpu.get("uuid") and gpu["uuid"] not in active_allocations
+    ]
+    if len(available_gpu_uuids) < gpu_count:
+        raise _RegisteredWorkerGpuUnavailable()
+    assigned_gpu_uuids = available_gpu_uuids[:gpu_count]
+    for gpu_uuid in assigned_gpu_uuids:
+        session.add(
+            RegisteredWorkerGpuAllocationModel(
+                worker=worker_model,
+                instance=instance_model,
+                job=job_model,
+                gpu_uuid=gpu_uuid,
+            )
+        )
+    return assigned_gpu_uuids
+
+
+async def _get_registered_worker_for_instance(
+    session: AsyncSession,
+    instance_id: uuid.UUID,
+) -> RegisteredWorkerModel:
+    res = await session.execute(
+        select(RegisteredWorkerModel).where(RegisteredWorkerModel.instance_id == instance_id)
+    )
+    worker_model = res.scalar_one_or_none()
+    if worker_model is not None:
+        return worker_model
+    raise ServerClientError("Registered worker metadata is not loaded")
+
+
+async def _get_active_registered_gpu_allocations(
+    session: AsyncSession,
+    worker_id: uuid.UUID,
+) -> set[str]:
+    res = await session.execute(
+        select(RegisteredWorkerGpuAllocationModel.gpu_uuid).where(
+            RegisteredWorkerGpuAllocationModel.worker_id == worker_id,
+            RegisteredWorkerGpuAllocationModel.released_at.is_(None),
+        )
+    )
+    return set(res.scalars().all())
 
 
 async def _process_provisioning(
@@ -1602,7 +1691,7 @@ def _create_instance_model_for_job(
         id=uuid.uuid4(),
         name=f"{fleet_model.name}-{instance_num}",
         instance_num=instance_num,
-        project=project,
+        project=fleet_model.project,
         fleet=fleet_model,
         compute_group=compute_group_model,
         created_at=get_current_datetime(),

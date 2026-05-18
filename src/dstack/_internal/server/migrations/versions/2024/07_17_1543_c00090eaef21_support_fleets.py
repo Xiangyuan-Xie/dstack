@@ -29,9 +29,7 @@ def upgrade() -> None:
         "fleets",
         sa.Column("id", sqlalchemy_utils.types.uuid.UUIDType(binary=False), nullable=False),
         sa.Column("name", sa.String(length=100), nullable=False),
-        sa.Column(
-            "project_id", sqlalchemy_utils.types.uuid.UUIDType(binary=False), nullable=False
-        ),
+        sa.Column("project_id", sqlalchemy_utils.types.uuid.UUIDType(binary=False), nullable=True),
         sa.Column("created_at", dstack._internal.server.models.NaiveDateTime(), nullable=False),
         sa.Column(
             "last_processed_at", dstack._internal.server.models.NaiveDateTime(), nullable=False
@@ -57,7 +55,6 @@ def upgrade() -> None:
             ["project_id"],
             ["projects.id"],
             name=op.f("fk_fleets_project_id_projects"),
-            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_fleets")),
     )

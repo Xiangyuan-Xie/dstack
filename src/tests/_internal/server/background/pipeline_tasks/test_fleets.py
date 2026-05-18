@@ -8,11 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dstack._internal.core.models.backends.base import BackendType
-from dstack._internal.core.models.fleets import (
-    FleetNodesSpec,
-    FleetStatus,
-    InstanceGroupPlacement,
-)
+from dstack._internal.core.models.fleets import FleetNodesSpec, FleetStatus, InstanceGroupPlacement
 from dstack._internal.core.models.instances import InstanceStatus, InstanceTerminationReason
 from dstack._internal.core.models.runs import RunStatus
 from dstack._internal.core.models.users import GlobalRole, ProjectRole
@@ -896,6 +892,27 @@ class TestFleetWorker:
 
         await session.refresh(fleet)
         assert fleet.deleted
+
+    async def test_processes_empty_global_fleet_without_project(
+        self, test_db, session: AsyncSession, worker: FleetWorker
+    ):
+        spec = get_fleet_spec()
+        spec.configuration.nodes = FleetNodesSpec(min=0, target=0, max=10)
+        fleet = await create_fleet(
+            session=session,
+            project=None,
+            spec=spec,
+            assign_to_project=False,
+        )
+
+        fleet.lock_token = uuid.uuid4()
+        fleet.lock_expires_at = datetime(2025, 1, 2, 3, 4, tzinfo=timezone.utc)
+        await session.commit()
+
+        await worker.process(_fleet_to_pipeline_item(fleet))
+
+        await session.refresh(fleet)
+        assert fleet.deleted is False
 
     async def test_deletes_terminating_user_fleet(
         self, test_db, session: AsyncSession, worker: FleetWorker

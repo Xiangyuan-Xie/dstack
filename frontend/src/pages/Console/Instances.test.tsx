@@ -215,28 +215,7 @@ describe('InstancesPage', () => {
             isLoading: false,
         }));
         mockGetInstancesQuery.mockImplementation(() => ({
-            data: [
-                {
-                    id: 'instance-1',
-                    name: 'gpu-server-1',
-                    project_name: null,
-                    fleet_name: 'gpu-cluster',
-                    backend: 'registered',
-                    status: 'idle',
-                    region: 'local',
-                    usage: {
-                        cpu_percent: 42,
-                        memory_used_gib: 20,
-                        memory_total_gib: 64,
-                        disk_used_gib: 125,
-                        disk_total_gib: 500,
-                        gpu_memory_used_gib: 12,
-                        gpu_memory_total_gib: 40,
-                        gpu_util_percent: 76,
-                        updated_at: '2026-05-16T09:05:07+08:00',
-                    },
-                },
-            ],
+            data: [],
             isLoading: false,
         }));
     });
@@ -279,13 +258,11 @@ describe('InstancesPage', () => {
         );
     });
 
-    test('refreshes instances while the instances page is open', () => {
+    test('does not depend on the legacy project-scoped instances API', () => {
         render(<InstancesPage />);
 
-        expect(mockGetInstancesQuery).toHaveBeenCalledWith(
-            { include_imported: true, limit: 500 },
-            { pollingInterval: 5000, refetchOnMountOrArgChange: true },
-        );
+        expect(mockGetInstancesQuery).not.toHaveBeenCalled();
+        expect(screen.getByRole('button', { name: 'gpu-server-1' })).toBeInTheDocument();
     });
 
     test('renders registration token status without falling back to the router error page', () => {
@@ -305,6 +282,7 @@ describe('InstancesPage', () => {
         render(<InstancesPage />);
 
         expect(screen.getByText('注册 Token')).toBeInTheDocument();
+        expect(screen.getByText(/注册 Token 用于授权物理服务器接入资源池/)).toBeInTheDocument();
         expect(screen.getByText('可用')).toBeInTheDocument();
         expect(screen.queryByText('Page not found')).not.toBeInTheDocument();
     });

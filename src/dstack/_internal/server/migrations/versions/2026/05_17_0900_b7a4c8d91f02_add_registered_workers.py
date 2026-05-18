@@ -18,6 +18,35 @@ depends_on = None
 
 
 def upgrade() -> None:
+    with op.batch_alter_table("projects", schema=None) as batch_op:
+        batch_op.add_column(
+            sa.Column(
+                "auto_approval_enabled",
+                sa.Boolean(),
+                server_default=sa.false(),
+                nullable=False,
+            )
+        )
+        batch_op.add_column(
+            sa.Column("auto_approval_max_cpu", sa.Integer(), server_default="4", nullable=False)
+        )
+        batch_op.add_column(
+            sa.Column(
+                "auto_approval_max_memory_gib",
+                sa.Integer(),
+                server_default="16",
+                nullable=False,
+            )
+        )
+        batch_op.add_column(
+            sa.Column(
+                "auto_approval_max_duration_hours",
+                sa.Integer(),
+                server_default="8",
+                nullable=False,
+            )
+        )
+
     op.create_table(
         "worker_registration_tokens",
         sa.Column("id", UUIDType(binary=False), nullable=False),
@@ -55,6 +84,7 @@ def upgrade() -> None:
         sa.Column("last_heartbeat_at", sa.DateTime(), nullable=False),
         sa.Column("heartbeat_interval_seconds", sa.Integer(), nullable=True),
         sa.Column("latest_usage", sa.Text(), nullable=True),
+        sa.Column("gpus", sa.Text(), server_default="[]", nullable=False),
         sa.Column("version", sa.String(length=100), nullable=True),
         sa.ForeignKeyConstraint(
             ["fleet_id"],
@@ -90,6 +120,56 @@ def upgrade() -> None:
         batch_op.create_index(
             batch_op.f("ix_registered_workers_registration_token_id"),
             ["registration_token_id"],
+        )
+
+    op.create_table(
+        "registered_worker_gpu_allocations",
+        sa.Column("id", UUIDType(binary=False), nullable=False),
+        sa.Column("worker_id", UUIDType(binary=False), nullable=False),
+        sa.Column("instance_id", UUIDType(binary=False), nullable=False),
+        sa.Column("job_id", UUIDType(binary=False), nullable=False),
+        sa.Column("gpu_uuid", sa.String(length=255), nullable=False),
+        sa.Column("created_at", sa.DateTime(), nullable=False),
+        sa.Column("released_at", sa.DateTime(), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["instance_id"],
+            ["instances.id"],
+            name=op.f("fk_registered_worker_gpu_allocations_instance_id_instances"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["job_id"],
+            ["jobs.id"],
+            name=op.f("fk_registered_worker_gpu_allocations_job_id_jobs"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["worker_id"],
+            ["registered_workers.id"],
+            name=op.f("fk_registered_worker_gpu_allocations_worker_id_registered_workers"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_registered_worker_gpu_allocations")),
+    )
+    with op.batch_alter_table("registered_worker_gpu_allocations", schema=None) as batch_op:
+        batch_op.create_index(
+            batch_op.f("ix_registered_worker_gpu_allocations_gpu_uuid"),
+            ["gpu_uuid"],
+        )
+        batch_op.create_index(
+            batch_op.f("ix_registered_worker_gpu_allocations_job_id"),
+            ["job_id"],
+        )
+        batch_op.create_index(
+            batch_op.f("ix_registered_worker_gpu_allocations_worker_id"),
+            ["worker_id"],
+        )
+        batch_op.create_index(
+            "ix_registered_worker_gpu_allocations_active_gpu",
+            ["worker_id", "gpu_uuid"],
+            unique=True,
+            sqlite_where=sa.text("released_at IS NULL"),
+            postgresql_where=sa.text("released_at IS NULL"),
         )
 
     op.create_table(
@@ -168,6 +248,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    with op.batch_alter_table("projects", schema=None) as batch_op:
+        batch_op.drop_column("auto_approval_max_duration_hours")
+        batch_op.drop_column("auto_approval_max_memory_gib")
+        batch_op.drop_column("auto_approval_max_cpu")
+        batch_op.drop_column("auto_approval_enabled")
+
     with op.batch_alter_table("project_resource_instance_assignments", schema=None) as batch_op:
         batch_op.drop_index(batch_op.f("ix_project_resource_instance_assignments_project_id"))
         batch_op.drop_index(batch_op.f("ix_project_resource_instance_assignments_instance_id"))
@@ -180,6 +266,12 @@ def downgrade() -> None:
     with op.batch_alter_table("registered_workers", schema=None) as batch_op:
         batch_op.drop_index(batch_op.f("ix_registered_workers_registration_token_id"))
         batch_op.drop_index(batch_op.f("ix_registered_workers_instance_id"))
+    with op.batch_alter_table("registered_worker_gpu_allocations", schema=None) as batch_op:
+        batch_op.drop_index("ix_registered_worker_gpu_allocations_active_gpu")
+        batch_op.drop_index(batch_op.f("ix_registered_worker_gpu_allocations_worker_id"))
+        batch_op.drop_index(batch_op.f("ix_registered_worker_gpu_allocations_job_id"))
+        batch_op.drop_index(batch_op.f("ix_registered_worker_gpu_allocations_gpu_uuid"))
+    op.drop_table("registered_worker_gpu_allocations")
     op.drop_table("registered_workers")
 
     with op.batch_alter_table("worker_registration_tokens", schema=None) as batch_op:

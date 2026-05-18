@@ -1,8 +1,11 @@
 import argparse
+import os
 import socket
 import subprocess
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
 
@@ -10,6 +13,45 @@ from dstack._internal.cli.commands import BaseCommand
 from dstack._internal.cli.utils.common import console
 from dstack._internal.core.errors import CLIError
 from dstack._internal.utils.gpu import convert_nvidia_gpu_name
+
+_WORKER_DATA_DIR = Path("/var/lib/dstack/worker")
+
+
+@dataclass
+class _WorkerAssignment:
+    job_id: str
+    run_name: str
+    image: str
+    command: list[str]
+    env: dict[str, str] = field(default_factory=dict)
+    cpu: float | None = None
+    memory_gib: float | None = None
+    shm_size_gib: float | None = None
+    gpu_uuids: list[str] = field(default_factory=list)
+    username: str = "user"
+    workspace_mount_path: str = "/workspace"
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "_WorkerAssignment":
+        return cls(
+            job_id=str(data["job_id"]),
+            run_name=data["run_name"],
+            image=data["image"],
+            command=list(data.get("command") or []),
+            env=dict(data.get("env") or {}),
+            cpu=data.get("cpu"),
+            memory_gib=data.get("memory_gib"),
+            shm_size_gib=data.get("shm_size_gib"),
+            gpu_uuids=list(data.get("gpu_uuids") or []),
+            username=data.get("username") or "user",
+            workspace_mount_path=data.get("workspace_mount_path") or "/workspace",
+        )
+
+
+@dataclass
+class _RunningAssignment:
+    assignment: _WorkerAssignment
+    process: subprocess.Popen
 
 
 class WorkerCommand(BaseCommand):
@@ -72,19 +114,30 @@ class WorkerCommand(BaseCommand):
             f"Worker [code]{registered['worker_name']}[/] registered in fleet "
             f"[code]{registered['fleet_name']}[/]"
         )
+        running_assignments: dict[str, _RunningAssignment] = {}
         try:
             while True:
+                _report_finished_assignments(
+                    client=client,
+                    worker_id=worker_id,
+                    running_assignments=running_assignments,
+                )
                 client.heartbeat(
                     worker_id=worker_id,
-                    status="idle",
+                    status="busy" if running_assignments else "idle",
                     interval_seconds=args.interval,
                     usage=_detect_usage(),
                 )
                 poll_response = client.poll(worker_id=worker_id)
                 assignments = poll_response.get("assignments", [])
-                if assignments:
-                    console.print(
-                        "Received assignments, but local execution is not implemented in this CLI worker yet."
+                for assignment_data in assignments:
+                    assignment = _WorkerAssignment.from_dict(assignment_data)
+                    if assignment.job_id in running_assignments:
+                        continue
+                    running_assignments[assignment.job_id] = _start_assignment(
+                        client=client,
+                        worker_id=worker_id,
+                        assignment=assignment,
                     )
                 time.sleep(args.interval)
         except KeyboardInterrupt:
@@ -129,6 +182,25 @@ class _WorkerHTTPClient:
             "/api/workers/poll",
             {
                 "worker_id": worker_id,
+            },
+        )
+
+    def report(
+        self,
+        worker_id: str,
+        assignment: _WorkerAssignment,
+        status: str,
+        exit_status: int | None = None,
+        message: str | None = None,
+    ) -> dict:
+        return self._post(
+            "/api/workers/report",
+            {
+                "worker_id": worker_id,
+                "job_id": assignment.job_id,
+                "status": status,
+                "exit_status": exit_status,
+                "termination_message": message,
             },
         )
 
@@ -194,7 +266,7 @@ def _detect_nvidia_gpus() -> list[dict]:
         result = subprocess.run(
             [
                 "nvidia-smi",
-                "--query-gpu=name,memory.total",
+                "--query-gpu=uuid,index,name,memory.total",
                 "--format=csv,noheader,nounits",
             ],
             check=True,
@@ -210,18 +282,111 @@ def _detect_nvidia_gpus() -> list[dict]:
         if not line.strip():
             continue
         try:
-            name, memory_mib = [part.strip() for part in line.split(",", 1)]
+            uuid, index, name, memory_mib = [part.strip() for part in line.split(",", 3)]
             memory_mib_int = int(float(memory_mib))
+            index_int = int(index)
         except ValueError:
             continue
         gpus.append(
             {
+                "uuid": uuid,
+                "index": index_int,
                 "vendor": "nvidia",
                 "name": convert_nvidia_gpu_name(name),
                 "memory_mib": memory_mib_int,
             }
         )
     return gpus
+
+
+def _start_assignment(
+    client: _WorkerHTTPClient,
+    worker_id: str,
+    assignment: _WorkerAssignment,
+) -> _RunningAssignment:
+    host_workspace = _get_user_workspace(assignment.username)
+    host_workspace.mkdir(parents=True, exist_ok=True)
+    container_name = f"dstack-{assignment.job_id}"
+    command = _build_docker_run_command(
+        assignment=assignment,
+        container_name=container_name,
+        host_workspace=str(host_workspace),
+    )
+    client.report(worker_id=worker_id, assignment=assignment, status="pulling")
+    try:
+        process = subprocess.Popen(command)
+    except FileNotFoundError as exc:
+        client.report(
+            worker_id=worker_id,
+            assignment=assignment,
+            status="failed",
+            message="Docker is not installed or not available in PATH",
+        )
+        raise CLIError("Docker is not installed or not available in PATH") from exc
+    client.report(worker_id=worker_id, assignment=assignment, status="running")
+    return _RunningAssignment(assignment=assignment, process=process)
+
+
+def _report_finished_assignments(
+    client: _WorkerHTTPClient,
+    worker_id: str,
+    running_assignments: dict[str, _RunningAssignment],
+) -> None:
+    finished_job_ids = []
+    for job_id, running in running_assignments.items():
+        exit_status = running.process.poll()
+        if exit_status is None:
+            continue
+        status = "done" if exit_status == 0 else "failed"
+        client.report(
+            worker_id=worker_id,
+            assignment=running.assignment,
+            status=status,
+            exit_status=exit_status,
+        )
+        finished_job_ids.append(job_id)
+    for job_id in finished_job_ids:
+        del running_assignments[job_id]
+
+
+def _build_docker_run_command(
+    assignment: _WorkerAssignment,
+    container_name: str,
+    host_workspace: str,
+) -> list[str]:
+    command = [
+        "docker",
+        "run",
+        "--name",
+        container_name,
+        "--rm",
+        "--label",
+        f"dstack.job_id={assignment.job_id}",
+    ]
+    if assignment.cpu is not None:
+        command += ["--cpus", f"{assignment.cpu:g}"]
+    if assignment.memory_gib is not None:
+        command += ["--memory", f"{assignment.memory_gib:g}g"]
+    if assignment.shm_size_gib is not None:
+        command += ["--shm-size", f"{assignment.shm_size_gib:g}g"]
+    if assignment.gpu_uuids:
+        command += ["--gpus", "device=" + ",".join(assignment.gpu_uuids)]
+    for key, value in assignment.env.items():
+        command += ["-e", f"{key}={value}"]
+    command += ["-v", f"{host_workspace}:{assignment.workspace_mount_path}"]
+    command += ["-w", assignment.workspace_mount_path]
+    command.append(assignment.image)
+    command.extend(assignment.command)
+    return command
+
+
+def _get_user_workspace(username: str) -> Path:
+    safe_username = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in username)
+    return (
+        Path(os.environ.get("DSTACK_WORKER_DATA_DIR", str(_WORKER_DATA_DIR)))
+        / "users"
+        / safe_username
+    )
 
 
 def _detect_nvidia_gpu_usage() -> list[dict]:

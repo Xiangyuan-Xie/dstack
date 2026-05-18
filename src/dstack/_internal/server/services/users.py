@@ -66,10 +66,6 @@ _SERVER_TEST_USERS = [
     ),
 ]
 
-_SERVER_TEST_PROJECT_ROLES = {
-    "test-manager": ProjectRole.MANAGER,
-    "test-user": ProjectRole.USER,
-}
 _REMOVED_SERVER_TEST_USERNAMES = ["test-project-admin"]
 
 
@@ -94,7 +90,6 @@ def list_server_test_user_tokens() -> list[TestUserToken]:
 
 async def ensure_server_test_users(
     session: AsyncSession,
-    project: ProjectModel,
 ) -> list[TestUserToken]:
     for username in _REMOVED_SERVER_TEST_USERNAMES:
         user_model = await get_user_model_by_name(session=session, username=username)
@@ -119,14 +114,6 @@ async def ensure_server_test_users(
             user_model.token = DecryptedString(plaintext=test_user.token)
             user_model.token_hash = get_token_hash(test_user.token)
             await session.commit()
-        project_role = _SERVER_TEST_PROJECT_ROLES.get(test_user.username)
-        if project_role is not None:
-            await _ensure_project_member_role(
-                session=session,
-                project=project,
-                user=user_model,
-                project_role=project_role,
-            )
         created_or_updated.append(test_user)
     return created_or_updated
 

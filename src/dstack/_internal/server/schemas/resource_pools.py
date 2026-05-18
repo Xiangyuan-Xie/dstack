@@ -13,12 +13,24 @@ class ResourcePoolGpuSummary(CoreModel):
     memory_gib: Optional[float] = None
 
 
+class ResourcePoolGpuDevice(CoreModel):
+    uuid: Optional[str] = None
+    index: Optional[int] = None
+    name: str
+    memory_gib: Optional[float] = None
+    occupied: bool = False
+    project_name: Optional[str] = None
+    run_name: Optional[str] = None
+    job_id: Optional[UUID] = None
+
+
 class ResourcePoolResources(CoreModel):
     cpu_count: Optional[int] = None
     memory_gib: Optional[float] = None
     disk_gib: Optional[float] = None
     gpu_count: int = 0
     gpus: list[ResourcePoolGpuSummary] = []
+    gpu_devices: list[ResourcePoolGpuDevice] = []
 
 
 class ResourcePoolResourceSummary(CoreModel):

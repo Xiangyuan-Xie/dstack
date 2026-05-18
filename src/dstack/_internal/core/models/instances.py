@@ -24,6 +24,8 @@ class Gpu(CoreModel):
     name: str
     memory_mib: int
     vendor: Optional[gpuhunt.AcceleratorVendor] = None
+    uuid: Optional[str] = None
+    index: Optional[int] = None
     """`vendor` is declared as optional, but the root validator always sets a value.
     `assert gpu.vendor is not None` should be a safe type narrowing.
     """
@@ -299,7 +301,7 @@ class InstanceTerminationReason(str, Enum):
 
 class Instance(CoreModel):
     id: UUID
-    project_name: str
+    project_name: Optional[str] = None
     backend: Optional[BackendType] = None
     instance_type: Optional[InstanceType] = None
     name: str
