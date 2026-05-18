@@ -122,6 +122,8 @@ async def heartbeat_worker(
         status=body.status,
         total_blocks=body.total_blocks,
         busy_blocks=body.busy_blocks,
+        interval_seconds=body.interval_seconds,
+        usage=body.usage,
     )
     return CustomORJSONResponse(
         WorkerHeartbeatResponse(

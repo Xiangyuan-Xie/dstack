@@ -111,6 +111,14 @@ export const router = createBrowserRouter([
                         ),
                     },
                     {
+                        path: C.RESOURCES_INSTANCE_DETAILS.LEGACY_TEMPLATE,
+                        element: (
+                            <GlobalAdminRoute>
+                                <InstanceDetailsPage />
+                            </GlobalAdminRoute>
+                        ),
+                    },
+                    {
                         path: C.RESOURCES_OFFERS,
                         element: (
                             <GlobalAdminRoute>

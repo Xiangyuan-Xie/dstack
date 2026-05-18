@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -5,13 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dstack._internal.core.models.backends.base import BackendType
 from dstack._internal.core.models.fleets import FleetStatus
-from dstack._internal.core.models.instances import InstanceStatus
+from dstack._internal.core.models.instances import InstanceOfferWithAvailability, InstanceStatus
 from dstack._internal.core.models.runs import JobStatus, JobTerminationReason
 from dstack._internal.core.models.users import GlobalRole
 from dstack._internal.server.models import (
     FleetModel,
     InstanceModel,
     JobModel,
+    RegisteredWorkerModel,
     WorkerRegistrationTokenModel,
 )
 from dstack._internal.server.testing.common import (
@@ -108,6 +111,9 @@ class TestRegisteredWorkers:
         assert instance.backend == BackendType.REGISTERED
         assert instance.status == InstanceStatus.IDLE
         assert instance.total_blocks == 1
+        offer = InstanceOfferWithAvailability.__response__.parse_raw(instance.offer)
+        assert [gpu.name for gpu in offer.instance.resources.gpus] == ["NVIDIA A100"]
+        assert [gpu.memory_mib for gpu in offer.instance.resources.gpus] == [81920]
 
     async def test_worker_heartbeat_updates_instance_status(
         self, session: AsyncSession, client: AsyncClient
@@ -150,6 +156,57 @@ class TestRegisteredWorkers:
         assert instance.total_blocks == 2
         assert instance.busy_blocks == 0
         assert instance.unreachable is False
+
+    async def test_worker_heartbeat_saves_interval_and_usage(
+        self, session: AsyncSession, client: AsyncClient
+    ):
+        admin = await create_user(session, global_role=GlobalRole.ADMIN)
+        project = await create_project(session, name="main-project", owner=admin)
+        await create_fleet(session=session, project=project, name="lab-workers")
+        token = (
+            await client.post(
+                "/api/admin/worker_tokens/create",
+                headers=get_auth_headers(admin.token),
+                json={"fleet_name": "lab-workers"},
+            )
+        ).json()["token"]
+        register_response = await client.post(
+            "/api/workers/register",
+            headers=get_auth_headers(token),
+            json={
+                "worker_name": "gpu-box-1",
+                "hostname": "gpu-box-1.local",
+                "resources": {"cpus": 4, "memory_mib": 8192, "gpus": []},
+            },
+        )
+        usage = {
+            "cpu_percent": 12.5,
+            "memory_used_gib": 4,
+            "memory_total_gib": 8,
+            "disk_used_gib": 1,
+            "disk_total_gib": 2,
+            "gpu_memory_used_gib": 0.5,
+            "gpu_memory_total_gib": 4,
+            "gpu_util_percent": 33,
+            "updated_at": "2026-05-18T12:40:00+00:00",
+        }
+
+        response = await client.post(
+            "/api/workers/heartbeat",
+            headers=get_auth_headers(token),
+            json={
+                "worker_id": register_response.json()["worker_id"],
+                "status": "idle",
+                "interval_seconds": 15,
+                "usage": usage,
+            },
+        )
+
+        response_json = response.json()
+        assert response.status_code == 200, response_json
+        worker = (await session.execute(select(RegisteredWorkerModel))).scalar_one()
+        assert worker.heartbeat_interval_seconds == 15
+        assert json.loads(worker.latest_usage) == usage
 
     async def test_worker_poll_returns_empty_assignments(
         self, session: AsyncSession, client: AsyncClient

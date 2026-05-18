@@ -1,3 +1,43 @@
+declare interface IResourcePoolGpuSummary {
+    name: string;
+    count: number;
+    memory_gib?: number | null;
+}
+
+declare interface IResourcePoolResources {
+    cpu_count?: number | null;
+    memory_gib?: number | null;
+    disk_gib?: number | null;
+    gpu_count: number;
+    gpus: IResourcePoolGpuSummary[];
+}
+
+declare interface IResourcePoolResourceSummary {
+    instance_count: number;
+    cpu_count: number;
+    memory_gib: number;
+    disk_gib: number;
+    gpu_count: number;
+    gpus: IResourcePoolGpuSummary[];
+}
+
+declare interface IResourcePoolUsage {
+    cpu_percent?: number | null;
+    memory_used_gib?: number | null;
+    memory_total_gib?: number | null;
+    disk_used_gib?: number | null;
+    disk_total_gib?: number | null;
+    gpu_memory_used_gib?: number | null;
+    gpu_memory_total_gib?: number | null;
+    gpu_util_percent?: number | null;
+    updated_at?: string | null;
+}
+
+declare interface IResourcePoolUsageSummary extends IResourcePoolUsage {
+    instance_count?: number | null;
+    reporting_instance_count?: number | null;
+}
+
 declare interface IResourcePoolOccupancy {
     status: 'idle' | 'busy';
     project_names: string[];
@@ -12,6 +52,8 @@ declare interface IResourcePoolInstance {
     backend?: TBackendType | string | null;
     authorized_projects: string[];
     occupancy: IResourcePoolOccupancy;
+    resources: IResourcePoolResources;
+    usage?: IResourcePoolUsage | null;
 }
 
 declare interface IResourcePoolAssignment {
@@ -32,6 +74,8 @@ declare interface IResourcePool {
     authorized_project_names: string[];
     idle_instance_count: number;
     busy_instance_count: number;
+    resource_summary: IResourcePoolResourceSummary;
+    usage_summary?: IResourcePoolUsageSummary | null;
 }
 
 declare type TResourcePoolListParams = TBaseRequestListParams & {
@@ -46,6 +90,11 @@ declare type TResourcePoolGetParams = {
 declare type TResourcePoolApplyParams = {
     plan: IApplyFleetPlanRequestRequest['plan'];
     force: boolean;
+};
+
+declare type TResourcePoolUpdateParams = Partial<TResourcePoolApplyParams> & {
+    resource_pool_name?: IResourcePool['name'];
+    new_resource_pool_name?: IResourcePool['name'];
 };
 
 declare type TResourcePoolDeleteParams = {

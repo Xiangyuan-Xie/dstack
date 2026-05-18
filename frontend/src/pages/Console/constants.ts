@@ -31,9 +31,9 @@ export const CONSOLE_ROUTES = {
     },
     RESOURCES_INSTANCES: '/resources/instances',
     RESOURCES_INSTANCE_DETAILS: {
-        TEMPLATE: '/resources/instances/:projectName/:instanceId',
-        FORMAT: (projectName: string, instanceId: string) =>
-            buildRoute(CONSOLE_ROUTES.RESOURCES_INSTANCE_DETAILS.TEMPLATE, { projectName, instanceId }),
+        TEMPLATE: '/resources/instances/:instanceId',
+        LEGACY_TEMPLATE: '/resources/instances/:projectName/:instanceId',
+        FORMAT: (instanceId: string) => buildRoute(CONSOLE_ROUTES.RESOURCES_INSTANCE_DETAILS.TEMPLATE, { instanceId }),
     },
     RESOURCES_OFFERS: '/resources/offers',
     RESOURCES_MODELS: '/resources/models',

@@ -271,6 +271,27 @@ class OAuthConfigModel(BaseModel):
     )
 
 
+class RuntimeImageModel(BaseModel):
+    __tablename__ = "runtime_images"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUIDType(binary=False), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    image: Mapped[str] = mapped_column(String(500))
+    position: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
+    updated_at: Mapped[datetime] = mapped_column(NaiveDateTime, default=get_current_datetime)
+    updated_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_by: Mapped[Optional[UserModel]] = relationship(
+        "UserModel", foreign_keys=[updated_by_id]
+    )
+
+    __table_args__ = (Index("ix_runtime_images_position", position),)
+
+
 class ProjectModel(BaseModel):
     __tablename__ = "projects"
 
@@ -605,6 +626,8 @@ class RegisteredWorkerModel(BaseModel):
     last_heartbeat_at: Mapped[datetime] = mapped_column(
         NaiveDateTime, default=get_current_datetime
     )
+    heartbeat_interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    latest_usage: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     version: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
     __table_args__ = (

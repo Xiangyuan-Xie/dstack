@@ -208,6 +208,13 @@ export const API = {
         PROJECT_LIST: (projectName: IProject['project_name']) => `${API.BASE()}/project/${projectName}/resource_pools/list`,
     },
 
+    RUNTIME_IMAGES: {
+        BASE: () => `${API.BASE()}/runtime_images`,
+        LIST: () => `${API.RUNTIME_IMAGES.BASE()}/list`,
+        ADMIN_BASE: () => `${API.BASE()}/admin/runtime_images`,
+        UPDATE: () => `${API.RUNTIME_IMAGES.ADMIN_BASE()}/update`,
+    },
+
     INSTANCES: {
         BASE: () => `${API.BASE()}/instances`,
         LIST: () => `${API.INSTANCES.BASE()}/list`,

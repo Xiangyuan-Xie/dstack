@@ -7,6 +7,46 @@ from dstack._internal.core.models.fleets import ApplyFleetPlanInput, FleetSpec, 
 from dstack._internal.core.models.instances import InstanceStatus
 
 
+class ResourcePoolGpuSummary(CoreModel):
+    name: str
+    count: int
+    memory_gib: Optional[float] = None
+
+
+class ResourcePoolResources(CoreModel):
+    cpu_count: Optional[int] = None
+    memory_gib: Optional[float] = None
+    disk_gib: Optional[float] = None
+    gpu_count: int = 0
+    gpus: list[ResourcePoolGpuSummary] = []
+
+
+class ResourcePoolResourceSummary(CoreModel):
+    instance_count: int
+    cpu_count: int
+    memory_gib: float
+    disk_gib: float
+    gpu_count: int
+    gpus: list[ResourcePoolGpuSummary]
+
+
+class ResourcePoolUsage(CoreModel):
+    cpu_percent: Optional[float] = None
+    memory_used_gib: Optional[float] = None
+    memory_total_gib: Optional[float] = None
+    disk_used_gib: Optional[float] = None
+    disk_total_gib: Optional[float] = None
+    gpu_memory_used_gib: Optional[float] = None
+    gpu_memory_total_gib: Optional[float] = None
+    gpu_util_percent: Optional[float] = None
+    updated_at: Optional[datetime] = None
+
+
+class ResourcePoolUsageSummary(ResourcePoolUsage):
+    instance_count: int = 0
+    reporting_instance_count: int = 0
+
+
 class ResourcePoolOccupancy(CoreModel):
     status: str
     project_names: list[str]
@@ -21,6 +61,8 @@ class ResourcePoolInstance(CoreModel):
     backend: Optional[str] = None
     authorized_projects: list[str]
     occupancy: ResourcePoolOccupancy
+    resources: ResourcePoolResources
+    usage: Optional[ResourcePoolUsage] = None
 
 
 class ResourcePoolAssignment(CoreModel):
@@ -41,6 +83,8 @@ class ResourcePool(CoreModel):
     authorized_project_names: list[str]
     idle_instance_count: int
     busy_instance_count: int
+    resource_summary: ResourcePoolResourceSummary
+    usage_summary: ResourcePoolUsageSummary
 
 
 class ListResourcePoolsRequest(CoreModel):
@@ -59,8 +103,10 @@ class CreateResourcePoolRequest(CoreModel):
 
 
 class UpdateResourcePoolRequest(CoreModel):
-    plan: ApplyFleetPlanInput
-    force: bool
+    plan: Optional[ApplyFleetPlanInput] = None
+    force: bool = False
+    resource_pool_name: Optional[str] = None
+    new_resource_pool_name: Optional[str] = None
 
 
 class DeleteResourcePoolsRequest(CoreModel):

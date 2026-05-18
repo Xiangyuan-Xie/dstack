@@ -53,7 +53,7 @@ export const resourcePoolApi = createApi({
             invalidatesTags: ['ResourcePools'],
         }),
 
-        updateResourcePool: builder.mutation<IResourcePool, TResourcePoolApplyParams>({
+        updateResourcePool: builder.mutation<IResourcePool, TResourcePoolUpdateParams>({
             query: (body) => ({
                 url: API.RESOURCE_POOLS.UPDATE(),
                 method: 'POST',
@@ -61,7 +61,7 @@ export const resourcePoolApi = createApi({
             }),
             invalidatesTags: (_result, _error, arg) => [
                 'ResourcePools',
-                { type: 'ResourcePool', id: arg.plan.spec.configuration.name ?? 'unknown' },
+                { type: 'ResourcePool', id: arg.resource_pool_name ?? arg.plan?.spec.configuration.name ?? 'unknown' },
             ],
         }),
 

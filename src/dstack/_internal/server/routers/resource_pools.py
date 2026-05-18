@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import dstack._internal.server.services.resource_pools as resource_pools_services
+from dstack._internal.core.errors import ServerClientError
 from dstack._internal.server.db import get_session
 from dstack._internal.server.models import ProjectModel, UserModel
 from dstack._internal.server.schemas.resource_pools import (
@@ -89,6 +90,16 @@ async def update_resource_pool(
     user: Annotated[UserModel, Depends(GlobalAdmin())],
     pipeline_hinter: Annotated[PipelineHinterProtocol, Depends(get_pipeline_hinter)],
 ):
+    if body.resource_pool_name is not None or body.new_resource_pool_name is not None:
+        return CustomORJSONResponse(
+            await resource_pools_services.rename_resource_pool(
+                session=session,
+                resource_pool_name=body.resource_pool_name,
+                new_resource_pool_name=body.new_resource_pool_name,
+            )
+        )
+    if body.plan is None:
+        raise ServerClientError("plan must be specified")
     return CustomORJSONResponse(
         await resource_pools_services.apply_resource_pool(
             session=session,

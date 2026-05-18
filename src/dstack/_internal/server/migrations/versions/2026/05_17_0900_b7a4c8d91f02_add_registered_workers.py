@@ -53,6 +53,8 @@ def upgrade() -> None:
         sa.Column("hostname", sa.String(length=255), nullable=True),
         sa.Column("labels", sa.Text(), nullable=True),
         sa.Column("last_heartbeat_at", sa.DateTime(), nullable=False),
+        sa.Column("heartbeat_interval_seconds", sa.Integer(), nullable=True),
+        sa.Column("latest_usage", sa.Text(), nullable=True),
         sa.Column("version", sa.String(length=100), nullable=True),
         sa.ForeignKeyConstraint(
             ["fleet_id"],

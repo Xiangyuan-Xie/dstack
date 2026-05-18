@@ -9,7 +9,7 @@ export const getThemeMode = (): TThemeMode => {
         console.log(e);
     }
 
-    return getPreferredThemeMode(storedMode, window?.matchMedia('(prefers-color-scheme: dark)').matches);
+    return getPreferredThemeMode(storedMode, window?.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false);
 };
 
 export const setDocumentThemeMode = (mode: TThemeMode): void => {

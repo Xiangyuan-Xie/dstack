@@ -3,6 +3,7 @@ import {
     canAccessConsoleRoute,
     formatEventActor,
     formatEventMessage,
+    formatResourcePoolResourceText,
     getConsoleNavSections,
     getConsoleUserRole,
     getNotificationCenterItems,
@@ -10,6 +11,7 @@ import {
     getPreferredThemeMode,
     getRunRequestStats,
     getRunSummariesFromRequests,
+    formatStatusLabel,
     isConsoleNavItemActive,
     isLegacyConsolePath,
 } from './utils';
@@ -239,12 +241,38 @@ describe('Console utils', () => {
 
     test('formats known event messages in Chinese and leaves English untouched', () => {
         expect(formatEventMessage('Project created', 'zh')).toBe('项目已创建');
-        expect(formatEventMessage('Run submitted. Status: PENDING', 'zh')).toBe('运行任务已提交。状态：PENDING');
+        expect(formatEventMessage('Run submitted. Status: PENDING', 'zh')).toBe('运行任务已提交。状态：待处理');
         expect(formatEventMessage('Run status changed PENDING -> RUNNING (submitted)', 'zh')).toBe(
-            '运行任务状态从 PENDING 变为 RUNNING（submitted）',
+            '运行任务状态从 待处理 变为 运行中（submitted）',
         );
         expect(formatEventMessage('Run submitted. Status: PENDING', 'en')).toBe('Run submitted. Status: PENDING');
         expect(formatEventMessage('A custom backend event', 'zh')).toBe('A custom backend event');
+    });
+
+    test('formats status labels without exposing internal codes', () => {
+        expect(formatStatusLabel('running', 'zh')).toBe('运行中');
+        expect(formatStatusLabel('running', 'en')).toBe('Running');
+        expect(formatStatusLabel('approved', 'zh')).toBe('已通过');
+        expect(formatStatusLabel('idle', 'zh')).toBe('闲置');
+        expect(formatStatusLabel('unknown_status', 'en')).toBe('Unknown Status');
+    });
+
+    test('formats resource pool resource summaries', () => {
+        expect(
+            formatResourcePoolResourceText(
+                {
+                    cpu_count: 24,
+                    memory_gib: 192,
+                    disk_gib: 750,
+                    gpu_count: 3,
+                    gpus: [
+                        { name: 'A100', count: 2, memory_gib: 40 },
+                        { name: 'L40S', count: 1, memory_gib: 48 },
+                    ],
+                },
+                'zh',
+            ),
+        ).toBe('24 核心 / 192GiB / 3 张 / 128GiB / 750GiB');
     });
 
     test('localizes system event actor labels', () => {

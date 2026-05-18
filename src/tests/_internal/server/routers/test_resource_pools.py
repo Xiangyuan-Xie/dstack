@@ -1,10 +1,19 @@
+import json
+from unittest.mock import AsyncMock
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dstack._internal.core.models.instances import InstanceStatus
 from dstack._internal.core.models.users import GlobalRole, ProjectRole
-from dstack._internal.server.models import MemberModel
+from dstack._internal.server.models import (
+    MemberModel,
+    RegisteredWorkerModel,
+    WorkerRegistrationTokenModel,
+)
+from dstack._internal.server.services import resource_pools as resource_pools_services
+from dstack._internal.server.settings import DEFAULT_PROJECT_NAME
 from dstack._internal.server.testing.common import (
     create_fleet,
     create_instance,
@@ -14,9 +23,123 @@ from dstack._internal.server.testing.common import (
     create_run,
     create_user,
     get_auth_headers,
+    get_fleet_spec,
+    get_instance_offer_with_availability,
 )
 
 pytestmark = pytest.mark.asyncio
+
+
+class TestResourcePoolManagement:
+    async def test_global_admin_creates_resource_pool_using_default_project(
+        self, session: AsyncSession, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        admin = await create_user(session, name="admin", global_role=GlobalRole.ADMIN)
+        spec = get_fleet_spec()
+        spec.configuration.name = "lab-pool"
+
+        async def apply_plan(*, session, project, plan, **_kwargs):
+            assert project.name == DEFAULT_PROJECT_NAME
+            return await create_fleet(
+                session=session,
+                project=project,
+                spec=plan.spec,
+                assign_to_project=False,
+            )
+
+        apply_plan_mock = AsyncMock(side_effect=apply_plan)
+        monkeypatch.setattr(resource_pools_services.fleets_services, "apply_plan", apply_plan_mock)
+
+        response = await client.post(
+            "/api/resource_pools/create",
+            headers=get_auth_headers(admin.token),
+            json={"plan": {"spec": spec.dict()}, "force": False},
+        )
+
+        response_json = response.json()
+        assert response.status_code == 200, response_json
+        assert response_json["name"] == "lab-pool"
+        apply_plan_mock.assert_awaited_once()
+
+    async def test_global_admin_deletes_resource_pool_using_default_project(
+        self, session: AsyncSession, client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        admin = await create_user(session, name="admin", global_role=GlobalRole.ADMIN)
+
+        async def delete_fleets(*, project, names, **_kwargs):
+            assert project.name == DEFAULT_PROJECT_NAME
+            assert names == ["lab-pool"]
+
+        delete_fleets_mock = AsyncMock(side_effect=delete_fleets)
+        monkeypatch.setattr(
+            resource_pools_services.fleets_services,
+            "delete_fleets",
+            delete_fleets_mock,
+        )
+
+        response = await client.post(
+            "/api/resource_pools/delete",
+            headers=get_auth_headers(admin.token),
+            json={"names": ["lab-pool"]},
+        )
+
+        assert response.status_code == 200, response.json()
+        delete_fleets_mock.assert_awaited_once()
+
+    async def test_global_admin_renames_resource_pool(
+        self, session: AsyncSession, client: AsyncClient
+    ):
+        admin = await create_user(session, name="admin", global_role=GlobalRole.ADMIN)
+        project = await create_project(session, name="research", owner=admin)
+        pool = await create_fleet(session=session, project=project, name="old-pool")
+        await create_instance(
+            session=session,
+            project=project,
+            fleet=pool,
+            name="gpu-box-1",
+            status=InstanceStatus.IDLE,
+        )
+
+        response = await client.post(
+            "/api/resource_pools/update",
+            headers=get_auth_headers(admin.token),
+            json={"resource_pool_name": "old-pool", "new_resource_pool_name": "new-pool"},
+        )
+
+        response_json = response.json()
+        assert response.status_code == 200, response_json
+        assert response_json["name"] == "new-pool"
+        assert response_json["instances"][0]["name"] == "gpu-box-1"
+
+        old_response = await client.post(
+            "/api/resource_pools/get",
+            headers=get_auth_headers(admin.token),
+            json={"name": "old-pool"},
+        )
+        new_response = await client.post(
+            "/api/resource_pools/get",
+            headers=get_auth_headers(admin.token),
+            json={"name": "new-pool"},
+        )
+
+        assert old_response.status_code == 400
+        assert new_response.status_code == 200, new_response.json()
+
+    async def test_rename_resource_pool_rejects_existing_name(
+        self, session: AsyncSession, client: AsyncClient
+    ):
+        admin = await create_user(session, name="admin", global_role=GlobalRole.ADMIN)
+        project = await create_project(session, name="research", owner=admin)
+        await create_fleet(session=session, project=project, name="old-pool")
+        await create_fleet(session=session, project=project, name="existing-pool")
+
+        response = await client.post(
+            "/api/resource_pools/update",
+            headers=get_auth_headers(admin.token),
+            json={"resource_pool_name": "old-pool", "new_resource_pool_name": "existing-pool"},
+        )
+
+        assert response.status_code == 400
 
 
 class TestResourcePoolAssignments:
@@ -188,4 +311,181 @@ class TestResourcePoolAssignments:
             "status": "busy",
             "project_names": ["research"],
             "task_count": 1,
+        }
+
+    async def test_resource_pool_detail_reports_instance_resource_summary(
+        self, session: AsyncSession, client: AsyncClient
+    ):
+        admin = await create_user(session, name="admin", global_role=GlobalRole.ADMIN)
+        project = await create_project(session, name="research", owner=admin)
+        pool = await create_fleet(session=session, project=project, name="lab-pool")
+        await create_instance(
+            session=session,
+            project=project,
+            fleet=pool,
+            name="gpu-box-1",
+            offer=get_instance_offer_with_availability(
+                gpu_count=2,
+                gpu_name="A100",
+                gpu_memory_gib=40,
+                cpu_count=16,
+                memory_gib=128,
+                disk_gib=500,
+            ),
+        )
+        await create_instance(
+            session=session,
+            project=project,
+            fleet=pool,
+            name="gpu-box-2",
+            instance_num=1,
+            offer=get_instance_offer_with_availability(
+                gpu_count=1,
+                gpu_name="L40S",
+                gpu_memory_gib=48,
+                cpu_count=8,
+                memory_gib=64,
+                disk_gib=250,
+            ),
+        )
+
+        response = await client.post(
+            "/api/resource_pools/get",
+            headers=get_auth_headers(admin.token),
+            json={"name": "lab-pool"},
+        )
+
+        response_json = response.json()
+        assert response.status_code == 200, response_json
+        assert response_json["resource_summary"] == {
+            "instance_count": 2,
+            "cpu_count": 24,
+            "memory_gib": 192,
+            "disk_gib": 750,
+            "gpu_count": 3,
+            "gpus": [
+                {"name": "A100", "count": 2, "memory_gib": 40},
+                {"name": "L40S", "count": 1, "memory_gib": 48},
+            ],
+        }
+        assert response_json["instances"][0]["resources"] == {
+            "cpu_count": 16,
+            "memory_gib": 128,
+            "disk_gib": 500,
+            "gpu_count": 2,
+            "gpus": [{"name": "A100", "count": 2, "memory_gib": 40}],
+        }
+
+    async def test_resource_pool_list_and_detail_report_same_resource_summary(
+        self, session: AsyncSession, client: AsyncClient
+    ):
+        admin = await create_user(session, name="admin", global_role=GlobalRole.ADMIN)
+        project = await create_project(session, name="research", owner=admin)
+        pool = await create_fleet(session=session, project=project, name="lab-pool")
+        await create_instance(
+            session=session,
+            project=project,
+            fleet=pool,
+            name="gpu-box-1",
+            offer=get_instance_offer_with_availability(
+                gpu_count=2,
+                gpu_name="A100",
+                gpu_memory_gib=40,
+                cpu_count=16,
+                memory_gib=128,
+                disk_gib=500,
+            ),
+        )
+
+        list_response = await client.post(
+            "/api/resource_pools/list",
+            headers=get_auth_headers(admin.token),
+            json={"only_active": False, "limit": 100},
+        )
+        detail_response = await client.post(
+            "/api/resource_pools/get",
+            headers=get_auth_headers(admin.token),
+            json={"name": "lab-pool"},
+        )
+
+        list_json = list_response.json()
+        detail_json = detail_response.json()
+        assert list_response.status_code == 200, list_json
+        assert detail_response.status_code == 200, detail_json
+        listed_pool = next(pool for pool in list_json if pool["name"] == "lab-pool")
+        assert listed_pool["resource_summary"] == detail_json["resource_summary"]
+
+    async def test_resource_pool_reports_registered_worker_usage(
+        self, session: AsyncSession, client: AsyncClient
+    ):
+        admin = await create_user(session, name="admin", global_role=GlobalRole.ADMIN)
+        project = await create_project(session, name="research", owner=admin)
+        pool = await create_fleet(session=session, project=project, name="lab-pool")
+        instance = await create_instance(
+            session=session,
+            project=project,
+            fleet=pool,
+            name="gpu-box-1",
+            offer=get_instance_offer_with_availability(
+                gpu_count=1,
+                gpu_name="A100",
+                gpu_memory_gib=40,
+                cpu_count=16,
+                memory_gib=128,
+                disk_gib=500,
+            ),
+        )
+        token = WorkerRegistrationTokenModel(
+            created_by=admin,
+            fleet_name=pool.name,
+            token_hash="worker-token-hash",
+            enabled=True,
+        )
+        session.add(token)
+        await session.flush()
+        session.add(
+            RegisteredWorkerModel(
+                registration_token=token,
+                fleet=pool,
+                instance=instance,
+                name="gpu-box-1",
+                latest_usage=json.dumps(
+                    {
+                        "cpu_percent": 25,
+                        "memory_used_gib": 32,
+                        "memory_total_gib": 128,
+                        "disk_used_gib": 120,
+                        "disk_total_gib": 500,
+                        "gpu_memory_used_gib": 8,
+                        "gpu_memory_total_gib": 40,
+                        "gpu_util_percent": 60,
+                        "updated_at": "2026-05-18T12:40:00",
+                    }
+                ),
+            )
+        )
+        await session.commit()
+
+        response = await client.post(
+            "/api/resource_pools/get",
+            headers=get_auth_headers(admin.token),
+            json={"name": "lab-pool"},
+        )
+
+        response_json = response.json()
+        assert response.status_code == 200, response_json
+        assert response_json["instances"][0]["usage"]["cpu_percent"] == 25
+        assert response_json["instances"][0]["usage"]["gpu_util_percent"] == 60
+        assert response_json["usage_summary"] == {
+            "cpu_percent": 25,
+            "memory_used_gib": 32,
+            "memory_total_gib": 128,
+            "disk_used_gib": 120,
+            "disk_total_gib": 500,
+            "gpu_memory_used_gib": 8,
+            "gpu_memory_total_gib": 40,
+            "gpu_util_percent": 60,
+            "updated_at": "2026-05-18T12:40:00",
+            "instance_count": 1,
+            "reporting_instance_count": 1,
         }

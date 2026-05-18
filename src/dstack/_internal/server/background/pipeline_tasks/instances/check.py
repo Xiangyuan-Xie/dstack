@@ -36,7 +36,12 @@ from dstack._internal.server.background.pipeline_tasks.instances.common import (
     set_unreachable_update,
 )
 from dstack._internal.server.db import get_session_ctx
-from dstack._internal.server.models import InstanceHealthCheckModel, InstanceModel, ProjectModel
+from dstack._internal.server.models import (
+    InstanceHealthCheckModel,
+    InstanceModel,
+    ProjectModel,
+    RegisteredWorkerModel,
+)
 from dstack._internal.server.schemas.instances import InstanceCheck
 from dstack._internal.server.schemas.runner import (
     ComponentInfo,
@@ -122,6 +127,9 @@ async def check_instance(instance_model: InstanceModel) -> ProcessResult:
             },
         )
         return result
+
+    if instance_model.backend == BackendType.REGISTERED:
+        return await _check_registered_instance(instance_model)
 
     job_provisioning_data = get_or_error(get_instance_provisioning_data(instance_model))
     if job_provisioning_data.hostname is None:
@@ -217,6 +225,31 @@ async def check_instance(instance_model: InstanceModel) -> ProcessResult:
                 new_status=InstanceStatus.TERMINATING,
                 termination_reason=InstanceTerminationReason.UNREACHABLE,
             )
+    return result
+
+
+async def _check_registered_instance(instance_model: InstanceModel) -> ProcessResult:
+    result = ProcessResult()
+    async with get_session_ctx() as session:
+        res = await session.execute(
+            select(RegisteredWorkerModel).where(
+                RegisteredWorkerModel.instance_id == instance_model.id
+            )
+        )
+        worker_model = res.scalar_one_or_none()
+
+    if worker_model is None:
+        reachable = False
+    else:
+        heartbeat_interval = worker_model.heartbeat_interval_seconds or 0
+        stale_after = timedelta(seconds=max(45, heartbeat_interval * 3))
+        reachable = get_current_datetime() - worker_model.last_heartbeat_at <= stale_after
+
+    set_unreachable_update(
+        update_map=result.instance_update_map,
+        instance_model=instance_model,
+        unreachable=not reachable,
+    )
     return result
 
 

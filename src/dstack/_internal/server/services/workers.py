@@ -32,6 +32,7 @@ from dstack._internal.server.models import (
 )
 from dstack._internal.server.schemas.workers import (
     RegisteredWorkerResources,
+    RegisteredWorkerResourceUsage,
     RegisterWorkerRequest,
     WorkerAssignment,
     WorkerJobReportRequest,
@@ -212,9 +213,15 @@ async def heartbeat_worker(
     status: str,
     total_blocks: Optional[int],
     busy_blocks: Optional[int],
+    interval_seconds: Optional[int],
+    usage: Optional[RegisteredWorkerResourceUsage],
 ) -> RegisteredWorkerModel:
     worker_model = await _get_worker_for_token(session, token_model, worker_id)
     worker_model.last_heartbeat_at = get_current_datetime()
+    if interval_seconds is not None:
+        worker_model.heartbeat_interval_seconds = interval_seconds
+    if usage is not None:
+        worker_model.latest_usage = usage.json()
     instance_model = worker_model.instance
     instance_model.unreachable = False
     if total_blocks is not None:

@@ -53,6 +53,7 @@ from dstack._internal.server.routers import (
     resource_pools,
     run_requests,
     runs,
+    runtime_images,
     secrets,
     server,
     sshproxy,
@@ -264,6 +265,8 @@ def register_routes(app: FastAPI, ui: bool = True):
     app.include_router(fleets.project_router)
     app.include_router(resource_pools.root_router)
     app.include_router(resource_pools.project_router)
+    app.include_router(runtime_images.root_router)
+    app.include_router(runtime_images.admin_router)
     app.include_router(run_requests.root_router)
     app.include_router(run_requests.router)
     app.include_router(instances.root_router)

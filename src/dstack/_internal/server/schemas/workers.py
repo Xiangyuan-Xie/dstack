@@ -16,6 +16,18 @@ class RegisteredWorkerResources(CoreModel):
     disk_mib: int = 102400
 
 
+class RegisteredWorkerResourceUsage(CoreModel):
+    cpu_percent: Optional[float] = None
+    memory_used_gib: Optional[float] = None
+    memory_total_gib: Optional[float] = None
+    disk_used_gib: Optional[float] = None
+    disk_total_gib: Optional[float] = None
+    gpu_memory_used_gib: Optional[float] = None
+    gpu_memory_total_gib: Optional[float] = None
+    gpu_util_percent: Optional[float] = None
+    updated_at: Optional[datetime] = None
+
+
 class CreateWorkerRegistrationTokenRequest(CoreModel):
     fleet_name: str
     expires_at: Optional[datetime] = None
@@ -54,6 +66,8 @@ class WorkerHeartbeatRequest(CoreModel):
     status: str = "idle"
     total_blocks: Optional[int] = None
     busy_blocks: Optional[int] = None
+    interval_seconds: Optional[int] = None
+    usage: Optional[RegisteredWorkerResourceUsage] = None
 
 
 class WorkerHeartbeatResponse(CoreModel):

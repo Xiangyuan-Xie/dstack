@@ -1,18 +1,25 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { FleetCreatePage, ProjectDetailsPage, ProjectsPage } from './pages';
+import { BackendPage, FleetCreatePage, FleetDetailsPage, FleetsPage, ProjectDetailsPage, ProjectsPage } from './pages';
 
 const mockNavigate = jest.fn();
 const mockDeleteProjects = jest.fn();
+const mockDeleteResourcePools = jest.fn();
 const mockUpdateProject = jest.fn();
 const mockConfirm = jest.fn();
 const mockAddProjectMember = jest.fn();
+const mockRemoveProjectMember = jest.fn();
 const mockGetUserList = jest.fn();
 const mockCreateResourcePool = jest.fn();
+const mockUpdateResourcePool = jest.fn();
 const mockUpdateResourcePoolAssignment = jest.fn();
+const mockDeleteSecrets = jest.fn();
+const mockDeleteBackend = jest.fn();
 let mockLocationState: Record<string, string> | null = null;
+let mockParams: Record<string, string> = { projectName: 'old-project' };
+let mockSecrets: Array<{ id: string; name: string }> = [];
 
 const resourcePool = (overrides: Partial<IResourcePool> = {}): IResourcePool => ({
     id: 'fleet-1',
@@ -34,11 +41,50 @@ const resourcePool = (overrides: Partial<IResourcePool> = {}): IResourcePool => 
             backend: 'registered',
             authorized_projects: ['old-project'],
             occupancy: { status: 'idle', project_names: [], task_count: 0 },
+            resources: {
+                cpu_count: 16,
+                memory_gib: 128,
+                disk_gib: 500,
+                gpu_count: 2,
+                gpus: [{ name: 'A100', count: 2, memory_gib: 40 }],
+            },
+            usage: {
+                cpu_percent: 42,
+                memory_used_gib: 32,
+                memory_total_gib: 128,
+                disk_used_gib: 200,
+                disk_total_gib: 500,
+                gpu_memory_used_gib: 20,
+                gpu_memory_total_gib: 80,
+                gpu_util_percent: 75,
+                updated_at: '2026-05-16T09:05:00+08:00',
+            },
         },
     ],
-    authorized_project_names: ['old-project'],
+    authorized_project_names: ['old-project', 'research', 'vision'],
     idle_instance_count: 1,
     busy_instance_count: 0,
+    resource_summary: {
+        instance_count: 1,
+        cpu_count: 16,
+        memory_gib: 128,
+        disk_gib: 500,
+        gpu_count: 2,
+        gpus: [{ name: 'A100', count: 2, memory_gib: 40 }],
+    },
+    usage_summary: {
+        instance_count: 1,
+        reporting_instance_count: 1,
+        cpu_percent: 42,
+        memory_used_gib: 32,
+        memory_total_gib: 128,
+        disk_used_gib: 200,
+        disk_total_gib: 500,
+        gpu_memory_used_gib: 20,
+        gpu_memory_total_gib: 80,
+        gpu_util_percent: 75,
+        updated_at: '2026-05-16T09:05:00+08:00',
+    },
     ...overrides,
 });
 
@@ -58,7 +104,7 @@ Object.defineProperty(window, 'matchMedia', {
 
 jest.mock('react-router-dom', () => ({
     useNavigate: () => mockNavigate,
-    useParams: () => ({ projectName: 'old-project' }),
+    useParams: () => mockParams,
     useLocation: () => ({ state: mockLocationState }),
 }));
 
@@ -130,20 +176,21 @@ jest.mock('services/project', () => ({
     useGetProjectBackendsQuery: () => ({ data: [], isLoading: false }),
     useGetProjectLogsQuery: () => ({ data: null }),
     useAddProjectMemberMutation: () => [mockAddProjectMember, { isLoading: false }],
-    useRemoveProjectMemberMutation: () => [jest.fn()],
+    useRemoveProjectMemberMutation: () => [mockRemoveProjectMember],
     useDeleteProjectsMutation: () => [mockDeleteProjects],
     useUpdateProjectMutation: () => [mockUpdateProject, { isLoading: false }],
 }));
 
 jest.mock('services/backend', () => ({
     useGetProjectBackendsQuery: () => ({ data: [], isLoading: false }),
+    useDeleteProjectBackendMutation: () => [mockDeleteBackend],
 }));
 jest.mock('services/events', () => ({
     useGetAllEventsQuery: () => ({ data: [], isLoading: false }),
 }));
 jest.mock('services/resourcePool', () => ({
     useCreateResourcePoolMutation: () => [mockCreateResourcePool, { isLoading: false }],
-    useDeleteResourcePoolsMutation: () => [jest.fn(), { isLoading: false }],
+    useDeleteResourcePoolsMutation: () => [mockDeleteResourcePools, { isLoading: false }],
     useGetProjectResourcePoolsQuery: () => ({
         data: [resourcePool()],
         isLoading: false,
@@ -156,7 +203,12 @@ jest.mock('services/resourcePool', () => ({
         data: [resourcePool()],
         isLoading: false,
     }),
+    useUpdateResourcePoolMutation: () => [mockUpdateResourcePool, { isLoading: false }],
     useUpdateResourcePoolAssignmentMutation: () => [mockUpdateResourcePoolAssignment, { isLoading: false }],
+}));
+jest.mock('services/runtimeImages', () => ({
+    useGetRuntimeImagesQuery: () => ({ data: [], isLoading: false }),
+    useUpdateRuntimeImagesMutation: () => [jest.fn(), { isLoading: false }],
 }));
 jest.mock('services/gpu', () => ({}));
 jest.mock('services/runRequest', () => ({}));
@@ -164,9 +216,9 @@ jest.mock('services/instance', () => ({}));
 jest.mock('services/publicKeys', () => ({}));
 jest.mock('services/run', () => ({}));
 jest.mock('services/secrets', () => ({
-    useGetAllSecretsQuery: () => ({ data: [], isLoading: false }),
+    useGetAllSecretsQuery: () => ({ data: mockSecrets, isLoading: false }),
     useUpdateSecretMutation: () => [jest.fn()],
-    useDeleteSecretsMutation: () => [jest.fn()],
+    useDeleteSecretsMutation: () => [mockDeleteSecrets],
 }));
 jest.mock('services/user', () => ({
     useLazyGetUserListQuery: () => [
@@ -219,7 +271,12 @@ jest.mock('libs/runStatus', () => ({
 describe('ProjectsPage', () => {
     beforeEach(() => {
         mockNavigate.mockReset();
+        mockParams = { projectName: 'old-project' };
         mockDeleteProjects.mockReset();
+        mockDeleteResourcePools.mockReset();
+        mockRemoveProjectMember.mockReset();
+        mockDeleteSecrets.mockReset();
+        mockDeleteBackend.mockReset();
         mockConfirm.mockReset();
     });
 
@@ -287,6 +344,114 @@ describe('FleetCreatePage', () => {
         expect(screen.getByText("资源池名称需匹配 '^[a-z][a-z0-9-]{1,40}$'。")).toBeInTheDocument();
         expect(mockCreateResourcePool).not.toHaveBeenCalled();
     });
+
+    test('uses access method wording for registered resource pools', () => {
+        render(<FleetCreatePage />);
+
+        expect(screen.getByText(/接入方式：自有服务器/)).toBeInTheDocument();
+        expect(screen.queryByText(/类型：注册服务器/)).not.toBeInTheDocument();
+    });
+});
+
+describe('FleetsPage', () => {
+    beforeEach(() => {
+        mockNavigate.mockReset();
+    });
+
+    test('shows aggregate resource pool capacity and usage without idle or busy columns', () => {
+        render(<FleetsPage />);
+
+        expect(screen.getByText('gpu-fleet')).toBeInTheDocument();
+        expect(screen.queryByText('状态')).not.toBeInTheDocument();
+        expect(screen.getByText('上报实例')).toBeInTheDocument();
+        expect(screen.getByText('1 / 1')).toBeInTheDocument();
+        expect(screen.getByText('16 核心')).toBeInTheDocument();
+        expect(screen.getByText('128GiB')).toBeInTheDocument();
+        expect(screen.getByText('2 张 / 80GiB')).toBeInTheDocument();
+        expect(screen.getByText('500GiB')).toBeInTheDocument();
+        expect(screen.getByText('old-project')).toBeInTheDocument();
+        expect(screen.getByText('research')).toBeInTheDocument();
+        expect(screen.getByText('vision')).toBeInTheDocument();
+        expect(screen.queryByText(/GiB 内存/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/GiB 显存/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/GiB 磁盘/)).not.toBeInTheDocument();
+        expect(screen.getByText('42%')).toBeInTheDocument();
+        expect(screen.getByText('32 / 128GiB')).toBeInTheDocument();
+        expect(screen.getByText('20 / 80GiB')).toBeInTheDocument();
+        expect(screen.getByText('200 / 500GiB')).toBeInTheDocument();
+        expect(screen.queryByText(/A100 x2 40GiB/)).not.toBeInTheDocument();
+        expect(screen.queryByText('闲置实例')).not.toBeInTheDocument();
+        expect(screen.queryByText('占用实例')).not.toBeInTheDocument();
+        expect(screen.queryByText('registered')).not.toBeInTheDocument();
+    });
+});
+
+describe('FleetDetailsPage', () => {
+    beforeEach(() => {
+        mockNavigate.mockReset();
+        mockDeleteResourcePools.mockReset();
+        mockUpdateResourcePool.mockReset();
+        mockConfirm.mockReset();
+    });
+
+    test('shows aggregate resource pool summary and detailed instance configuration with a back button', async () => {
+        render(<FleetDetailsPage />);
+
+        expect(screen.getByRole('heading', { name: 'gpu-fleet' })).toBeInTheDocument();
+        expect(screen.getAllByText('16 核心')).not.toHaveLength(0);
+        expect(screen.getAllByText('128GiB')).not.toHaveLength(0);
+        expect(screen.getAllByText('2 张 / 80GiB')).not.toHaveLength(0);
+        expect(screen.getAllByText('500GiB')).not.toHaveLength(0);
+        expect(screen.getAllByText('当前使用')).not.toHaveLength(0);
+        expect(screen.getByText(/A100 x2 \/ 40GiB/)).toBeInTheDocument();
+        expect(screen.queryByText('运行占用')).not.toBeInTheDocument();
+        expect(screen.getByText('项目授权')).toBeInTheDocument();
+        expect(screen.getAllByText('old-project')).not.toHaveLength(0);
+        expect(screen.getByText('整个资源池')).toBeInTheDocument();
+        expect(screen.queryByText('registered')).not.toBeInTheDocument();
+
+        await userEvent.click(screen.getByRole('button', { name: '返回' }));
+
+        expect(mockNavigate).toHaveBeenCalledWith('/resources/fleets');
+    });
+
+    test('opens editing before renaming or deleting a resource pool', async () => {
+        mockUpdateResourcePool.mockReturnValue({
+            unwrap: () => Promise.resolve(resourcePool({ name: 'renamed-pool' })),
+        });
+        mockDeleteResourcePools.mockReturnValue({
+            unwrap: () => Promise.resolve(undefined),
+        });
+
+        render(<FleetDetailsPage />);
+
+        expect(screen.queryByRole('button', { name: '删除' })).not.toBeInTheDocument();
+        await userEvent.click(screen.getByRole('button', { name: '编辑' }));
+        await userEvent.clear(screen.getByLabelText('资源池名称'));
+        await userEvent.type(screen.getByLabelText('资源池名称'), 'renamed-pool');
+        await userEvent.click(screen.getByRole('button', { name: '保存' }));
+
+        expect(mockUpdateResourcePool).toHaveBeenCalledWith({
+            resource_pool_name: 'gpu-fleet',
+            new_resource_pool_name: 'renamed-pool',
+        });
+
+        await userEvent.click(screen.getByRole('button', { name: '删除资源池' }));
+
+        expect(mockDeleteResourcePools).not.toHaveBeenCalled();
+        expect(mockConfirm).toHaveBeenCalledWith(
+            expect.objectContaining({
+                title: '删除资源池',
+                confirmButtonLabel: '删除',
+            }),
+        );
+
+        const onConfirm = mockConfirm.mock.calls[0][0].onConfirm;
+        await onConfirm();
+
+        expect(mockDeleteResourcePools).toHaveBeenCalledWith({ names: ['gpu-fleet'] });
+        expect(mockNavigate).toHaveBeenCalledWith('/resources/fleets');
+    });
 });
 
 describe('ProjectDetailsPage', () => {
@@ -295,9 +460,13 @@ describe('ProjectDetailsPage', () => {
         mockUpdateProject.mockReset();
         mockDeleteProjects.mockReset();
         mockAddProjectMember.mockReset();
+        mockRemoveProjectMember.mockReset();
         mockGetUserList.mockReset();
         mockConfirm.mockReset();
         mockUpdateResourcePoolAssignment.mockReset();
+        mockDeleteSecrets.mockReset();
+        mockParams = { projectName: 'old-project' };
+        mockSecrets = [];
         mockLocationState = null;
     });
 
@@ -382,6 +551,52 @@ describe('ProjectDetailsPage', () => {
         expect(mockNavigate).toHaveBeenCalledWith('/workspace/projects');
     });
 
+    test('confirms before removing a project member', async () => {
+        mockRemoveProjectMember.mockReturnValue({
+            unwrap: () => Promise.resolve(undefined),
+        });
+
+        render(<ProjectDetailsPage />);
+        await userEvent.click(screen.getByRole('button', { name: '移除' }));
+
+        expect(mockRemoveProjectMember).not.toHaveBeenCalled();
+        expect(mockConfirm).toHaveBeenCalledWith(
+            expect.objectContaining({
+                title: '移除成员',
+                confirmButtonLabel: '移除',
+            }),
+        );
+
+        const onConfirm = mockConfirm.mock.calls[0][0].onConfirm;
+        await onConfirm();
+
+        expect(mockRemoveProjectMember).toHaveBeenCalledWith({ project_name: 'old-project', username: 'bob' });
+    });
+
+    test('confirms before deleting a secret', async () => {
+        mockSecrets = [{ id: 'secret-1', name: 'HF_TOKEN' }];
+        mockDeleteSecrets.mockReturnValue({
+            unwrap: () => Promise.resolve(undefined),
+        });
+
+        render(<ProjectDetailsPage />);
+        const secretRow = screen.getByText('HF_TOKEN').closest('tr')!;
+        await userEvent.click(within(secretRow).getByRole('button', { name: '删除' }));
+
+        expect(mockDeleteSecrets).not.toHaveBeenCalled();
+        expect(mockConfirm).toHaveBeenCalledWith(
+            expect.objectContaining({
+                title: '删除 Secret',
+                confirmButtonLabel: '删除',
+            }),
+        );
+
+        const onConfirm = mockConfirm.mock.calls[0][0].onConfirm;
+        await onConfirm();
+
+        expect(mockDeleteSecrets).toHaveBeenCalledWith({ project_name: 'old-project', names: ['HF_TOKEN'] });
+    });
+
     test('shows project resource assignments and updates the authorized resource pool', async () => {
         mockUpdateResourcePoolAssignment.mockReturnValue({
             unwrap: () => Promise.resolve(resourcePool()),
@@ -391,6 +606,9 @@ describe('ProjectDetailsPage', () => {
 
         expect(screen.getByText('资源授权')).toBeInTheDocument();
         expect(screen.getAllByText('gpu-fleet')).not.toHaveLength(0);
+        expect(screen.queryByText(/A100 x2 \/ 40GiB/)).not.toBeInTheDocument();
+        expect(screen.getAllByText(/2 张 \/ 80GiB/)).not.toHaveLength(0);
+        expect(screen.queryByText(/"configuration"/)).not.toBeInTheDocument();
         expect(screen.getAllByText('整个资源池')).not.toHaveLength(0);
         expect(screen.getAllByText('1')).not.toHaveLength(0);
 
@@ -401,6 +619,50 @@ describe('ProjectDetailsPage', () => {
             project_name: 'old-project',
             assign_whole_pool: true,
             instance_ids: [],
+        });
+    });
+
+    test('shows current usage separately from resource capacity for assigned resource pools', () => {
+        render(<ProjectDetailsPage />);
+
+        expect(screen.getByText('当前使用')).toBeInTheDocument();
+        expect(screen.queryByText(/A100 x2 \/ 40GiB/)).not.toBeInTheDocument();
+        expect(screen.getByText('42%')).toBeInTheDocument();
+        expect(screen.getByText('32 / 128GiB')).toBeInTheDocument();
+        expect(screen.getByText('200 / 500GiB')).toBeInTheDocument();
+        expect(screen.getByText('75%')).toBeInTheDocument();
+    });
+});
+
+describe('BackendPage', () => {
+    beforeEach(() => {
+        mockConfirm.mockReset();
+        mockDeleteBackend.mockReset();
+        mockParams = { projectName: 'old-project', backendName: 'local-backend' };
+    });
+
+    test('confirms before deleting a backend', async () => {
+        mockDeleteBackend.mockReturnValue({
+            unwrap: () => Promise.resolve(undefined),
+        });
+
+        render(<BackendPage />);
+        await userEvent.click(screen.getByRole('button', { name: '删除' }));
+
+        expect(mockDeleteBackend).not.toHaveBeenCalled();
+        expect(mockConfirm).toHaveBeenCalledWith(
+            expect.objectContaining({
+                title: '删除 Backend',
+                confirmButtonLabel: '删除',
+            }),
+        );
+
+        const onConfirm = mockConfirm.mock.calls[0][0].onConfirm;
+        await onConfirm();
+
+        expect(mockDeleteBackend).toHaveBeenCalledWith({
+            projectName: 'old-project',
+            backends_names: ['local-backend'],
         });
     });
 });

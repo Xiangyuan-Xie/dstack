@@ -1,5 +1,6 @@
 import React, { Fragment, ReactNode, useMemo, useState } from 'react';
 import classNames from 'classnames';
+import i18n from 'i18next';
 import { AlertCircle, CheckCircle2, ChevronDown, ChevronsUpDown, Info, Loader2, Search, X, XCircle } from 'lucide-react';
 import { close, selectConfirmationDialogs } from 'ui/confirmation/slice';
 import { selectNotifications } from 'ui/notifications/slice';
@@ -246,6 +247,7 @@ export function DataTable<T>({
     className?: string;
     defaultSortColumn?: string;
 }) {
+    const localizedEmptyTitle = emptyTitle === 'No data' && i18n.language === 'zh' ? '暂无数据' : emptyTitle;
     const [sortColumn, setSortColumn] = useState(defaultSortColumn ?? columns[0]?.id);
     const [ascending, setAscending] = useState(true);
 
@@ -276,7 +278,7 @@ export function DataTable<T>({
     }
 
     if (!items.length) {
-        return <>{empty ?? <EmptyState title={emptyTitle} />}</>;
+        return <>{empty ?? <EmptyState title={localizedEmptyTitle} />}</>;
     }
 
     return (
@@ -325,14 +327,14 @@ export function DataTable<T>({
     );
 }
 
-export const CodeBlock: React.FC<{ value?: string | object | null; className?: string }> = ({ value, className }) => (
+export const CodeBlock: React.FC<{ value?: string | null; className?: string }> = ({ value, className }) => (
     <pre
         className={classNames(
             'console-scrollbar max-h-[560px] overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-6 text-slate-100',
             className,
         )}
     >
-        {typeof value === 'string' ? value : JSON.stringify(value ?? {}, null, 2)}
+        {value ?? ''}
     </pre>
 );
 
@@ -352,7 +354,7 @@ export const Modal: React.FC<{
             <div className="w-full max-w-xl rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
                 <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
                     <h2 className="text-base font-semibold text-slate-950 dark:text-slate-50">{title}</h2>
-                    <IconButton label="Close" icon={<X className="h-4 w-4" />} onClick={onClose} />
+                    <IconButton label={i18n.language === 'zh' ? '关闭' : 'Close'} icon={<X className="h-4 w-4" />} onClick={onClose} />
                 </div>
                 <div className="p-5">{children}</div>
                 {footer && (
@@ -409,6 +411,7 @@ export const ConfirmationDialogViewport: React.FC = () => {
     const dispatch = useAppDispatch();
     const dialogs = useAppSelector(selectConfirmationDialogs);
     const dialog = dialogs[dialogs.length - 1];
+    const isZh = i18n.language?.startsWith('zh');
 
     if (!dialog) {
         return null;
@@ -422,10 +425,10 @@ export const ConfirmationDialogViewport: React.FC = () => {
             footer={
                 <Fragment>
                     <Button variant="secondary" onClick={dialog.onDiscard}>
-                        {dialog.cancelButtonLabel ?? 'Cancel'}
+                        {dialog.cancelButtonLabel ?? (isZh ? '取消' : 'Cancel')}
                     </Button>
                     <Button variant="danger" onClick={dialog.onConfirm}>
-                        {dialog.confirmButtonLabel ?? 'Confirm'}
+                        {dialog.confirmButtonLabel ?? (isZh ? '确认' : 'Confirm')}
                     </Button>
                 </Fragment>
             }

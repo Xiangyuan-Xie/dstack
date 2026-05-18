@@ -267,6 +267,44 @@ export const formatEventActor = (actor: string | null | undefined, locale: TLoca
     return actor || (locale === 'zh' ? '系统' : 'system');
 };
 
+export const formatStatusLabel = (status: string | null | undefined, locale: TLocale): string => {
+    if (!status) {
+        return '-';
+    }
+    const normalized = status.toLowerCase();
+    const labels: Record<string, { zh: string; en: string }> = {
+        pending: { zh: '待处理', en: 'Pending' },
+        approved: { zh: '已通过', en: 'Approved' },
+        rejected: { zh: '已拒绝', en: 'Rejected' },
+        failed: { zh: '失败', en: 'Failed' },
+        running: { zh: '运行中', en: 'Running' },
+        submitted: { zh: '已提交', en: 'Submitted' },
+        provisioning: { zh: '创建中', en: 'Provisioning' },
+        pulling: { zh: '拉取中', en: 'Pulling' },
+        terminating: { zh: '停止中', en: 'Terminating' },
+        terminated: { zh: '已终止', en: 'Terminated' },
+        aborted: { zh: '已中止', en: 'Aborted' },
+        done: { zh: '已完成', en: 'Done' },
+        ready: { zh: '就绪', en: 'Ready' },
+        active: { zh: '活跃', en: 'Active' },
+        idle: { zh: '闲置', en: 'Idle' },
+        busy: { zh: '占用', en: 'Busy' },
+        warning: { zh: '警告', en: 'Warning' },
+        error: { zh: '错误', en: 'Error' },
+        enabled: { zh: '可用', en: 'Enabled' },
+        disabled: { zh: '已停用', en: 'Disabled' },
+    };
+    const label = labels[normalized];
+    if (label) {
+        return label[locale] ?? label.zh;
+    }
+    return status
+        .split(/[_\s-]+/)
+        .filter(Boolean)
+        .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1).toLowerCase())
+        .join(' ');
+};
+
 export const formatEventMessage = (message: string, locale: TLocale): string => {
     if (locale !== 'zh') {
         return message;
@@ -307,17 +345,25 @@ export const formatEventMessage = (message: string, locale: TLocale): string => 
         [/^(.+) updated$/, (match) => `${translateEventSubject(match[1])}已更新`],
         [/^(.+) deleted$/, (match) => `${translateEventSubject(match[1])}已删除`],
         [/^(.+) stopped$/, (match) => `${translateEventSubject(match[1])}已停止`],
-        [/^(.+) submitted\. Status: (.+)$/, (match) => `${translateEventSubject(match[1])}已提交。状态：${match[2]}`],
-        [/^(.+) created\. Status: (.+)$/, (match) => `${translateEventSubject(match[1])}已创建。状态：${match[2]}`],
+        [
+            /^(.+) submitted\. Status: (.+)$/,
+            (match) => `${translateEventSubject(match[1])}已提交。状态：${formatStatusLabel(match[2], locale)}`,
+        ],
+        [
+            /^(.+) created\. Status: (.+)$/,
+            (match) => `${translateEventSubject(match[1])}已创建。状态：${formatStatusLabel(match[2], locale)}`,
+        ],
         [/^(.+) updated\. Updated fields: (.+)$/, (match) => `${translateEventSubject(match[1])}已更新。字段：${match[2]}`],
         [/^(.+) updated\. Changed fields: (.+)$/, (match) => `${translateEventSubject(match[1])}已更新。字段：${match[2]}`],
         [
             /^(.+) status changed (.+) -> (.+) \((.+)\)$/,
-            (match) => `${translateEventSubject(match[1])}状态从 ${match[2]} 变为 ${match[3]}（${match[4]}）`,
+            (match) =>
+                `${translateEventSubject(match[1])}状态从 ${formatStatusLabel(match[2], locale)} 变为 ${formatStatusLabel(match[3], locale)}（${match[4]}）`,
         ],
         [
             /^(.+) status changed (.+) -> (.+)$/,
-            (match) => `${translateEventSubject(match[1])}状态从 ${match[2]} 变为 ${match[3]}`,
+            (match) =>
+                `${translateEventSubject(match[1])}状态从 ${formatStatusLabel(match[2], locale)} 变为 ${formatStatusLabel(match[3], locale)}`,
         ],
     ];
 
@@ -449,6 +495,47 @@ export const formatRunRequestResourcesText = (request: IRunRequestSpec): string 
     }
 
     return parts.join(' ') || '-';
+};
+
+export const formatResourcePoolGpuText = (
+    resources: Pick<IResourcePoolResources, 'gpu_count' | 'gpus'> | null | undefined,
+    locale: TLocale,
+): string => {
+    if (!resources?.gpu_count) {
+        return locale === 'zh' ? '无 GPU' : 'No GPU';
+    }
+    const gpuText = resources.gpus
+        .map((gpu) => {
+            const memory = gpu.memory_gib ? ` ${gpu.memory_gib}GiB` : '';
+            return `${gpu.name} x${gpu.count}${memory}`;
+        })
+        .join(', ');
+    return gpuText || `${resources.gpu_count} GPU`;
+};
+
+export const formatResourcePoolResourceText = (
+    resources: IResourcePoolResources | IResourcePoolResourceSummary | null | undefined,
+    locale: TLocale,
+): string => {
+    if (!resources) {
+        return '-';
+    }
+    const gpuCount = resources.gpu_count ?? 0;
+    const gpuMemoryGiB = resources.gpus.reduce((sum, gpu) => sum + (gpu.memory_gib ?? 0) * gpu.count, 0);
+    const gpuText = gpuCount
+        ? gpuMemoryGiB
+            ? `${gpuCount} ${locale === 'zh' ? '张' : 'GPU'} / ${gpuMemoryGiB}GiB`
+            : `${gpuCount} ${locale === 'zh' ? '张' : 'GPU'}`
+        : locale === 'zh'
+          ? '无 GPU'
+          : 'No GPU';
+    const parts = [
+        `${resources.cpu_count ?? 0} ${locale === 'zh' ? '核心' : 'cores'}`,
+        `${resources.memory_gib ?? 0}GiB`,
+        gpuText,
+        `${resources.disk_gib ?? 0}GiB`,
+    ];
+    return parts.join(' / ');
 };
 
 export const getRunSummariesFromRequests = (requests: IRunRequest[], runs: IRun[] = []): IRunSummary[] => {

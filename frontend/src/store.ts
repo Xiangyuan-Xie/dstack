@@ -16,6 +16,7 @@ import { repoApi } from 'services/repo';
 import { resourcePoolApi } from 'services/resourcePool';
 import { runApi } from 'services/run';
 import { runRequestApi } from 'services/runRequest';
+import { runtimeImagesApi } from 'services/runtimeImages';
 import { secretApi } from 'services/secrets';
 import { serverApi } from 'services/server';
 import { templateApi } from 'services/templates';
@@ -46,6 +47,7 @@ export const store = configureStore({
         [secretApi.reducerPath]: secretApi.reducer,
         [gpuApi.reducerPath]: gpuApi.reducer,
         [runRequestApi.reducerPath]: runRequestApi.reducer,
+        [runtimeImagesApi.reducerPath]: runtimeImagesApi.reducer,
         [repoApi.reducerPath]: repoApi.reducer,
         [mainApi.reducerPath]: mainApi.reducer,
         [publicKeysApi.reducerPath]: publicKeysApi.reducer,
@@ -73,6 +75,7 @@ export const store = configureStore({
             .concat(secretApi.middleware)
             .concat(gpuApi.middleware)
             .concat(runRequestApi.middleware)
+            .concat(runtimeImagesApi.middleware)
             .concat(publicKeysApi.middleware)
             .concat(resourcePoolApi.middleware)
             .concat(eventApi.middleware)

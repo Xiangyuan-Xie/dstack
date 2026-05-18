@@ -1,3 +1,4 @@
+import json
 from collections import defaultdict
 from typing import Iterable, Optional
 from uuid import UUID
@@ -8,9 +9,10 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from dstack._internal.core.errors import ForbiddenError, ResourceNotExistsError, ServerClientError
 from dstack._internal.core.models.fleets import ApplyFleetPlanInput, FleetStatus
-from dstack._internal.core.models.instances import InstanceStatus
-from dstack._internal.core.models.runs import JobStatus
+from dstack._internal.core.models.instances import InstanceOfferWithAvailability, InstanceStatus
+from dstack._internal.core.models.runs import JobProvisioningData, JobStatus
 from dstack._internal.core.models.users import GlobalRole
+from dstack._internal.core.services import validate_dstack_resource_name
 from dstack._internal.server.models import (
     FleetModel,
     InstanceModel,
@@ -18,12 +20,19 @@ from dstack._internal.server.models import (
     ProjectModel,
     ProjectResourceInstanceAssignmentModel,
     ProjectResourcePoolAssignmentModel,
+    RegisteredWorkerModel,
+    WorkerRegistrationTokenModel,
 )
 from dstack._internal.server.schemas.resource_pools import (
     ResourcePool,
     ResourcePoolAssignment,
+    ResourcePoolGpuSummary,
     ResourcePoolInstance,
     ResourcePoolOccupancy,
+    ResourcePoolResources,
+    ResourcePoolResourceSummary,
+    ResourcePoolUsage,
+    ResourcePoolUsageSummary,
 )
 from dstack._internal.server.services import fleets as fleets_services
 from dstack._internal.server.services.fleets import get_fleet_spec
@@ -116,7 +125,7 @@ async def apply_resource_pool(
     default_project, _ = await get_or_create_default_project(session=session, user=user)
     default_project_model = await get_project_model_by_name_or_error(
         session=session,
-        project_name=default_project.name,
+        project_name=default_project.project_name,
     )
     fleet = await fleets_services.apply_plan(
         session=session,
@@ -140,7 +149,7 @@ async def delete_resource_pools(
     default_project, _ = await get_or_create_default_project(session=session, user=user)
     default_project_model = await get_project_model_by_name_or_error(
         session=session,
-        project_name=default_project.name,
+        project_name=default_project.project_name,
     )
     await fleets_services.delete_fleets(
         session=session,
@@ -149,6 +158,45 @@ async def delete_resource_pools(
         names=names,
         pipeline_hinter=pipeline_hinter,
     )
+
+
+async def rename_resource_pool(
+    session: AsyncSession,
+    resource_pool_name: Optional[str],
+    new_resource_pool_name: Optional[str],
+) -> ResourcePool:
+    old_name = (resource_pool_name or "").strip()
+    new_name = (new_resource_pool_name or "").strip()
+    if not old_name or not new_name:
+        raise ServerClientError("resource_pool_name and new_resource_pool_name must be specified")
+    validate_dstack_resource_name(new_name)
+    pool_res = await session.execute(
+        select(FleetModel)
+        .where(FleetModel.name == old_name, FleetModel.deleted == False)
+        .options(selectinload(FleetModel.instances.and_(InstanceModel.deleted == False)))
+    )
+    pool = pool_res.unique().scalar_one_or_none()
+    if pool is None:
+        raise ResourceNotExistsError(f"Resource pool {old_name!r} not found")
+    if old_name == new_name:
+        return await get_resource_pool(session=session, id=pool.id)
+    existing_res = await session.execute(
+        select(FleetModel).where(FleetModel.name == new_name, FleetModel.deleted == False)
+    )
+    if existing_res.scalar_one_or_none() is not None:
+        raise ServerClientError(f"Resource pool {new_name!r} already exists")
+
+    spec = get_fleet_spec(pool)
+    spec.configuration.name = new_name
+    pool.name = new_name
+    pool.spec = spec.json()
+    await session.execute(
+        WorkerRegistrationTokenModel.__table__.update()
+        .where(WorkerRegistrationTokenModel.fleet_name == old_name)
+        .values(fleet_name=new_name)
+    )
+    await session.commit()
+    return await get_resource_pool(session=session, id=pool.id)
 
 
 async def update_assignment(
@@ -247,12 +295,16 @@ async def _fleet_models_to_resource_pools(
     occupancy_by_instance = await _load_occupancy(
         session, [i.id for f in fleets for i in f.instances]
     )
+    usage_by_instance = await _load_registered_worker_usage(
+        session, [i.id for f in fleets for i in f.instances]
+    )
     return [
         _fleet_model_to_resource_pool(
             fleet,
             assignments_by_fleet.get(fleet.id, []),
             instance_assignments_by_fleet.get(fleet.id, []),
             occupancy_by_instance,
+            usage_by_instance,
         )
         for fleet in fleets
     ]
@@ -316,11 +368,32 @@ async def _load_occupancy(
     }
 
 
+async def _load_registered_worker_usage(
+    session: AsyncSession,
+    instance_ids: list[UUID],
+) -> dict[UUID, ResourcePoolUsage]:
+    if not instance_ids:
+        return {}
+    res = await session.execute(
+        select(RegisteredWorkerModel.instance_id, RegisteredWorkerModel.latest_usage).where(
+            RegisteredWorkerModel.instance_id.in_(instance_ids),
+            RegisteredWorkerModel.latest_usage.is_not(None),
+        )
+    )
+    usage_by_instance: dict[UUID, ResourcePoolUsage] = {}
+    for instance_id, latest_usage in res.all():
+        if not latest_usage:
+            continue
+        usage_by_instance[instance_id] = ResourcePoolUsage.parse_obj(json.loads(latest_usage))
+    return usage_by_instance
+
+
 def _fleet_model_to_resource_pool(
     fleet: FleetModel,
     pool_assignments: list[ProjectResourcePoolAssignmentModel],
     instance_assignments: list[ProjectResourceInstanceAssignmentModel],
     occupancy_by_instance: dict[UUID, ResourcePoolOccupancy],
+    usage_by_instance: dict[UUID, ResourcePoolUsage],
 ) -> ResourcePool:
     whole_pool_project_names = sorted({assignment.project.name for assignment in pool_assignments})
     instance_project_names: dict[UUID, list[str]] = defaultdict(list)
@@ -345,6 +418,8 @@ def _fleet_model_to_resource_pool(
     instances = []
     idle_count = 0
     busy_count = 0
+    instance_resources = []
+    instance_usages = []
     for instance in sorted(fleet.instances, key=lambda item: item.instance_num):
         authorized_projects = sorted(
             set(whole_pool_project_names) | set(instance_project_names.get(instance.id, []))
@@ -357,6 +432,11 @@ def _fleet_model_to_resource_pool(
             busy_count += 1
         elif instance.status == InstanceStatus.IDLE:
             idle_count += 1
+        resources = _get_instance_resources(instance)
+        usage = usage_by_instance.get(instance.id)
+        instance_resources.append(resources)
+        if usage is not None:
+            instance_usages.append(usage)
         instances.append(
             ResourcePoolInstance(
                 id=instance.id,
@@ -366,6 +446,8 @@ def _fleet_model_to_resource_pool(
                 backend=instance.backend.value if instance.backend else None,
                 authorized_projects=authorized_projects,
                 occupancy=occupancy,
+                resources=resources,
+                usage=usage,
             )
         )
 
@@ -383,4 +465,95 @@ def _fleet_model_to_resource_pool(
         ),
         idle_instance_count=idle_count,
         busy_instance_count=busy_count,
+        resource_summary=_summarize_resources(instance_resources),
+        usage_summary=_summarize_usage(instance_usages, len(instances)),
     )
+
+
+def _get_instance_resources(instance: InstanceModel) -> ResourcePoolResources:
+    if instance.offer:
+        resources = InstanceOfferWithAvailability.__response__.parse_raw(
+            instance.offer
+        ).instance.resources
+    elif instance.job_provisioning_data:
+        resources = JobProvisioningData.__response__.parse_raw(
+            instance.job_provisioning_data
+        ).instance_type.resources
+    else:
+        return ResourcePoolResources()
+
+    gpus_by_name: dict[str, ResourcePoolGpuSummary] = {}
+    for gpu in resources.gpus:
+        name = gpu.name or "GPU"
+        memory_gib = round(gpu.memory_mib / 1024, 2) if gpu.memory_mib else None
+        if name not in gpus_by_name:
+            gpus_by_name[name] = ResourcePoolGpuSummary(
+                name=name,
+                count=0,
+                memory_gib=memory_gib,
+            )
+        gpus_by_name[name].count += 1
+
+    return ResourcePoolResources(
+        cpu_count=resources.cpus,
+        memory_gib=round(resources.memory_mib / 1024, 2),
+        disk_gib=round(resources.disk.size_mib / 1024, 2) if resources.disk else None,
+        gpu_count=len(resources.gpus),
+        gpus=sorted(gpus_by_name.values(), key=lambda gpu: gpu.name),
+    )
+
+
+def _summarize_resources(resources: list[ResourcePoolResources]) -> ResourcePoolResourceSummary:
+    gpus_by_name: dict[str, ResourcePoolGpuSummary] = {}
+    for item in resources:
+        for gpu in item.gpus:
+            if gpu.name not in gpus_by_name:
+                gpus_by_name[gpu.name] = ResourcePoolGpuSummary(
+                    name=gpu.name,
+                    count=0,
+                    memory_gib=gpu.memory_gib,
+                )
+            gpus_by_name[gpu.name].count += gpu.count
+
+    return ResourcePoolResourceSummary(
+        instance_count=len(resources),
+        cpu_count=sum(item.cpu_count or 0 for item in resources),
+        memory_gib=round(sum(item.memory_gib or 0 for item in resources), 2),
+        disk_gib=round(sum(item.disk_gib or 0 for item in resources), 2),
+        gpu_count=sum(item.gpu_count for item in resources),
+        gpus=sorted(gpus_by_name.values(), key=lambda gpu: gpu.name),
+    )
+
+
+def _summarize_usage(
+    usages: list[ResourcePoolUsage],
+    instance_count: int,
+) -> ResourcePoolUsageSummary:
+    if not usages:
+        return ResourcePoolUsageSummary(instance_count=instance_count, reporting_instance_count=0)
+
+    memory_total_gib = sum(item.memory_total_gib or 0 for item in usages)
+    disk_total_gib = sum(item.disk_total_gib or 0 for item in usages)
+    gpu_memory_total_gib = sum(item.gpu_memory_total_gib or 0 for item in usages)
+    latest_updated_at = max((item.updated_at for item in usages if item.updated_at), default=None)
+
+    return ResourcePoolUsageSummary(
+        instance_count=instance_count,
+        reporting_instance_count=len(usages),
+        cpu_percent=_average([item.cpu_percent for item in usages]),
+        memory_used_gib=round(sum(item.memory_used_gib or 0 for item in usages), 2),
+        memory_total_gib=round(memory_total_gib, 2),
+        disk_used_gib=round(sum(item.disk_used_gib or 0 for item in usages), 2),
+        disk_total_gib=round(disk_total_gib, 2),
+        gpu_memory_used_gib=round(sum(item.gpu_memory_used_gib or 0 for item in usages), 2),
+        gpu_memory_total_gib=round(gpu_memory_total_gib, 2),
+        gpu_util_percent=_average([item.gpu_util_percent for item in usages]),
+        updated_at=latest_updated_at,
+    )
+
+
+def _average(values: list[Optional[float]]) -> Optional[float]:
+    numeric_values = [value for value in values if value is not None]
+    if not numeric_values:
+        return None
+    return round(sum(numeric_values) / len(numeric_values), 2)

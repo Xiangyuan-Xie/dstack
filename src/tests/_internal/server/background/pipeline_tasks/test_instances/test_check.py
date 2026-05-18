@@ -7,6 +7,7 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from dstack._internal.core.models.backends.base import BackendType
 from dstack._internal.core.models.fleets import FleetNodesSpec
 from dstack._internal.core.models.health import HealthStatus
 from dstack._internal.core.models.instances import InstanceStatus, InstanceTerminationReason
@@ -14,7 +15,12 @@ from dstack._internal.core.models.profiles import TerminationPolicy
 from dstack._internal.core.models.runs import JobStatus
 from dstack._internal.server.background.pipeline_tasks.instances import InstanceWorker
 from dstack._internal.server.background.pipeline_tasks.instances import check as instances_check
-from dstack._internal.server.models import InstanceHealthCheckModel, InstanceModel
+from dstack._internal.server.models import (
+    InstanceHealthCheckModel,
+    InstanceModel,
+    RegisteredWorkerModel,
+    WorkerRegistrationTokenModel,
+)
 from dstack._internal.server.schemas.health.dcgm import DCGMHealthResponse, DCGMHealthResult
 from dstack._internal.server.schemas.instances import InstanceCheck
 from dstack._internal.server.schemas.runner import (
@@ -400,6 +406,91 @@ class TestCheckInstance:
         health_check = res.scalars().one()
         assert health_check.status == HealthStatus.WARNING
         assert health_check.response == health_response.json()
+
+    async def test_check_registered_worker_uses_fresh_heartbeat_without_shim_check(
+        self,
+        test_db,
+        session: AsyncSession,
+        worker: InstanceWorker,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        project = await create_project(session=session)
+        fleet = await create_fleet(session=session, project=project)
+        instance = await create_instance(
+            session=session,
+            project=project,
+            fleet=fleet,
+            backend=BackendType.REGISTERED,
+            status=InstanceStatus.IDLE,
+            unreachable=False,
+        )
+        token = WorkerRegistrationTokenModel(fleet_name=fleet.name, token_hash="token-fresh")
+        session.add(token)
+        await session.flush()
+        session.add(
+            RegisteredWorkerModel(
+                registration_token=token,
+                fleet=fleet,
+                instance=instance,
+                name="gpu-box-1",
+                last_heartbeat_at=get_current_datetime() - dt.timedelta(seconds=30),
+                heartbeat_interval_seconds=10,
+            )
+        )
+        await session.commit()
+        check_inner = Mock(return_value=InstanceCheck(reachable=False, message="SSH problem"))
+        monkeypatch.setattr(instances_check, "_check_instance_inner", check_inner)
+
+        await process_instance(session, worker, instance)
+
+        await session.refresh(instance)
+        events = await list_events(session)
+        assert instance.unreachable is False
+        assert instance.termination_deadline is None
+        assert events == []
+        check_inner.assert_not_called()
+
+    async def test_check_registered_worker_marks_stale_heartbeat_unreachable_without_shim_check(
+        self,
+        test_db,
+        session: AsyncSession,
+        worker: InstanceWorker,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        project = await create_project(session=session)
+        fleet = await create_fleet(session=session, project=project)
+        instance = await create_instance(
+            session=session,
+            project=project,
+            fleet=fleet,
+            backend=BackendType.REGISTERED,
+            status=InstanceStatus.IDLE,
+            unreachable=False,
+        )
+        token = WorkerRegistrationTokenModel(fleet_name=fleet.name, token_hash="token-stale")
+        session.add(token)
+        await session.flush()
+        session.add(
+            RegisteredWorkerModel(
+                registration_token=token,
+                fleet=fleet,
+                instance=instance,
+                name="gpu-box-1",
+                last_heartbeat_at=get_current_datetime() - dt.timedelta(seconds=46),
+                heartbeat_interval_seconds=10,
+            )
+        )
+        await session.commit()
+        check_inner = Mock(return_value=InstanceCheck(reachable=True))
+        monkeypatch.setattr(instances_check, "_check_instance_inner", check_inner)
+
+        await process_instance(session, worker, instance)
+
+        await session.refresh(instance)
+        events = await list_events(session)
+        assert instance.unreachable is True
+        assert events[0].message == "Instance became unreachable"
+        check_inner.assert_not_called()
 
 
 @pytest.mark.asyncio

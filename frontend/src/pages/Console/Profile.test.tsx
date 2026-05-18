@@ -2,13 +2,14 @@ import React from 'react';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { AccountProfilePage, UserDetailsPage } from './pages';
+import { AccountKeysPage, AccountProfilePage, UserDetailsPage } from './pages';
 
 const mockPushNotification = jest.fn();
 const mockRefreshToken = jest.fn();
 const mockUpdateMyUser = jest.fn();
 const mockUpdateUser = jest.fn();
 const mockDeleteUsers = jest.fn();
+const mockDeleteKeys = jest.fn();
 const mockConfirm = jest.fn();
 const mockNavigate = jest.fn();
 
@@ -149,7 +150,22 @@ jest.mock('services/project', () => ({
         isLoading: false,
     }),
 }));
-jest.mock('services/publicKeys', () => ({}));
+jest.mock('services/publicKeys', () => ({
+    useListPublicKeysQuery: () => ({
+        data: [
+            {
+                id: 'key-1',
+                name: 'laptop',
+                fingerprint: 'SHA256:abc',
+                type: 'ssh',
+                added_at: '2026-05-16T09:00:00+08:00',
+            },
+        ],
+        isLoading: false,
+    }),
+    useAddPublicKeyMutation: () => [jest.fn(), { isLoading: false }],
+    useDeletePublicKeysMutation: () => [mockDeleteKeys, { isLoading: false }],
+}));
 jest.mock('services/run', () => ({}));
 jest.mock('services/secrets', () => ({}));
 jest.mock('services/volume', () => ({}));
@@ -226,6 +242,7 @@ describe('UserDetailsPage', () => {
         mockUpdateMyUser.mockReset();
         mockUpdateUser.mockReset();
         mockDeleteUsers.mockReset();
+        mockDeleteKeys.mockReset();
         mockConfirm.mockReset();
         mockNavigate.mockReset();
     });
@@ -321,5 +338,34 @@ describe('UserDetailsPage', () => {
             type: 'success',
             header: '用户已删除',
         });
+    });
+});
+
+describe('AccountKeysPage', () => {
+    beforeEach(() => {
+        mockConfirm.mockReset();
+        mockDeleteKeys.mockReset();
+    });
+
+    test('confirms before deleting an SSH public key', async () => {
+        mockDeleteKeys.mockReturnValue({
+            unwrap: () => Promise.resolve(undefined),
+        });
+
+        render(<AccountKeysPage />);
+        await userEvent.click(screen.getByRole('button', { name: '删除' }));
+
+        expect(mockDeleteKeys).not.toHaveBeenCalled();
+        expect(mockConfirm).toHaveBeenCalledWith(
+            expect.objectContaining({
+                title: '删除 SSH 公钥',
+                confirmButtonLabel: '删除',
+            }),
+        );
+
+        const onConfirm = mockConfirm.mock.calls[0][0].onConfirm;
+        await onConfirm();
+
+        expect(mockDeleteKeys).toHaveBeenCalledWith(['key-1']);
     });
 });
