@@ -10,5 +10,9 @@ async def preload_offers_catalog():
     """Pre-load the `gpuhunt` offers catalog so the get offer requests do not pay the catalog download cost."""
     logger.debug("Pre-loading offers catalog")
     catalog = gpuhunt.default_catalog()
-    await run_async(catalog.load)
+    try:
+        await run_async(catalog.load)
+    except Exception as e:
+        logger.warning("Failed to pre-load offers catalog: %s", e)
+        return
     logger.debug("Pre-loaded offers catalog")

@@ -119,3 +119,13 @@ declare type TResourcePoolAssignmentUpdateParams = {
     assign_whole_pool: boolean;
     instance_ids: string[];
 };
+
+declare type TResourcePoolAddSshHostParams = {
+    resource_pool_name: IResourcePool['name'];
+    hostname: string;
+    user: string;
+    port: number;
+    private_key: string;
+    internal_ip?: string | null;
+    blocks?: number | null;
+};

@@ -205,6 +205,7 @@ export const API = {
         UPDATE: () => `${API.RESOURCE_POOLS.BASE()}/update`,
         DELETE: () => `${API.RESOURCE_POOLS.BASE()}/delete`,
         ASSIGNMENTS_UPDATE: () => `${API.RESOURCE_POOLS.BASE()}/assignments/update`,
+        SSH_HOSTS_ADD: () => `${API.RESOURCE_POOLS.BASE()}/ssh_hosts/add`,
         PROJECT_LIST: (projectName: IProject['project_name']) => `${API.BASE()}/project/${projectName}/resource_pools/list`,
     },
 

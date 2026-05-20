@@ -305,7 +305,7 @@ async def list_projects_fleet_models(
 
 async def list_project_fleets(
     session: AsyncSession,
-    project: ProjectModel,
+    project: Optional[ProjectModel],
     names: Optional[List[str]] = None,
     include_imported: bool = False,
 ) -> List[Fleet]:

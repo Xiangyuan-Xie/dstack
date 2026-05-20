@@ -56,15 +56,19 @@ declare interface IRunSummary {
 }
 
 declare interface IRunRequestFormValues {
+    run_type: TRunRequestType;
     project_name: string;
     name: string;
     image: string;
     commands: string;
+    init: string;
+    ide: TIde | '';
+    inactivity_duration: string;
     entrypoint: string;
     working_dir: string;
     env: TRunRequestEnvRow[];
     ports: TRunRequestPortRow[];
-    volumes: TRunRequestVolumeRow[];
+    persistent_dirs: TRunRequestPersistentDir[];
     privileged: boolean;
     cpu: string;
     memory: string;

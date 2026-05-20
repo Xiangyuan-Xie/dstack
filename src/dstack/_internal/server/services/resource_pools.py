@@ -8,8 +8,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from dstack._internal.core.errors import ForbiddenError, ResourceNotExistsError, ServerClientError
-from dstack._internal.core.models.fleets import ApplyFleetPlanInput, FleetStatus
-from dstack._internal.core.models.instances import InstanceOfferWithAvailability, InstanceStatus
+from dstack._internal.core.models.fleets import (
+    ApplyFleetPlanInput,
+    FleetStatus,
+    SSHHostParams,
+    SSHParams,
+)
+from dstack._internal.core.models.instances import (
+    InstanceOfferWithAvailability,
+    InstanceStatus,
+    SSHKey,
+)
 from dstack._internal.core.models.runs import JobProvisioningData, JobStatus
 from dstack._internal.core.models.users import GlobalRole
 from dstack._internal.core.services import validate_dstack_resource_name
@@ -37,9 +46,14 @@ from dstack._internal.server.schemas.resource_pools import (
     ResourcePoolUsage,
     ResourcePoolUsageSummary,
 )
-from dstack._internal.server.services.fleets import get_fleet_spec
+from dstack._internal.server.services.encryption import encrypt
+from dstack._internal.server.services.fleets import (
+    create_fleet_ssh_instance_model,
+    get_fleet_spec,
+)
 from dstack._internal.server.services.pipelines import PipelineHinterProtocol
 from dstack._internal.utils.common import get_current_datetime
+from dstack._internal.utils.ssh import generate_public_key, pkey_from_str
 
 
 async def list_resource_pools(
@@ -289,6 +303,86 @@ async def update_assignment(
     return await get_resource_pool(session=session, id=pool.id)
 
 
+async def add_ssh_host(
+    session: AsyncSession,
+    user,
+    resource_pool_name: str,
+    hostname: str,
+    ssh_user: str,
+    port: int,
+    private_key: str,
+    internal_ip: Optional[str],
+    blocks: Optional[int],
+    pipeline_hinter: PipelineHinterProtocol,
+) -> ResourcePool:
+    if user.global_role != GlobalRole.ADMIN:
+        raise ForbiddenError("Only global administrators can manage resource pools")
+    if port <= 0:
+        raise ServerClientError("SSH port must be positive")
+
+    pool_res = await session.execute(
+        select(FleetModel)
+        .where(FleetModel.name == resource_pool_name, FleetModel.deleted == False)
+        .options(selectinload(FleetModel.instances.and_(InstanceModel.deleted == False)))
+    )
+    pool = pool_res.unique().scalar_one_or_none()
+    if pool is None:
+        raise ResourceNotExistsError(f"Resource pool {resource_pool_name!r} not found")
+
+    private_key = private_key.strip()
+    try:
+        pkey = pkey_from_str(private_key)
+    except ValueError:
+        raise ServerClientError(
+            "Unsupported key type. "
+            "The key type should be RSA, ECDSA, or Ed25519 and should not be encrypted with passphrase."
+        )
+
+    spec = get_fleet_spec(pool)
+    existing_hosts = _get_ssh_hostnames(spec.configuration.ssh_config)
+    if hostname in existing_hosts:
+        raise ServerClientError(
+            f"SSH host {hostname!r} is already in resource pool {resource_pool_name!r}"
+        )
+
+    host = SSHHostParams(
+        hostname=hostname,
+        user=ssh_user,
+        port=port,
+        internal_ip=internal_ip,
+        ssh_key=SSHKey(
+            public=generate_public_key(pkey),
+            private=encrypt(private_key),
+        ),
+        blocks=blocks,
+    )
+    if spec.configuration.ssh_config is None:
+        spec.configuration.nodes = None
+        spec.configuration.ssh_config = SSHParams(hosts=[host])
+    else:
+        spec.configuration.ssh_config.hosts.append(host)
+
+    next_instance_num = _get_next_resource_pool_instance_num(pool.instances)
+    instance_model = await create_fleet_ssh_instance_model(
+        project=None,
+        spec=spec,
+        ssh_params=spec.configuration.ssh_config,
+        env=spec.configuration.env,
+        blocks=spec.configuration.blocks,
+        instance_num=next_instance_num,
+        host=host,
+    )
+    instance_model.fleet = pool
+    pool.instances.append(instance_model)
+    pool.spec = spec.json()
+    pool.status = FleetStatus.ACTIVE
+    pool.status_message = None
+
+    await session.commit()
+    pipeline_hinter.hint_fetch(InstanceModel.__name__)
+    return await get_resource_pool(session=session, id=pool.id)
+
+
 async def get_project_authorized_fleet_filters(
     session: AsyncSession,
     project: ProjectModel,
@@ -516,7 +610,7 @@ def _fleet_model_to_resource_pool(
     return ResourcePool(
         id=fleet.id,
         name=fleet.name,
-        spec=get_fleet_spec(fleet),
+        spec=_get_sanitized_fleet_spec(fleet),
         created_at=fleet.created_at,
         status=fleet.status,
         status_message=fleet.status_message,
@@ -587,6 +681,33 @@ def _get_instance_resources(
             key=lambda gpu: (gpu.index if gpu.index is not None else 10**9, gpu.name),
         ),
     )
+
+
+def _get_sanitized_fleet_spec(fleet: FleetModel):
+    spec = get_fleet_spec(fleet)
+    if spec.configuration.ssh_config is not None:
+        spec.configuration.ssh_config.ssh_key = None
+        for host in spec.configuration.ssh_config.hosts:
+            if not isinstance(host, str):
+                host.ssh_key = None
+    return spec
+
+
+def _get_ssh_hostnames(ssh_config: Optional[SSHParams]) -> set[str]:
+    if ssh_config is None:
+        return set()
+    hostnames = set()
+    for host in ssh_config.hosts:
+        hostnames.add(host if isinstance(host, str) else host.hostname)
+    return hostnames
+
+
+def _get_next_resource_pool_instance_num(instances: list[InstanceModel]) -> int:
+    active_nums = {instance.instance_num for instance in instances if not instance.deleted}
+    next_num = 0
+    while next_num in active_nums:
+        next_num += 1
+    return next_num
 
 
 def _summarize_resources(resources: list[ResourcePoolResources]) -> ResourcePoolResourceSummary:

@@ -1,16 +1,22 @@
 declare type TRunRequestStatus = 'pending' | 'approved' | 'rejected' | 'failed';
+declare type TRunRequestType = 'task' | 'dev-environment';
 
 declare type TRunRequestResources = Partial<Pick<IResourcesSpecRequest, 'cpu' | 'memory' | 'gpu' | 'shm_size'>>;
 
 declare interface IRunRequestSpec {
+    run_type?: TRunRequestType;
     name?: string | null;
     image: string;
     commands: string[];
+    init?: string[];
+    ide?: TIde | null;
+    inactivity_duration?: string | number | boolean | 'off' | null;
     entrypoint?: string | null;
     working_dir?: string | null;
     env?: Record<string, string>;
     ports?: Array<number | string>;
     volumes?: string[];
+    persistent_dirs?: TRunRequestPersistentDir[];
     privileged?: boolean;
     nodes?: number;
     resources?: TRunRequestResources;
@@ -68,8 +74,8 @@ declare type TRunRequestPortRow = {
     protocol: 'tcp' | 'udp';
 };
 
-declare type TRunRequestVolumeRow = {
-    source: string;
-    target: string;
+declare type TRunRequestPersistentDir = {
+    host_path: string;
+    mount_path: string;
     read_only: boolean;
 };

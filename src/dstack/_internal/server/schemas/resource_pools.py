@@ -130,3 +130,13 @@ class UpdateResourcePoolAssignmentRequest(CoreModel):
     project_name: str
     assign_whole_pool: bool
     instance_ids: list[UUID] = []
+
+
+class AddResourcePoolSshHostRequest(CoreModel):
+    resource_pool_name: str
+    hostname: str
+    user: str
+    port: int = 22
+    private_key: str
+    internal_ip: Optional[str] = None
+    blocks: Optional[int] = None

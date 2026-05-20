@@ -57,11 +57,22 @@ export const router = createBrowserRouter([
                 children: [
                     { index: true, element: <Navigate replace to={C.DASHBOARD} /> },
                     { path: C.DASHBOARD, element: <DashboardPage /> },
-                    { path: C.RUNS, element: <RunsPage /> },
-                    { path: C.RUN_CREATE, element: <RunRequestCreatePage /> },
-                    { path: C.RUN_REQUEST_DETAILS.TEMPLATE, element: <RunRequestDetailsPage /> },
-                    { path: C.RUN_DETAILS.TEMPLATE, element: <RunDetailsPage /> },
-                    { path: C.JOB_DETAILS.TEMPLATE, element: <RunDetailsPage /> },
+                    { path: C.RUNS, element: <RunsPage kind="runs" /> },
+                    { path: C.RUN_CREATE, element: <RunRequestCreatePage kind="runs" /> },
+                    { path: C.RUN_REQUEST_DETAILS.TEMPLATE, element: <RunRequestDetailsPage kind="runs" /> },
+                    { path: C.RUN_DETAILS.TEMPLATE, element: <RunDetailsPage kind="runs" /> },
+                    { path: C.JOB_DETAILS.TEMPLATE, element: <RunDetailsPage kind="runs" /> },
+                    { path: C.DEV_ENVIRONMENTS, element: <RunsPage kind="dev-environments" /> },
+                    { path: C.DEV_ENVIRONMENT_CREATE, element: <RunRequestCreatePage kind="dev-environments" /> },
+                    {
+                        path: C.DEV_ENVIRONMENT_REQUEST_DETAILS.TEMPLATE,
+                        element: <RunRequestDetailsPage kind="dev-environments" />,
+                    },
+                    { path: C.DEV_ENVIRONMENT_DETAILS.TEMPLATE, element: <RunDetailsPage kind="dev-environments" /> },
+                    {
+                        path: C.DEV_ENVIRONMENT_JOB_DETAILS.TEMPLATE,
+                        element: <RunDetailsPage kind="dev-environments" />,
+                    },
                     {
                         path: C.RUN_APPROVALS,
                         element: (

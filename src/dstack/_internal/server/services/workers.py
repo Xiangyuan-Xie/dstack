@@ -76,14 +76,35 @@ async def create_registration_token(
         raise ForbiddenError()
     await _get_registered_fleet_by_name(session=session, fleet_name=fleet_name)
     token = f"dstack-worker-{secrets.token_urlsafe(32)}"
-    token_model = WorkerRegistrationTokenModel(
-        created_by=user,
-        fleet_name=fleet_name,
-        token_hash=get_token_hash(token),
-        enabled=True,
-        expires_at=expires_at,
+    res = await session.execute(
+        select(WorkerRegistrationTokenModel)
+        .where(WorkerRegistrationTokenModel.fleet_name == fleet_name)
+        .where(
+            ~select(RegisteredWorkerModel.id)
+            .where(RegisteredWorkerModel.registration_token_id == WorkerRegistrationTokenModel.id)
+            .exists()
+        )
+        .order_by(WorkerRegistrationTokenModel.created_at.desc(), WorkerRegistrationTokenModel.id)
     )
-    session.add(token_model)
+    pending_token_models = res.scalars().all()
+    if pending_token_models:
+        token_model = pending_token_models[0]
+        token_model.created_by = user
+        token_model.token_hash = get_token_hash(token)
+        token_model.enabled = True
+        token_model.created_at = get_current_datetime()
+        token_model.expires_at = expires_at
+        for stale_token_model in pending_token_models[1:]:
+            stale_token_model.enabled = False
+    else:
+        token_model = WorkerRegistrationTokenModel(
+            created_by=user,
+            fleet_name=fleet_name,
+            token_hash=get_token_hash(token),
+            enabled=True,
+            expires_at=expires_at,
+        )
+        session.add(token_model)
     await session.commit()
     return worker_registration_token_model_to_schema(token_model, token=token)
 

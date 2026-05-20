@@ -353,14 +353,15 @@ describe('FleetCreatePage', () => {
         await userEvent.type(screen.getByLabelText('资源池名称'), 'Bad_Name');
         await userEvent.click(screen.getByRole('button', { name: '创建资源池' }));
 
-        expect(screen.getByText("资源池名称需匹配 '^[a-z][a-z0-9-]{1,40}$'。")).toBeInTheDocument();
+        expect(screen.getByText('名称需以小写字母开头，仅可包含小写字母、数字和短横线。')).toBeInTheDocument();
+        expect(screen.getByLabelText('资源池名称')).toHaveAttribute('aria-invalid', 'true');
         expect(mockCreateResourcePool).not.toHaveBeenCalled();
     });
 
     test('uses access method wording for registered resource pools', () => {
         render(<FleetCreatePage />);
 
-        expect(screen.getByText(/接入方式：自有服务器/)).toBeInTheDocument();
+        expect(screen.getByText(/资源池创建后，可在实例页接入服务器/)).toBeInTheDocument();
         expect(screen.queryByText(/类型：注册服务器/)).not.toBeInTheDocument();
     });
 });
@@ -375,7 +376,7 @@ describe('FleetsPage', () => {
 
         expect(screen.getByText('gpu-fleet')).toBeInTheDocument();
         expect(screen.queryByText('状态')).not.toBeInTheDocument();
-        expect(screen.getByText('上报实例')).toBeInTheDocument();
+        expect(screen.getByText('已上报实例')).toBeInTheDocument();
         expect(screen.getByText('1 / 1')).toBeInTheDocument();
         expect(screen.getByText('16 核心')).toBeInTheDocument();
         expect(screen.getByText('128GiB')).toBeInTheDocument();
@@ -638,7 +639,7 @@ describe('ProjectDetailsPage', () => {
         expect(mockDeleteSecrets).not.toHaveBeenCalled();
         expect(mockConfirm).toHaveBeenCalledWith(
             expect.objectContaining({
-                title: '删除 Secret',
+                title: '删除密钥',
                 confirmButtonLabel: '删除',
             }),
         );
@@ -704,7 +705,7 @@ describe('BackendPage', () => {
         expect(mockDeleteBackend).not.toHaveBeenCalled();
         expect(mockConfirm).toHaveBeenCalledWith(
             expect.objectContaining({
-                title: '删除 Backend',
+                title: '删除后端配置',
                 confirmButtonLabel: '删除',
             }),
         );

@@ -8,7 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from dstack._internal.core.errors import ForbiddenError, ResourceNotExistsError, ServerClientError
-from dstack._internal.core.models.configurations import TaskConfiguration
+from dstack._internal.core.models.configurations import (
+    DevEnvironmentConfiguration,
+    TaskConfiguration,
+)
 from dstack._internal.core.models.profiles import Profile, parse_duration
 from dstack._internal.core.models.resources import CPUSpec, Memory
 from dstack._internal.core.models.runs import ApplyRunPlanInput, RunSpec
@@ -362,27 +365,55 @@ async def _submit_request_run(
 
 
 def _build_run_spec(request: RunRequestSpec, applicant: UserModel) -> RunSpec:
-    configuration = TaskConfiguration(
-        name=request.name,
-        image=request.image,
-        commands=request.commands,
-        env=request.env,
-        ports=request.ports,
-        nodes=request.nodes,
-        resources=request.resources,
-        max_duration=request.max_duration,
-        fleets=request.fleets,
-        entrypoint=request.entrypoint,
-        working_dir=request.working_dir,
-        volumes=request.volumes,
-        privileged=request.privileged,
-    )
+    volumes = _build_volumes(request)
+    if request.run_type == "dev-environment":
+        configuration = DevEnvironmentConfiguration(
+            name=request.name,
+            image=request.image,
+            init=request.init,
+            ide=request.ide,
+            inactivity_duration=request.inactivity_duration,
+            env=request.env,
+            ports=request.ports,
+            resources=request.resources,
+            max_duration=request.max_duration,
+            fleets=request.fleets,
+            working_dir=request.working_dir,
+            volumes=volumes,
+            privileged=request.privileged,
+        )
+    else:
+        configuration = TaskConfiguration(
+            name=request.name,
+            image=request.image,
+            commands=request.commands,
+            env=request.env,
+            ports=request.ports,
+            nodes=request.nodes,
+            resources=request.resources,
+            max_duration=request.max_duration,
+            fleets=request.fleets,
+            entrypoint=request.entrypoint,
+            working_dir=request.working_dir,
+            volumes=volumes,
+            privileged=request.privileged,
+        )
     return RunSpec(
         run_name=request.name,
         configuration=configuration,
         profile=Profile(name="default"),
         ssh_key_pub=applicant.ssh_public_key,
     )
+
+
+def _build_volumes(request: RunRequestSpec) -> list[str]:
+    volumes = list(request.volumes)
+    for directory in request.persistent_dirs:
+        volume = f"{directory.host_path}:{directory.mount_path}"
+        if directory.read_only:
+            volume = f"{volume}:ro"
+        volumes.append(volume)
+    return volumes
 
 
 async def _get_run_request_model(
@@ -440,6 +471,8 @@ def _can_review_run_requests(user: UserModel, project: ProjectModel) -> bool:
 
 def _should_auto_approve(project: ProjectModel, request: RunRequestSpec) -> bool:
     if not project.auto_approval_enabled:
+        return False
+    if request.persistent_dirs:
         return False
     if request.max_duration is None:
         return False

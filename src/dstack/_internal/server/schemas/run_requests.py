@@ -1,15 +1,41 @@
 from datetime import datetime
-from typing import Annotated, Dict, List, Optional, Union
+from typing import Annotated, Dict, List, Literal, Optional, Union
 from uuid import UUID
 
-from pydantic import Field, validator
+from pydantic import Field, root_validator, validator
 
 from dstack._internal.core.models.common import CoreModel
 from dstack._internal.core.models.resources import ResourcesSpec
 from dstack._internal.server.models import RunRequestStatus
 
 
+class PersistentDirectoryMapping(CoreModel):
+    host_path: Annotated[
+        str,
+        Field(description="The path on the physical server"),
+    ]
+    mount_path: Annotated[
+        str,
+        Field(description="The path inside the run environment"),
+    ]
+    read_only: Annotated[
+        bool,
+        Field(description="Whether to mount the directory read-only"),
+    ] = False
+
+    @validator("host_path", "mount_path")
+    def validate_paths(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Path cannot be empty")
+        return v
+
+
 class RunRequestSpec(CoreModel):
+    run_type: Annotated[
+        Literal["task", "dev-environment"],
+        Field(description="The requested run type"),
+    ] = "task"
     name: Annotated[
         Optional[str],
         Field(description="The run name. If not specified, a random name is generated."),
@@ -20,7 +46,19 @@ class RunRequestSpec(CoreModel):
         Optional[str],
         Field(description="The absolute path to the working directory inside the container"),
     ] = None
-    commands: Annotated[List[str], Field(description="The shell commands to run")]
+    commands: Annotated[List[str], Field(description="The shell commands to run")] = []
+    init: Annotated[
+        List[str],
+        Field(description="The shell commands to run when a dev environment starts"),
+    ] = []
+    ide: Annotated[
+        Optional[Union[Literal["vscode"], Literal["cursor"], Literal["windsurf"]]],
+        Field(description="The IDE to pre-install for dev environments"),
+    ] = None
+    inactivity_duration: Annotated[
+        Optional[Union[Literal["off"], int, bool, str]],
+        Field(description="Maximum inactive time before a dev environment is stopped"),
+    ] = None
     env: Annotated[
         Dict[str, str], Field(description="Environment variables for the container")
     ] = {}
@@ -40,14 +78,25 @@ class RunRequestSpec(CoreModel):
         Field(description="Fleets considered for reuse/provisioning"),
     ] = None
     volumes: Annotated[List[str], Field(description="Container mount points")] = []
+    persistent_dirs: Annotated[
+        List[PersistentDirectoryMapping],
+        Field(description="Physical server directories mounted into the run environment"),
+    ] = []
     privileged: Annotated[bool, Field(description="Run the container in privileged mode")] = False
 
     @validator("commands")
     def validate_commands(cls, v: List[str]) -> List[str]:
-        v = [command.strip() for command in v if command.strip()]
-        if not v:
-            raise ValueError("At least one command is required")
-        return v
+        return [command.strip() for command in v if command.strip()]
+
+    @validator("init")
+    def validate_init(cls, v: List[str]) -> List[str]:
+        return [command.strip() for command in v if command.strip()]
+
+    @root_validator
+    def validate_run_type_fields(cls, values):
+        if values.get("run_type", "task") == "task" and not values.get("commands"):
+            raise ValueError("At least one command is required for task requests")
+        return values
 
 
 class CreateRunRequestRequest(CoreModel):

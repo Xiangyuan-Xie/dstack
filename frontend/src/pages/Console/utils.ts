@@ -19,6 +19,7 @@ const navCopy = {
     zh: {
         dashboard: '工作台',
         runs: '运行任务',
+        devEnvironments: '开发环境',
         resources: '资源',
         fleets: '资源池',
         instances: '实例',
@@ -40,12 +41,13 @@ const navCopy = {
     en: {
         dashboard: 'Dashboard',
         runs: 'Runs',
+        devEnvironments: 'Development',
         resources: 'Resources',
-        fleets: 'Fleets',
+        fleets: 'Resource pools',
         instances: 'Instances',
-        offers: 'Offers',
-        models: 'Models',
-        volumes: 'Volumes',
+        offers: 'Pricing',
+        models: 'Model services',
+        volumes: 'Storage volumes',
         workspace: 'Workspace',
         projects: 'Projects',
         admin: 'Admin',
@@ -110,16 +112,20 @@ const parsePorts = (value: string | TRunRequestPortRow[]): Array<number | string
     return ports.length ? ports : undefined;
 };
 
-const parseVolumes = (value: TRunRequestVolumeRow[]): string[] | undefined => {
-    const volumes = value
+const parsePersistentDirs = (value: TRunRequestPersistentDir[]): TRunRequestPersistentDir[] | undefined => {
+    const dirs = value
         .map((row) => {
-            const source = row.source.trim();
-            const target = row.target.trim();
-            if (!source || !target) return null;
-            return row.read_only ? `${source}:${target}:ro` : `${source}:${target}`;
+            const hostPath = row.host_path.trim();
+            const mountPath = row.mount_path.trim();
+            if (!hostPath || !mountPath) return null;
+            return {
+                host_path: hostPath,
+                mount_path: mountPath,
+                read_only: row.read_only,
+            };
         })
-        .filter((volume): volume is string => Boolean(volume));
-    return volumes.length ? volumes : undefined;
+        .filter((dir): dir is TRunRequestPersistentDir => Boolean(dir));
+    return dirs.length ? dirs : undefined;
 };
 
 export const getPreferredLocale = (storedLocale: string | null, browserLanguage?: string): TLocale => {
@@ -186,6 +192,7 @@ export const getConsoleNavSections = (
             title: text.resources,
             items: [
                 { label: text.runs, href: CONSOLE_ROUTES.RUNS, icon: 'PlayCircle' },
+                { label: text.devEnvironments, href: CONSOLE_ROUTES.DEV_ENVIRONMENTS, icon: 'Laptop' },
                 ...(role.canUseGlobalAdmin
                     ? [
                           { label: text.fleets, href: CONSOLE_ROUTES.RESOURCES_FLEETS, icon: 'Server' },
@@ -243,7 +250,11 @@ export const canAccessConsoleRoute = (
         pathname === CONSOLE_ROUTES.RUNS ||
         pathname === CONSOLE_ROUTES.RUN_CREATE ||
         pathname.startsWith('/resources/runs/requests/') ||
-        /^\/resources\/runs\/[^/]+\/[^/]+/.test(pathname)
+        /^\/resources\/runs\/[^/]+\/[^/]+/.test(pathname) ||
+        pathname === CONSOLE_ROUTES.DEV_ENVIRONMENTS ||
+        pathname === CONSOLE_ROUTES.DEV_ENVIRONMENT_CREATE ||
+        pathname.startsWith('/resources/dev-environments/requests/') ||
+        /^\/resources\/dev-environments\/[^/]+\/[^/]+/.test(pathname)
     ) {
         return true;
     }
@@ -289,6 +300,14 @@ export const isConsoleNavItemActive = (pathname: string, itemHref: string): bool
         );
     }
 
+    if (itemHref === CONSOLE_ROUTES.DEV_ENVIRONMENTS) {
+        return (
+            pathname === CONSOLE_ROUTES.DEV_ENVIRONMENT_CREATE ||
+            pathname.startsWith('/resources/dev-environments/requests/') ||
+            /^\/resources\/dev-environments\/[^/]+\/[^/]+/.test(pathname)
+        );
+    }
+
     return pathname.startsWith(`${itemHref}/`);
 };
 
@@ -322,16 +341,19 @@ export const formatStatusLabel = (status: string | null | undefined, locale: TLo
         error: { zh: '错误', en: 'Error' },
         enabled: { zh: '可用', en: 'Enabled' },
         disabled: { zh: '已停用', en: 'Disabled' },
+        unreachable: { zh: '不可达', en: 'Unreachable' },
+        unknown: { zh: '未知', en: 'Unknown' },
     };
     const label = labels[normalized];
     if (label) {
         return label[locale] ?? label.zh;
     }
-    return status
+    const titleCase = status
         .split(/[_\s-]+/)
         .filter(Boolean)
         .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1).toLowerCase())
         .join(' ');
+    return locale === 'zh' ? titleCase || '未知状态' : titleCase;
 };
 
 export const formatEventMessage = (message: string, locale: TLocale): string => {
@@ -359,9 +381,9 @@ export const formatEventMessage = (message: string, locale: TLocale): string => 
         'Volume deleted': '存储卷已删除',
         'Gateway created': '网关已创建',
         'Gateway deleted': '网关已删除',
-        'Secret created': 'Secret 已创建',
-        'Secret updated': 'Secret 已更新',
-        'Secret deleted': 'Secret 已删除',
+        'Secret created': '密钥已创建',
+        'Secret updated': '密钥已更新',
+        'Secret deleted': '密钥已删除',
         'Public key created': '公钥已创建',
         'Public key deleted': '公钥已删除',
         'Token refreshed': 'Token 已刷新',
@@ -441,7 +463,7 @@ const translateEventSubject = (subject: string): string => {
         Instance: '实例',
         Volume: '存储卷',
         Gateway: '网关',
-        Secret: 'Secret',
+        Secret: '密钥',
         Repository: '代码仓库',
         Repo: '代码仓库',
         'Public key': '公钥',
@@ -489,14 +511,18 @@ export const buildRunRequestCreateParams = (values: IRunRequestFormValues): TRun
         project_name: values.project_name,
         request: {
             image: values.image.trim(),
+            run_type: values.run_type,
             commands: splitLines(values.commands),
+            init: values.run_type === 'dev-environment' ? splitLines(values.init) : undefined,
+            ide: values.run_type === 'dev-environment' ? values.ide || undefined : undefined,
+            inactivity_duration:
+                values.run_type === 'dev-environment' ? values.inactivity_duration.trim() || undefined : undefined,
             name: values.name.trim() || undefined,
             entrypoint: values.entrypoint.trim() || undefined,
             working_dir: values.working_dir.trim() || undefined,
-            env: parseEnv(values.env),
-            ports: parsePorts(values.ports),
-            volumes: parseVolumes(values.volumes),
-            privileged: values.privileged || undefined,
+            env: values.run_type === 'task' ? parseEnv(values.env) : undefined,
+            ports: values.run_type === 'task' ? parsePorts(values.ports) : undefined,
+            persistent_dirs: parsePersistentDirs(values.persistent_dirs),
             nodes: 1,
             resources: Object.keys(resources).length ? resources : undefined,
             max_duration: values.max_duration.trim() || undefined,

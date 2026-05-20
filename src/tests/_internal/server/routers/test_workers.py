@@ -18,6 +18,7 @@ from dstack._internal.server.models import (
     RegisteredWorkerModel,
     WorkerRegistrationTokenModel,
 )
+from dstack._internal.server.services.users import get_token_hash
 from dstack._internal.server.testing.common import (
     create_fleet,
     create_job,
@@ -52,6 +53,40 @@ class TestWorkerRegistrationTokens:
 
         token_model = (await session.execute(select(WorkerRegistrationTokenModel))).scalar_one()
         assert token_model.token_hash != response_json["token"]
+
+    async def test_creating_registration_token_replaces_pending_token_for_same_fleet(
+        self, session: AsyncSession, client: AsyncClient
+    ):
+        admin = await create_user(session, global_role=GlobalRole.ADMIN)
+        project = await create_project(session, name="main-project", owner=admin)
+        await create_fleet(session=session, project=project, name="lab-workers")
+
+        first_response = await client.post(
+            "/api/admin/worker_tokens/create",
+            headers=get_auth_headers(admin.token),
+            json={"fleet_name": "lab-workers"},
+        )
+        second_response = await client.post(
+            "/api/admin/worker_tokens/create",
+            headers=get_auth_headers(admin.token),
+            json={"fleet_name": "lab-workers"},
+        )
+
+        first_json = first_response.json()
+        second_json = second_response.json()
+        assert first_response.status_code == 200, first_json
+        assert second_response.status_code == 200, second_json
+        assert first_json["id"] == second_json["id"]
+        assert first_json["token"] != second_json["token"]
+
+        token_models = (
+            (await session.execute(select(WorkerRegistrationTokenModel))).scalars().all()
+        )
+        assert len(token_models) == 1
+        assert str(token_models[0].id) == second_json["id"]
+        assert token_models[0].enabled is True
+        assert token_models[0].token_hash == get_token_hash(second_json["token"])
+        assert token_models[0].token_hash != get_token_hash(first_json["token"])
 
     async def test_non_admin_cannot_create_registration_token(
         self, session: AsyncSession, client: AsyncClient

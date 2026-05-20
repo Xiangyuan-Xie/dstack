@@ -5,15 +5,22 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from dstack._internal.core.models.backends.base import BackendType
 from dstack._internal.core.models.instances import Gpu, InstanceStatus
 from dstack._internal.core.models.runs import JobStatus
 from dstack._internal.core.models.users import GlobalRole, ProjectRole
 from dstack._internal.server.models import (
+    InstanceModel,
     MemberModel,
     ProjectModel,
     RegisteredWorkerGpuAllocationModel,
     RegisteredWorkerModel,
     WorkerRegistrationTokenModel,
+)
+from dstack._internal.server.services.encryption import encryption_keys_context
+from dstack._internal.server.services.encryption.keys.aes import (
+    AESEncryptionKey,
+    AESEncryptionKeyConfig,
 )
 from dstack._internal.server.testing.common import (
     create_fleet,
@@ -26,6 +33,7 @@ from dstack._internal.server.testing.common import (
     get_auth_headers,
     get_fleet_spec,
     get_instance_offer_with_availability,
+    get_private_key_string,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -132,6 +140,55 @@ class TestResourcePoolManagement:
         )
 
         assert response.status_code == 400
+
+    async def test_global_admin_adds_ssh_host_to_resource_pool(
+        self, session: AsyncSession, client: AsyncClient
+    ):
+        admin = await create_user(session, name="admin", global_role=GlobalRole.ADMIN)
+        spec = get_fleet_spec()
+        spec.configuration.name = "lab-pool"
+        create_response = await client.post(
+            "/api/resource_pools/create",
+            headers=get_auth_headers(admin.token),
+            json={"plan": {"spec": spec.dict()}, "force": False},
+        )
+        assert create_response.status_code == 200, create_response.json()
+
+        with encryption_keys_context(
+            [
+                AESEncryptionKey(
+                    AESEncryptionKeyConfig(
+                        secret="cR2r1JmkPyL6edBQeHKz6ZBjCfS2oWk87Gc2G3wHVoA=",
+                        name="key1",
+                    )
+                )
+            ]
+        ):
+            response = await client.post(
+                "/api/resource_pools/ssh_hosts/add",
+                headers=get_auth_headers(admin.token),
+                json={
+                    "resource_pool_name": "lab-pool",
+                    "hostname": "10.0.0.10",
+                    "user": "root",
+                    "port": 22,
+                    "private_key": get_private_key_string(),
+                },
+            )
+
+        response_json = response.json()
+        assert response.status_code == 200, response_json
+        assert response_json["name"] == "lab-pool"
+        assert response_json["instances"][0]["backend"] == BackendType.REMOTE.value
+        assert response_json["instances"][0]["name"] == "lab-pool-0"
+        assert response_json["spec"]["configuration"]["ssh_config"]["hosts"][0]["ssh_key"] is None
+        assert get_private_key_string().strip() not in json.dumps(response_json)
+
+        instance = (await session.execute(select(InstanceModel))).scalar_one()
+        assert instance.project_id is None
+        assert instance.fleet_id is not None
+        assert instance.backend == BackendType.REMOTE
+        assert get_private_key_string().strip() not in instance.remote_connection_info
 
 
 class TestResourcePoolAssignments:

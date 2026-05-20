@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useState } from 'react';
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { format } from 'date-fns';
 import { Activity, ArrowLeft, Check, Copy, Pencil, Plus, RefreshCcw, Save, Trash2, UserCircle, X } from 'lucide-react';
@@ -43,6 +43,7 @@ import {
 } from 'services/project';
 import { useAddPublicKeyMutation, useDeletePublicKeysMutation, useListPublicKeysQuery } from 'services/publicKeys';
 import {
+    useAddResourcePoolSshHostMutation,
     useCreateResourcePoolMutation,
     useDeleteResourcePoolsMutation,
     useGetProjectResourcePoolsQuery,
@@ -126,6 +127,17 @@ const valueOrDash = (value?: React.ReactNode | null) => (value === null || value
 
 const RESOURCE_NAME_REGEX = /^[a-z][a-z0-9-]{1,40}$/;
 
+const focusFirstInvalidField = (root: HTMLElement | null) => {
+    const field = root?.querySelector<HTMLElement>('[aria-invalid="true"]');
+    if (!field) {
+        return;
+    }
+    if (typeof field.scrollIntoView === 'function') {
+        field.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    field.focus();
+};
+
 const useLocaleText = () => {
     const { locale } = useConsoleContext();
     return {
@@ -178,6 +190,33 @@ const formatFleetType = (
         return locale === 'zh' ? '自有服务器' : 'Self-hosted server';
     }
     return formatFleetBackend(fleet.spec.configuration);
+};
+
+const formatConfigSource = (source: TOAuthConfigSource | undefined, locale: TLocale) => {
+    if (source === 'database') {
+        return locale === 'zh' ? '控制台配置' : 'Console settings';
+    }
+    if (source === 'environment') {
+        return locale === 'zh' ? '环境变量' : 'Environment variables';
+    }
+    return locale === 'zh' ? '未配置' : 'Not configured';
+};
+
+const formatBackendCode = (backend: string | null | undefined, locale: TLocale) => {
+    if (!backend) return '-';
+    const labels: Record<string, { zh: string; en: string }> = {
+        registered: { zh: '自有服务器', en: 'Self-hosted server' },
+        remote: { zh: 'SSH 接入', en: 'SSH access' },
+        ssh: { zh: 'SSH 接入', en: 'SSH access' },
+        aws: { zh: 'AWS', en: 'AWS' },
+        gcp: { zh: 'Google Cloud', en: 'Google Cloud' },
+        azure: { zh: 'Azure', en: 'Azure' },
+        lambda: { zh: 'Lambda Cloud', en: 'Lambda Cloud' },
+        vastai: { zh: 'Vast.ai', en: 'Vast.ai' },
+        runpod: { zh: 'RunPod', en: 'RunPod' },
+    };
+    const label = labels[backend.toLowerCase()];
+    return label ? label[locale] : backend;
 };
 
 const formatUsagePercent = (value?: number | null) => {
@@ -512,6 +551,15 @@ const ResourceSliderField = ({
     );
 };
 
+const RequiredFormNotice = ({ children }: { children: React.ReactNode }) => (
+    <div
+        role="alert"
+        className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 shadow-sm dark:border-red-500/50 dark:bg-red-500/10 dark:text-red-200"
+    >
+        {children}
+    </div>
+);
+
 const useFilteredItems = <T,>(items: T[], query: string, fields: Array<(item: T) => string | null | undefined>) => {
     return useMemo(() => {
         const normalized = query.trim().toLowerCase();
@@ -535,6 +583,7 @@ const DetailGrid: React.FC<{ items: Array<{ label: React.ReactNode; value: React
 
 type TUnifiedRunItem = {
     id: string;
+    run_type: TRunRequestType | 'service';
     project_name: string;
     name: string;
     applicant: string;
@@ -549,12 +598,107 @@ type TUnifiedRunItem = {
     run?: IRun;
 };
 
+type TRunPageKind = 'runs' | 'dev-environments';
+
+const isDevEnvironmentKind = (kind: TRunPageKind) => kind === 'dev-environments';
+
+const getRunKindLabel = (kind: TRunPageKind, text: (zh: string, en: string) => string) =>
+    isDevEnvironmentKind(kind) ? text('开发环境', 'Development') : text('运行任务', 'Run');
+
+const getRunKindRoutes = (kind: TRunPageKind) =>
+    isDevEnvironmentKind(kind)
+        ? {
+              list: CONSOLE_ROUTES.DEV_ENVIRONMENTS,
+              create: CONSOLE_ROUTES.DEV_ENVIRONMENT_CREATE,
+              requestDetails: CONSOLE_ROUTES.DEV_ENVIRONMENT_REQUEST_DETAILS.FORMAT,
+              runDetails: CONSOLE_ROUTES.DEV_ENVIRONMENT_DETAILS.FORMAT,
+          }
+        : {
+              list: CONSOLE_ROUTES.RUNS,
+              create: CONSOLE_ROUTES.RUN_CREATE,
+              requestDetails: CONSOLE_ROUTES.RUN_REQUEST_DETAILS.FORMAT,
+              runDetails: CONSOLE_ROUTES.RUN_DETAILS.FORMAT,
+          };
+
 const getRunResourcesText = (run: IRun): string => {
     const resources = run.latest_job_submission?.job_provisioning_data?.instance_type?.resources;
     if (resources) {
         return formatResources(resources);
     }
     return '-';
+};
+
+const formatCommand = (command?: string[] | null) => (command?.length ? command.join(' ') : '');
+
+const DevEnvironmentConnectionPanel: React.FC<{ run: IRun }> = ({ run }) => {
+    const { text } = useLocaleText();
+    const [pushNotification] = useNotifications();
+    const connection = run.jobs?.find((job) => job.job_connection_info)?.job_connection_info;
+    const sshCommand = formatCommand(connection?.proxied_ssh_command ?? connection?.attached_ssh_command);
+    const ideUrl = connection?.proxied_ide_url ?? connection?.attached_ide_url;
+
+    const copySshCommand = async () => {
+        if (!sshCommand) return;
+        await copyToClipboard(sshCommand);
+        pushNotification({ type: 'success', header: text('SSH 命令已复制', 'SSH command copied') });
+    };
+
+    return (
+        <Panel title={text('连接开发环境', 'Connect')}>
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="grid gap-3">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-950/40">
+                        <div className="mb-2 font-semibold text-slate-900 dark:text-slate-100">SSH</div>
+                        {sshCommand ? (
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                                <code className="min-w-0 flex-1 overflow-x-auto rounded-lg bg-white px-3 py-2 text-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                                    {sshCommand}
+                                </code>
+                                <Button type="button" icon={<Copy className="h-4 w-4" />} onClick={copySshCommand}>
+                                    {text('复制', 'Copy')}
+                                </Button>
+                            </div>
+                        ) : (
+                            <p className="text-slate-500 dark:text-slate-400">
+                                {text(
+                                    '开发环境运行后会显示 SSH 连接命令。',
+                                    'The SSH command appears after development is running.',
+                                )}
+                            </p>
+                        )}
+                    </div>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm dark:border-slate-800 dark:bg-slate-950/40">
+                        <div className="mb-2 font-semibold text-slate-900 dark:text-slate-100">
+                            {connection?.ide_name ?? text('IDE', 'IDE')}
+                        </div>
+                        {ideUrl ? (
+                            <Button type="button" onClick={() => window.open(ideUrl, '_blank', 'noreferrer')}>
+                                {text('打开 IDE', 'Open IDE')}
+                            </Button>
+                        ) : (
+                            <p className="text-slate-500 dark:text-slate-400">
+                                {text(
+                                    '如果申请时选择了 VS Code、Cursor 或 Windsurf，开发环境运行后会显示打开入口。',
+                                    'If an IDE was selected, its connection link appears after development is running.',
+                                )}
+                            </p>
+                        )}
+                    </div>
+                </div>
+                <div className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm dark:border-slate-700 dark:bg-slate-950/30">
+                    <div className="font-semibold text-slate-900 dark:text-slate-100">
+                        {text('浏览器终端', 'Browser terminal')}
+                    </div>
+                    <p className="mt-2 text-slate-500 dark:text-slate-400">
+                        {text(
+                            '当前版本优先提供 SSH 和 IDE 连接。注册式服务器的浏览器终端需要交互式 Worker 通道，后续单独接入。',
+                            'This version provides SSH and IDE first. Browser terminal for registered servers requires an interactive worker channel.',
+                        )}
+                    </p>
+                </div>
+            </div>
+        </Panel>
+    );
 };
 
 const getUnifiedRunItems = (requests: IRunRequest[], runs: IRun[]): TUnifiedRunItem[] => {
@@ -564,6 +708,7 @@ const getUnifiedRunItems = (requests: IRunRequest[], runs: IRun[]): TUnifiedRunI
         const run = request.run_id ? runsById.get(request.run_id) : undefined;
         return {
             id: request.run_id ?? request.id,
+            run_type: request.request.run_type ?? (run?.run_spec.configuration.type === 'dev-environment' ? 'dev-environment' : 'task'),
             project_name: request.project_name,
             name: request.run_name ?? request.request.name ?? request.id,
             applicant: request.applicant,
@@ -582,6 +727,7 @@ const getUnifiedRunItems = (requests: IRunRequest[], runs: IRun[]): TUnifiedRunI
         .filter((run) => !requestRunIds.has(run.id))
         .map<TUnifiedRunItem>((run) => ({
             id: run.id,
+            run_type: run.run_spec.configuration.type === 'dev-environment' ? 'dev-environment' : run.run_spec.configuration.type ?? 'task',
             project_name: run.project_name,
             name: run.run_spec.run_name ?? run.id,
             applicant: run.user,
@@ -629,7 +775,7 @@ export const DashboardPage: React.FC = () => {
                 <MetricCard label={text('运行中任务', 'Running runs')} value={runningRuns} accent="teal" />
                 {role.canUseProjectAdmin ? (
                     <>
-                        <MetricCard label={text('资源池', 'Fleets')} value={resourcePools.data?.length ?? 0} accent="blue" />
+                        <MetricCard label={text('资源池', 'Resource pools')} value={resourcePools.data?.length ?? 0} accent="blue" />
                         <MetricCard label={text('活跃实例', 'Active instances')} value={activeInstanceCount} accent="slate" />
                     </>
                 ) : (
@@ -720,6 +866,11 @@ export const DashboardPage: React.FC = () => {
     );
 };
 
+const getRunRequestTypeLabel = (request: IRunRequest, text: (zh: string, en: string) => string) =>
+    (request.request.run_type ?? 'task') === 'dev-environment'
+        ? text('开发环境', 'Development')
+        : text('运行任务', 'Run');
+
 export const RunApprovalsPage: React.FC = () => {
     const navigate = useNavigate();
     const { role } = useConsoleContext();
@@ -736,10 +887,10 @@ export const RunApprovalsPage: React.FC = () => {
         <>
             <PageHeader
                 title={text('审批', 'Approvals')}
-                description={text('审批项目成员提交的运行任务。', 'Review submitted runs from project members.')}
+                description={text('审批项目成员提交的运行任务和开发环境。', 'Review submitted runs and development.')}
             />
             <Panel
-                title={text('待审批任务', 'Pending runs')}
+                title={text('待审批', 'Pending approvals')}
                 actions={
                     <SearchInput
                         value={query}
@@ -761,14 +912,23 @@ export const RunApprovalsPage: React.FC = () => {
                             cell: (item) => (
                                 <button
                                     className="font-semibold text-blue-600 hover:text-blue-700 dark:text-blue-300"
-                                    onClick={() =>
-                                        navigate(CONSOLE_ROUTES.RUN_REQUEST_DETAILS.FORMAT(item.project_name, item.id))
-                                    }
+                                    onClick={() => {
+                                        const routes = getRunKindRoutes(
+                                            item.request.run_type === 'dev-environment' ? 'dev-environments' : 'runs',
+                                        );
+                                        navigate(routes.requestDetails(item.project_name, item.id));
+                                    }}
                                 >
                                     {item.request.name ?? item.id}
                                 </button>
                             ),
                             sortValue: (item) => item.request.name ?? item.id,
+                        },
+                        {
+                            id: 'type',
+                            header: text('类型', 'Type'),
+                            cell: (item) => <StatusBadge tone="info">{getRunRequestTypeLabel(item, text)}</StatusBadge>,
+                            sortValue: (item) => item.request.run_type ?? 'task',
                         },
                         {
                             id: 'project',
@@ -806,23 +966,28 @@ export const RunApprovalsPage: React.FC = () => {
     );
 };
 
-export const RunRequestCreatePage: React.FC = () => {
+export const RunRequestCreatePage: React.FC<{ kind?: TRunPageKind }> = ({ kind = 'runs' }) => {
     const navigate = useNavigate();
     const { projects, role } = useConsoleContext();
     const { locale, text } = useLocaleText();
+    const formRef = useRef<HTMLFormElement>(null);
     const [createRunRequest, createState] = useCreateRunRequestMutation();
     const [applyRun, applyState] = useApplyRunMutation();
     const [pushNotification] = useNotifications();
     const [values, setValues] = useState<IRunRequestFormValues>({
+        run_type: isDevEnvironmentKind(kind) ? 'dev-environment' : 'task',
         project_name: projects[0]?.project_name ?? '',
         name: '',
         image: '',
         commands: '',
+        init: '',
+        ide: '',
+        inactivity_duration: 'off',
         entrypoint: '',
         working_dir: '',
         env: [{ key: '', value: '' }],
         ports: [{ host: '', container: '', protocol: 'tcp' }],
-        volumes: [{ source: '', target: '', read_only: false }],
+        persistent_dirs: [{ host_path: '', mount_path: '', read_only: false }],
         privileged: false,
         cpu: '',
         memory: '',
@@ -830,6 +995,9 @@ export const RunRequestCreatePage: React.FC = () => {
         max_duration: '4h',
         fleets: '',
     });
+    const [formErrors, setFormErrors] = useState<Partial<Record<keyof IRunRequestFormValues, string>>>({});
+    const routes = getRunKindRoutes(kind);
+    const isDevEnvironment = isDevEnvironmentKind(kind);
     const runtimeImages = useGetRuntimeImagesQuery();
     const projectResourcePools = useGetProjectResourcePoolsQuery(
         { projectName: values.project_name },
@@ -840,7 +1008,17 @@ export const RunRequestCreatePage: React.FC = () => {
         [projectResourcePools.data, values.fleets],
     );
 
-    const update = (key: keyof IRunRequestFormValues, value: string) => setValues((current) => ({ ...current, [key]: value }));
+    const clearFormError = (key: keyof IRunRequestFormValues) =>
+        setFormErrors((current) => {
+            if (!current[key]) return current;
+            const next = { ...current };
+            delete next[key];
+            return next;
+        });
+    const update = (key: keyof IRunRequestFormValues, value: string) => {
+        setValues((current) => ({ ...current, [key]: value }));
+        clearFormError(key);
+    };
     const updateEnvRow = (index: number, field: keyof TRunRequestEnvRow, value: string) => {
         setValues((current) => ({
             ...current,
@@ -853,10 +1031,12 @@ export const RunRequestCreatePage: React.FC = () => {
             ports: current.ports.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value } : row)),
         }));
     };
-    const updateVolumeRow = (index: number, field: keyof TRunRequestVolumeRow, value: string | boolean) => {
+    const updatePersistentDirRow = (index: number, field: keyof TRunRequestPersistentDir, value: string | boolean) => {
         setValues((current) => ({
             ...current,
-            volumes: current.volumes.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value } : row)),
+            persistent_dirs: current.persistent_dirs.map((row, rowIndex) =>
+                rowIndex === index ? { ...row, [field]: value } : row,
+            ),
         }));
     };
     const updateResource = (key: RunResourceLimitKey, value: string) => {
@@ -875,6 +1055,7 @@ export const RunRequestCreatePage: React.FC = () => {
     };
     const updateProject = (projectName: string) => {
         setValues((current) => ({ ...current, project_name: projectName, fleets: '' }));
+        clearFormError('project_name');
     };
     const runtimeImageGroups = useMemo(() => {
         const groups = new Map<string, IRuntimeImage[]>();
@@ -912,32 +1093,59 @@ export const RunRequestCreatePage: React.FC = () => {
             });
             return;
         }
-        if (!values.project_name || !values.image.trim() || !values.commands.trim()) {
+        const nextErrors: Partial<Record<keyof IRunRequestFormValues, string>> = {};
+        if (!values.project_name) nextErrors.project_name = text('请选择项目', 'Select a project');
+        if (!values.name.trim()) {
+            nextErrors.name = isDevEnvironment
+                ? text('请输入开发环境名称', 'Enter a development name')
+                : text('请输入任务名称', 'Enter a run name');
+        }
+        if (!values.image.trim()) nextErrors.image = text('请选择镜像', 'Select an image');
+        if (!isDevEnvironment && !values.commands.trim()) nextErrors.commands = text('请输入启动命令', 'Enter a startup command');
+        if (Object.keys(nextErrors).length) {
+            setFormErrors(nextErrors);
+            setTimeout(() => focusFirstInvalidField(formRef.current), 0);
             pushNotification({
                 type: 'error',
-                header: text('请填写项目、镜像和启动命令', 'Project, image, and commands are required'),
+                header: text('请补全必填信息', 'Complete the required fields'),
             });
             return;
         }
+        setFormErrors({});
         const createParams = buildRunRequestCreateParams(values);
         if (canManageConsoleProject(role, values.project_name)) {
-            const configuration: TTaskConfigurationRequest = {
-                type: 'task',
+            const baseConfiguration = {
                 image: createParams.request.image,
-                commands: createParams.request.commands,
                 env: createParams.request.env
                     ? Object.entries(createParams.request.env).map(([key, value]) => `${key}=${value}`)
                     : undefined,
                 ports: createParams.request.ports,
-                nodes: createParams.request.nodes,
                 resources: createParams.request.resources,
                 max_duration: createParams.request.max_duration ?? undefined,
                 fleets: createParams.request.fleets ?? undefined,
-                entrypoint: createParams.request.entrypoint ?? undefined,
                 working_dir: createParams.request.working_dir ?? undefined,
-                volumes: createParams.request.volumes ?? undefined,
+                volumes:
+                    createParams.request.volumes ??
+                    createParams.request.persistent_dirs?.map((dir) =>
+                        dir.read_only ? `${dir.host_path}:${dir.mount_path}:ro` : `${dir.host_path}:${dir.mount_path}`,
+                    ),
                 privileged: createParams.request.privileged ?? undefined,
             };
+            const configuration: TTaskConfigurationRequest | TDevEnvironmentConfiguration = isDevEnvironment
+                ? {
+                      ...baseConfiguration,
+                      type: 'dev-environment',
+                      init: createParams.request.init,
+                      ide: createParams.request.ide,
+                      inactivity_duration: createParams.request.inactivity_duration ?? undefined,
+                  }
+                : {
+                      ...baseConfiguration,
+                      type: 'task',
+                      commands: createParams.request.commands,
+                      nodes: createParams.request.nodes,
+                      entrypoint: createParams.request.entrypoint ?? undefined,
+                  };
             const result = await applyRun({
                 project_name: values.project_name,
                 force: true,
@@ -948,32 +1156,43 @@ export const RunRequestCreatePage: React.FC = () => {
                     },
                 },
             }).unwrap();
-            navigate(CONSOLE_ROUTES.RUN_DETAILS.FORMAT(result.project_name, result.id));
+            navigate(routes.runDetails(result.project_name, result.id));
             return;
         }
         const result = await createRunRequest(createParams).unwrap();
-        navigate(CONSOLE_ROUTES.RUN_REQUEST_DETAILS.FORMAT(result.project_name, result.id));
+        navigate(routes.requestDetails(result.project_name, result.id));
     };
     const selectedProjectCanDirectCreate = values.project_name ? canManageConsoleProject(role, values.project_name) : false;
+    const kindLabel = getRunKindLabel(kind, text);
+    const createButtonLabel = isDevEnvironment
+        ? text('创建开发环境', 'Create development environment')
+        : text('创建任务', 'Create run');
 
     return (
         <>
             <PageHeader
-                title={text('新建运行任务', 'New Run')}
+                title={isDevEnvironment ? text('新建开发环境', 'Create development environment') : text('新建运行任务', 'Create run')}
                 description={text(
                     selectedProjectCanDirectCreate
-                        ? '你可以在该项目中直接创建运行任务。'
-                        : '普通用户提交后需要项目管理员审批。',
+                        ? `将在所选项目中立即创建${kindLabel}。`
+                        : `提交${kindLabel}申请后，由项目管理员审批并创建。`,
                     selectedProjectCanDirectCreate
-                        ? 'You can create a run directly in this project.'
-                        : 'Regular users submit runs for project administrator approval.',
+                        ? `Create ${isDevEnvironment ? 'a development environment' : 'a run'} immediately in the selected project.`
+                        : `Submit ${isDevEnvironment ? 'a development environment' : 'a run'} for project administrator approval.`,
                 )}
             />
-            <form className="grid gap-6" onSubmit={onSubmit}>
-                <Panel title={text('基础信息', 'Basics')}>
+            <form ref={formRef} className="grid gap-6" onSubmit={onSubmit}>
+                {Object.keys(formErrors).length > 0 && (
+                    <RequiredFormNotice>{text('请补全必填信息', 'Complete the required fields')}</RequiredFormNotice>
+                )}
+                <Panel title={text('基础信息', 'Basic information')}>
                     <div className="grid gap-4 md:grid-cols-2">
-                        <Field label={text('项目', 'Project')}>
-                            <SelectInput value={values.project_name} onChange={(event) => updateProject(event.target.value)}>
+                        <Field label={text('项目', 'Project')} error={formErrors.project_name} required>
+                            <SelectInput
+                                value={values.project_name}
+                                onChange={(event) => updateProject(event.target.value)}
+                                invalid={Boolean(formErrors.project_name)}
+                            >
                                 <option value="">{text('请选择项目', 'Select a project')}</option>
                                 {projects.map((project) => (
                                     <option key={project.project_name} value={project.project_name}>
@@ -990,16 +1209,30 @@ export const RunRequestCreatePage: React.FC = () => {
                                 </span>
                             )}
                         </Field>
-                        <Field label={text('任务名称', 'Name')}>
-                            <TextInput value={values.name} onChange={(event) => update('name', event.target.value)} />
+                        <Field
+                            label={
+                                isDevEnvironment
+                                    ? text('开发环境名称', 'Development environment name')
+                                    : text('任务名称', 'Run name')
+                            }
+                            error={formErrors.name}
+                            required
+                        >
+                            <TextInput
+                                value={values.name}
+                                invalid={Boolean(formErrors.name)}
+                                onChange={(event) => update('name', event.target.value)}
+                            />
                         </Field>
-                        <Field label={text('镜像', 'Image')}>
+                        <Field label={text('镜像', 'Image')} error={formErrors.image} required>
                             <SelectInput
                                 aria-label={text('镜像', 'Image')}
                                 value={values.image}
                                 onChange={(event) => update('image', event.target.value)}
+                                invalid={Boolean(formErrors.image)}
                                 disabled={runtimeImages.isLoading || !runtimeImages.data?.length}
                             >
+                                <option value="">{text('请选择镜像', 'Select an image')}</option>
                                 {runtimeImageGroups.map(([category, images]) => (
                                     <optgroup key={category} label={category}>
                                         {images.map((image) => (
@@ -1017,14 +1250,14 @@ export const RunRequestCreatePage: React.FC = () => {
                             )}
                         </Field>
                         <Field
-                            label={text('资源池', 'Fleet')}
+                            label={text('资源池', 'Resource pool')}
                             hint={text(
-                                '不选择时自动使用该项目已授权的资源范围。',
-                                'Leave empty to use the project authorized resource scope automatically.',
+                                '不指定时，系统会在项目已授权资源中自动选择。',
+                                'Leave empty to let the system choose from authorized resource pools.',
                             )}
                         >
                             <SelectInput
-                                aria-label={text('资源池', 'Fleet')}
+                                aria-label={text('资源池', 'Resource pool')}
                                 value={values.fleets}
                                 onChange={(event) => update('fleets', event.target.value)}
                                 disabled={projectResourcePools.isLoading || !projectResourcePools.data?.length}
@@ -1039,166 +1272,212 @@ export const RunRequestCreatePage: React.FC = () => {
                         </Field>
                     </div>
                 </Panel>
-                <Panel title={text('启动配置', 'Startup')}>
+                <Panel title={isDevEnvironment ? text('开发环境设置', 'Development settings') : text('启动设置', 'Startup settings')}>
                     <div className="grid gap-4">
-                        <Field label={text('启动命令', 'Commands')}>
-                            <TextArea
-                                value={values.commands}
-                                onChange={(event) => update('commands', event.target.value)}
-                                placeholder="python train.py"
-                            />
-                        </Field>
-                        <div className="grid gap-4 md:grid-cols-2">
-                            <Field
-                                label={text('入口点', 'Entrypoint')}
-                                hint={text('可选，例如 /bin/bash。', 'Optional, for example /bin/bash.')}
-                            >
-                                <TextInput
-                                    aria-label={text('入口点', 'Entrypoint')}
-                                    value={values.entrypoint}
-                                    onChange={(event) => update('entrypoint', event.target.value)}
-                                    placeholder="/bin/bash"
+                        {isDevEnvironment ? (
+                            <>
+                                <div className="grid gap-4">
+                                    <Field
+                                        label={text('空闲自动停止', 'Idle stop')}
+                                        hint={text('默认不因空闲自动停止。', 'Defaults to no idle stop.')}
+                                    >
+                                        <SelectInput
+                                            aria-label={text('空闲自动停止', 'Idle stop')}
+                                            value={values.inactivity_duration}
+                                            onChange={(event) => update('inactivity_duration', event.target.value)}
+                                        >
+                                            <option value="off">{text('关闭', 'Off')}</option>
+                                            <option value="1h">1 {text('小时', 'hour')}</option>
+                                            <option value="2h">2 {text('小时', 'hours')}</option>
+                                            <option value="8h">8 {text('小时', 'hours')}</option>
+                                            <option value="1d">1 {text('天', 'day')}</option>
+                                        </SelectInput>
+                                    </Field>
+                                </div>
+                                <Field
+                                    label={text('初始化脚本', 'Initialization script')}
+                                    hint={text(
+                                        '可选，开发环境启动后执行；留空则直接进入可连接环境。',
+                                        'Optional. Runs after development starts.',
+                                    )}
+                                >
+                                    <TextArea
+                                        value={values.init}
+                                        onChange={(event) => update('init', event.target.value)}
+                                        placeholder="pip install -r requirements.txt"
+                                    />
+                                </Field>
+                            </>
+                        ) : (
+                            <Field label={text('启动命令', 'Startup command')} error={formErrors.commands} required>
+                                <TextArea
+                                    value={values.commands}
+                                    onChange={(event) => update('commands', event.target.value)}
+                                    invalid={Boolean(formErrors.commands)}
+                                    placeholder="python train.py"
                                 />
                             </Field>
+                        )}
+                        <div className="grid gap-4">
                             <Field
                                 label={text('工作目录', 'Working directory')}
-                                hint={text('容器内路径。', 'Path inside the container.')}
+                                hint={text(
+                                    '可选，进入环境后的默认目录，例如 /root、/workspace 或持久化目录路径。',
+                                    'Optional default directory after connecting, for example /root, /workspace, or a persistent directory path.',
+                                )}
                             >
                                 <TextInput
                                     aria-label={text('工作目录', 'Working directory')}
                                     value={values.working_dir}
                                     onChange={(event) => update('working_dir', event.target.value)}
-                                    placeholder="/workspace"
+                                    placeholder="/root"
                                 />
                             </Field>
                         </div>
-                        <div className="grid gap-4 md:grid-cols-2">
-                            <Panel title={text('环境变量', 'Environment variables')}>
-                                <div className="grid gap-3">
-                                    {values.env.map((row, index) => (
-                                        <div key={index} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-                                            <TextInput
-                                                aria-label={text('环境变量名', 'Environment key')}
-                                                value={row.key}
-                                                onChange={(event) => updateEnvRow(index, 'key', event.target.value)}
-                                                placeholder="KEY"
-                                            />
-                                            <TextInput
-                                                aria-label={text('环境变量值', 'Environment value')}
-                                                value={row.value}
-                                                onChange={(event) => updateEnvRow(index, 'value', event.target.value)}
-                                                placeholder="value"
-                                            />
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                icon={<Trash2 className="h-4 w-4" />}
-                                                onClick={() =>
-                                                    setValues((current) => ({
-                                                        ...current,
-                                                        env: current.env.filter((_, rowIndex) => rowIndex !== index),
-                                                    }))
-                                                }
+                        {!isDevEnvironment && (
+                            <div className="grid gap-4 md:grid-cols-2">
+                                <Panel title={text('环境变量', 'Environment variables')}>
+                                    <div className="grid gap-3">
+                                        {values.env.map((row, index) => (
+                                            <div
+                                                key={index}
+                                                className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
                                             >
-                                                {text('删除', 'Delete')}
-                                            </Button>
-                                        </div>
-                                    ))}
-                                    <Button
-                                        type="button"
-                                        icon={<Plus className="h-4 w-4" />}
-                                        onClick={() =>
-                                            setValues((current) => ({
-                                                ...current,
-                                                env: [...current.env, { key: '', value: '' }],
-                                            }))
-                                        }
-                                    >
-                                        {text('添加变量', 'Add variable')}
-                                    </Button>
-                                </div>
-                            </Panel>
-                            <Panel title={text('端口映射', 'Port mappings')}>
-                                <div className="grid gap-3">
-                                    {values.ports.map((row, index) => (
-                                        <div
-                                            key={index}
-                                            className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px_auto]"
+                                                <TextInput
+                                                    aria-label={text('环境变量名', 'Environment key')}
+                                                    value={row.key}
+                                                    onChange={(event) => updateEnvRow(index, 'key', event.target.value)}
+                                                    placeholder="KEY"
+                                                />
+                                                <TextInput
+                                                    aria-label={text('环境变量值', 'Environment value')}
+                                                    value={row.value}
+                                                    onChange={(event) => updateEnvRow(index, 'value', event.target.value)}
+                                                    placeholder="value"
+                                                />
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    icon={<Trash2 className="h-4 w-4" />}
+                                                    onClick={() =>
+                                                        setValues((current) => ({
+                                                            ...current,
+                                                            env: current.env.filter((_, rowIndex) => rowIndex !== index),
+                                                        }))
+                                                    }
+                                                >
+                                                    {text('删除', 'Delete')}
+                                                </Button>
+                                            </div>
+                                        ))}
+                                        <Button
+                                            type="button"
+                                            icon={<Plus className="h-4 w-4" />}
+                                            onClick={() =>
+                                                setValues((current) => ({
+                                                    ...current,
+                                                    env: [...current.env, { key: '', value: '' }],
+                                                }))
+                                            }
                                         >
-                                            <TextInput
-                                                aria-label={text('宿主端口', 'Host port')}
-                                                value={row.host}
-                                                onChange={(event) => updatePortRow(index, 'host', event.target.value)}
-                                                placeholder={text('宿主端口', 'Host port')}
-                                            />
-                                            <TextInput
-                                                aria-label={text('容器端口', 'Container port')}
-                                                value={row.container}
-                                                onChange={(event) => updatePortRow(index, 'container', event.target.value)}
-                                                placeholder={text('容器端口', 'Container port')}
-                                            />
-                                            <SelectInput
-                                                aria-label={text('协议', 'Protocol')}
-                                                value={row.protocol}
-                                                onChange={(event) => updatePortRow(index, 'protocol', event.target.value)}
+                                            {text('添加变量', 'Add variable')}
+                                        </Button>
+                                    </div>
+                                </Panel>
+                                <Panel title={text('端口映射', 'Port mappings')}>
+                                    <div className="grid gap-3">
+                                        {values.ports.map((row, index) => (
+                                            <div
+                                                key={index}
+                                                className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_110px_auto]"
                                             >
-                                                <option value="tcp">TCP</option>
-                                                <option value="udp">UDP</option>
-                                            </SelectInput>
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                icon={<Trash2 className="h-4 w-4" />}
-                                                onClick={() =>
-                                                    setValues((current) => ({
-                                                        ...current,
-                                                        ports: current.ports.filter((_, rowIndex) => rowIndex !== index),
-                                                    }))
-                                                }
-                                            >
-                                                {text('删除', 'Delete')}
-                                            </Button>
-                                        </div>
-                                    ))}
-                                    <Button
-                                        type="button"
-                                        icon={<Plus className="h-4 w-4" />}
-                                        onClick={() =>
-                                            setValues((current) => ({
-                                                ...current,
-                                                ports: [...current.ports, { host: '', container: '', protocol: 'tcp' }],
-                                            }))
-                                        }
-                                    >
-                                        {text('添加端口', 'Add port')}
-                                    </Button>
-                                </div>
-                            </Panel>
-                        </div>
-                        <Panel title={text('卷挂载', 'Volume mounts')}>
+                                                <TextInput
+                                                    aria-label={text('宿主端口', 'Host port')}
+                                                    value={row.host}
+                                                    onChange={(event) => updatePortRow(index, 'host', event.target.value)}
+                                                    placeholder={text('宿主端口', 'Host port')}
+                                                />
+                                                <TextInput
+                                                    aria-label={text('环境端口', 'Environment port')}
+                                                    value={row.container}
+                                                    onChange={(event) => updatePortRow(index, 'container', event.target.value)}
+                                                    placeholder={text('环境端口', 'Environment port')}
+                                                />
+                                                <SelectInput
+                                                    aria-label={text('协议', 'Protocol')}
+                                                    value={row.protocol}
+                                                    onChange={(event) => updatePortRow(index, 'protocol', event.target.value)}
+                                                >
+                                                    <option value="tcp">TCP</option>
+                                                    <option value="udp">UDP</option>
+                                                </SelectInput>
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    icon={<Trash2 className="h-4 w-4" />}
+                                                    onClick={() =>
+                                                        setValues((current) => ({
+                                                            ...current,
+                                                            ports: current.ports.filter((_, rowIndex) => rowIndex !== index),
+                                                        }))
+                                                    }
+                                                >
+                                                    {text('删除', 'Delete')}
+                                                </Button>
+                                            </div>
+                                        ))}
+                                        <Button
+                                            type="button"
+                                            icon={<Plus className="h-4 w-4" />}
+                                            onClick={() =>
+                                                setValues((current) => ({
+                                                    ...current,
+                                                    ports: [...current.ports, { host: '', container: '', protocol: 'tcp' }],
+                                                }))
+                                            }
+                                        >
+                                            {text('添加端口', 'Add port')}
+                                        </Button>
+                                    </div>
+                                </Panel>
+                            </div>
+                        )}
+                        <Panel
+                            title={text('持久化目录', 'Persistent directories')}
+                            description={text(
+                                '把服务器上的目录映射到环境内，用于保存数据和代码。包含自定义路径的申请需要项目管理员确认。',
+                                'Map server directories into the environment for persistent data and code. Custom paths require approval.',
+                            )}
+                        >
                             <div className="grid gap-3">
-                                {values.volumes.map((row, index) => (
+                                {values.persistent_dirs.map((row, index) => (
                                     <div
                                         key={index}
                                         className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_120px_auto]"
                                     >
                                         <TextInput
-                                            aria-label={text('来源路径', 'Source path')}
-                                            value={row.source}
-                                            onChange={(event) => updateVolumeRow(index, 'source', event.target.value)}
+                                            aria-label={text('服务器路径', 'Server path')}
+                                            value={row.host_path}
+                                            onChange={(event) =>
+                                                updatePersistentDirRow(index, 'host_path', event.target.value)
+                                            }
                                             placeholder="/data"
                                         />
                                         <TextInput
-                                            aria-label={text('容器路径', 'Container path')}
-                                            value={row.target}
-                                            onChange={(event) => updateVolumeRow(index, 'target', event.target.value)}
+                                            aria-label={text('环境内路径', 'Environment path')}
+                                            value={row.mount_path}
+                                            onChange={(event) =>
+                                                updatePersistentDirRow(index, 'mount_path', event.target.value)
+                                            }
                                             placeholder="/workspace/data"
                                         />
                                         <label className="flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">
                                             <input
                                                 type="checkbox"
                                                 checked={row.read_only}
-                                                onChange={(event) => updateVolumeRow(index, 'read_only', event.target.checked)}
+                                                onChange={(event) =>
+                                                    updatePersistentDirRow(index, 'read_only', event.target.checked)
+                                                }
                                             />
                                             {text('只读', 'Read-only')}
                                         </label>
@@ -1206,12 +1485,14 @@ export const RunRequestCreatePage: React.FC = () => {
                                             type="button"
                                             variant="ghost"
                                             icon={<Trash2 className="h-4 w-4" />}
-                                            onClick={() =>
-                                                setValues((current) => ({
-                                                    ...current,
-                                                    volumes: current.volumes.filter((_, rowIndex) => rowIndex !== index),
-                                                }))
-                                            }
+                                                onClick={() =>
+                                                    setValues((current) => ({
+                                                        ...current,
+                                                        persistent_dirs: current.persistent_dirs.filter(
+                                                            (_, rowIndex) => rowIndex !== index,
+                                                        ),
+                                                    }))
+                                                }
                                         >
                                             {text('删除', 'Delete')}
                                         </Button>
@@ -1223,36 +1504,20 @@ export const RunRequestCreatePage: React.FC = () => {
                                     onClick={() =>
                                         setValues((current) => ({
                                             ...current,
-                                            volumes: [...current.volumes, { source: '', target: '', read_only: false }],
+                                            persistent_dirs: [
+                                                ...current.persistent_dirs,
+                                                { host_path: '', mount_path: '', read_only: false },
+                                            ],
                                         }))
                                     }
                                 >
-                                    {text('添加挂载', 'Add mount')}
+                                    {text('添加目录', 'Add directory')}
                                 </Button>
                             </div>
                         </Panel>
-                        <label className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm dark:border-slate-800 dark:bg-slate-950/40">
-                            <input
-                                className="mt-1"
-                                type="checkbox"
-                                checked={values.privileged}
-                                onChange={(event) => setValues((current) => ({ ...current, privileged: event.target.checked }))}
-                            />
-                            <span>
-                                <span className="block font-semibold text-slate-900 dark:text-slate-100">
-                                    {text('特权模式', 'Privileged mode')}
-                                </span>
-                                <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">
-                                    {text(
-                                        '仅在容器需要访问宿主机设备或 Docker-in-Docker 时开启。',
-                                        'Enable only when the container needs host devices or Docker-in-Docker.',
-                                    )}
-                                </span>
-                            </span>
-                        </label>
                     </div>
                 </Panel>
-                <Panel title={text('资源规格', 'Resources')}>
+                <Panel title={text('资源配额', 'Resource limits')}>
                     <div className="grid gap-4 md:grid-cols-2">
                         <ResourceSliderField
                             label="CPU"
@@ -1298,7 +1563,7 @@ export const RunRequestCreatePage: React.FC = () => {
                     </div>
                 </Panel>
                 <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                    <Button className="w-full sm:w-auto" type="button" onClick={() => navigate(CONSOLE_ROUTES.RUNS)}>
+                    <Button className="w-full sm:w-auto" type="button" onClick={() => navigate(routes.list)}>
                         {text('取消', 'Cancel')}
                     </Button>
                     <Button
@@ -1307,9 +1572,7 @@ export const RunRequestCreatePage: React.FC = () => {
                         variant="primary"
                         loading={createState.isLoading || applyState.isLoading}
                     >
-                        {selectedProjectCanDirectCreate
-                            ? text('创建任务', 'Create run')
-                            : text('提交审批', 'Submit for approval')}
+                        {selectedProjectCanDirectCreate ? createButtonLabel : text('提交审批', 'Submit for approval')}
                     </Button>
                 </div>
             </form>
@@ -1317,13 +1580,17 @@ export const RunRequestCreatePage: React.FC = () => {
     );
 };
 
-export const RunRequestDetailsPage: React.FC = () => {
+export const RunRequestDetailsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind = 'runs' }) => {
     const { projectName = '', requestId = '' } = useParams();
     const navigate = useNavigate();
     const { role } = useConsoleContext();
     const { emptyTitle, locale, text } = useLocaleText();
     const request = useGetRunRequestQuery({ project_name: projectName, id: requestId });
     const run = useGetRunQuery({ project_name: projectName, id: request.data?.run_id ?? '' }, { skip: !request.data?.run_id });
+    const requestKind: TRunPageKind =
+        request.data?.request.run_type === 'dev-environment' ? 'dev-environments' : kind;
+    const routes = getRunKindRoutes(requestKind);
+    const isDevEnvironment = isDevEnvironmentKind(requestKind);
     const job = run.data?.jobs?.[0];
     const submission = job?.job_submissions?.[job.job_submissions.length - 1];
     const logs = useGetProjectLogsQuery(
@@ -1345,7 +1612,7 @@ export const RunRequestDetailsPage: React.FC = () => {
 
     const approveRequest = async () => {
         const result = await approve({ project_name: projectName, id: requestId }).unwrap();
-        navigate(CONSOLE_ROUTES.RUN_REQUEST_DETAILS.FORMAT(result.project_name, result.id));
+        navigate(routes.requestDetails(result.project_name, result.id));
     };
 
     const rejectRequest = async () => {
@@ -1384,16 +1651,40 @@ export const RunRequestDetailsPage: React.FC = () => {
                 }
             />
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
-                <Panel title={text('任务详情', 'Run details')}>
+                <Panel
+                    title={
+                        isDevEnvironment
+                            ? text('开发环境详情', 'Development details')
+                            : text('任务详情', 'Run details')
+                    }
+                >
                     {request.data ? (
                         <DetailGrid
                             items={[
                                 { label: text('名称', 'Name'), value: request.data.request.name },
+                                { label: text('类型', 'Type'), value: getRunRequestTypeLabel(request.data, text) },
                                 { label: text('镜像', 'Image'), value: request.data.request.image },
-                                {
-                                    label: text('命令', 'Commands'),
-                                    value: request.data.request.commands?.join(' && '),
-                                },
+                                isDevEnvironment
+                                    ? {
+                                          label: text('初始化脚本', 'Initialization script'),
+                                          value: request.data.request.init?.join(' && '),
+                                      }
+                                    : {
+                                          label: text('命令', 'Commands'),
+                                          value: request.data.request.commands?.join(' && '),
+                                      },
+                                ...(isDevEnvironment
+                                    ? [
+                                          {
+                                              label: text('IDE 入口', 'IDE entry'),
+                                              value: request.data.request.ide || text('仅 SSH', 'SSH only'),
+                                          },
+                                          {
+                                              label: text('空闲自动停止', 'Idle stop'),
+                                              value: request.data.request.inactivity_duration ?? text('关闭', 'Off'),
+                                          },
+                                      ]
+                                    : []),
                                 {
                                     label: text('环境变量', 'Environment'),
                                     value: request.data.request.env
@@ -1413,13 +1704,19 @@ export const RunRequestDetailsPage: React.FC = () => {
                                     value: request.data.request.max_duration,
                                 },
                                 {
-                                    label: text('资源池', 'Fleets'),
+                                    label: text('资源池', 'Resource pools'),
                                     value: request.data.request.fleets?.join(', '),
                                 },
                             ]}
                         />
                     ) : (
-                        <EmptyState title={text('任务不存在', 'Run request not found')} />
+                        <EmptyState
+                            title={
+                                isDevEnvironment
+                                    ? text('开发环境申请不存在', 'Development request not found')
+                                    : text('任务不存在', 'Run request not found')
+                            }
+                        />
                     )}
                 </Panel>
                 {request.data && (
@@ -1474,15 +1771,12 @@ export const RunRequestDetailsPage: React.FC = () => {
                                 <Button
                                     className="w-full"
                                     onClick={() =>
-                                        navigate(
-                                            CONSOLE_ROUTES.RUN_DETAILS.FORMAT(
-                                                request.data!.project_name,
-                                                request.data!.run_id!,
-                                            ),
-                                        )
+                                        navigate(routes.runDetails(request.data!.project_name, request.data!.run_id!))
                                     }
                                 >
-                                    {text('查看运行任务', 'View run')}
+                                    {isDevEnvironment
+                                        ? text('查看开发环境', 'View development')
+                                        : text('查看运行任务', 'View run')}
                                 </Button>
                             )}
                             {(request.data.review_message || request.data.status === 'failed') && (
@@ -1504,6 +1798,7 @@ export const RunRequestDetailsPage: React.FC = () => {
                             <MetricCard label={text('提交时间', 'Submitted')} value={formatDate(run.data.submitted_at)} />
                         </div>
                     </Panel>
+                    {isDevEnvironment && <DevEnvironmentConnectionPanel run={run.data} />}
                     <Panel title="Jobs">
                         <DataTable
                             items={run.data.jobs ?? []}
@@ -1567,14 +1862,22 @@ export const RunRequestDetailsPage: React.FC = () => {
     );
 };
 
-export const RunsPage: React.FC = () => {
+export const RunsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind = 'runs' }) => {
     const navigate = useNavigate();
     const { role } = useConsoleContext();
     const { emptyTitle, text } = useLocaleText();
     const [query, setQuery] = useState('');
     const runs = useGetRunsQuery({ limit: 500, job_submissions_limit: 1 });
     const requests = useGetAllRunRequestsQuery({ include_all: role.canUseProjectAdmin, limit: 500 });
-    const runItems = useMemo(() => getUnifiedRunItems(requests.data ?? [], runs.data ?? []), [requests.data, runs.data]);
+    const routes = getRunKindRoutes(kind);
+    const isDevEnvironment = isDevEnvironmentKind(kind);
+    const runItems = useMemo(
+        () =>
+            getUnifiedRunItems(requests.data ?? [], runs.data ?? []).filter((item) =>
+                isDevEnvironment ? item.run_type === 'dev-environment' : item.run_type === 'task',
+            ),
+        [isDevEnvironment, requests.data, runs.data],
+    );
     const items = useFilteredItems(runItems, query, [
         (item) => item.name,
         (item) => item.project_name,
@@ -1586,26 +1889,32 @@ export const RunsPage: React.FC = () => {
     return (
         <>
             <PageHeader
-                title={text('运行任务', 'Runs')}
+                title={isDevEnvironment ? text('开发环境', 'Development') : text('运行任务', 'Runs')}
                 actions={
                     <div className="flex flex-col gap-2 sm:flex-row">
                         <Button
                             variant="primary"
                             icon={<Plus className="h-4 w-4" />}
-                            onClick={() => navigate(CONSOLE_ROUTES.RUN_CREATE)}
+                            onClick={() => navigate(routes.create)}
                         >
-                            {text('新建运行任务', 'New run')}
+                            {isDevEnvironment
+                                ? text('新建开发环境', 'New development')
+                                : text('新建运行任务', 'New run')}
                         </Button>
                     </div>
                 }
             />
             <Panel
-                title={text('任务列表', 'Run list')}
+                title={isDevEnvironment ? text('开发环境列表', 'Development list') : text('任务列表', 'Run list')}
                 actions={
                     <SearchInput
                         value={query}
                         onChange={(event) => setQuery(event.target.value)}
-                        placeholder={text('搜索任务', 'Search runs')}
+                        placeholder={
+                            isDevEnvironment
+                                ? text('搜索开发环境', 'Search development')
+                                : text('搜索任务', 'Search runs')
+                        }
                     />
                 }
             >
@@ -1613,7 +1922,15 @@ export const RunsPage: React.FC = () => {
                     items={items}
                     loading={runs.isLoading || requests.isLoading}
                     keyGetter={(item) => item.id}
-                    empty={<EmptyState title={text('暂无运行任务', 'No runs')} />}
+                    empty={
+                        <EmptyState
+                            title={
+                                isDevEnvironment
+                                    ? text('暂无开发环境', 'No development')
+                                    : text('暂无运行任务', 'No runs')
+                            }
+                        />
+                    }
                     emptyTitle={emptyTitle}
                     columns={[
                         {
@@ -1624,11 +1941,9 @@ export const RunsPage: React.FC = () => {
                                     className="font-semibold text-blue-600 dark:text-blue-300"
                                     onClick={() => {
                                         if (item.run) {
-                                            navigate(CONSOLE_ROUTES.RUN_DETAILS.FORMAT(item.project_name, item.run.id));
+                                            navigate(routes.runDetails(item.project_name, item.run.id));
                                         } else if (item.request) {
-                                            navigate(
-                                                CONSOLE_ROUTES.RUN_REQUEST_DETAILS.FORMAT(item.project_name, item.request.id),
-                                            );
+                                            navigate(routes.requestDetails(item.project_name, item.request.id));
                                         }
                                     }}
                                 >
@@ -1678,7 +1993,7 @@ export const RunsPage: React.FC = () => {
     );
 };
 
-export const RunDetailsPage: React.FC = () => {
+export const RunDetailsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind = 'runs' }) => {
     const { projectName = '', runId = '' } = useParams();
     const { role } = useConsoleContext();
     const { emptyTitle, locale, text } = useLocaleText();
@@ -1687,6 +2002,8 @@ export const RunDetailsPage: React.FC = () => {
     const [deleteRuns, deleteState] = useDeleteRunsMutation();
     const run = useGetRunQuery({ project_name: projectName, id: runId });
     const data = run.data;
+    const pageKind: TRunPageKind = data?.run_spec.configuration.type === 'dev-environment' ? 'dev-environments' : kind;
+    const isDevEnvironment = isDevEnvironmentKind(pageKind);
     const job = data?.jobs?.[0];
     const submission = job?.job_submissions?.[job.job_submissions.length - 1];
     const metrics = useGetMetricsQuery(
@@ -1710,15 +2027,19 @@ export const RunDetailsPage: React.FC = () => {
     const canOperate = role.canUseGlobalAdmin || canManageConsoleProject(role, projectName);
     const stop = () =>
         confirm({
-            title: text('停止运行任务', 'Stop run'),
-            content: text('确认停止该运行任务？', 'Stop this run?'),
+            title: isDevEnvironment ? text('停止开发环境', 'Stop development') : text('停止运行任务', 'Stop run'),
+            content: isDevEnvironment
+                ? text('确认停止该开发环境？', 'Stop this development?')
+                : text('确认停止该运行任务？', 'Stop this run?'),
             confirmButtonLabel: text('停止', 'Stop'),
             onConfirm: () => stopRuns({ project_name: projectName, runs_names: [runName], abort: true }),
         });
     const remove = () =>
         confirm({
-            title: text('删除运行任务', 'Delete run'),
-            content: text('确认删除该运行任务？', 'Delete this run?'),
+            title: isDevEnvironment ? text('删除开发环境', 'Delete development') : text('删除运行任务', 'Delete run'),
+            content: isDevEnvironment
+                ? text('确认删除该开发环境？', 'Delete this development?')
+                : text('确认删除该运行任务？', 'Delete this run?'),
             confirmButtonLabel: text('删除', 'Delete'),
             onConfirm: () => deleteRuns({ project_name: projectName, runs_names: [runName] }),
         });
@@ -1759,6 +2080,7 @@ export const RunDetailsPage: React.FC = () => {
                         <EmptyState title={text('加载中', 'Loading')} />
                     )}
                 </Panel>
+                {data && isDevEnvironment && <DevEnvironmentConnectionPanel run={data} />}
                 <div id="jobs">
                     <Panel title={text('Jobs', 'Jobs')}>
                         <DataTable
@@ -1827,23 +2149,23 @@ export const FleetsPage: React.FC = () => {
     return (
         <>
             <PageHeader
-                title={text('资源池', 'Fleets')}
+                title={text('资源池', 'Resource pools')}
                 actions={
                     <Button
                         variant="primary"
                         icon={<Plus className="h-4 w-4" />}
                         onClick={() => navigate(CONSOLE_ROUTES.RESOURCES_FLEET_CREATE)}
                     >
-                        {text('创建资源池', 'Create fleet')}
+                        {text('创建资源池', 'Create resource pool')}
                     </Button>
                 }
             />
-            <Panel title={text('资源池列表', 'Fleet list')}>
+            <Panel title={text('资源池列表', 'Resource pools')}>
                 <DataTable
                     items={resourcePools.data ?? []}
                     loading={resourcePools.isLoading}
                     keyGetter={(item) => item.id}
-                    empty={<EmptyState title={text('暂无资源池', 'No fleets')} />}
+                    empty={<EmptyState title={text('暂无资源池', 'No resource pools')} />}
                     emptyTitle={emptyTitle}
                     columns={[
                         {
@@ -1877,7 +2199,7 @@ export const FleetsPage: React.FC = () => {
                         },
                         {
                             id: 'reporting',
-                            header: text('上报实例', 'Reporting'),
+                            header: text('已上报实例', 'Reporting instances'),
                             cell: (item) =>
                                 `${item.usage_summary?.reporting_instance_count ?? 0} / ${item.resource_summary.instance_count}`,
                         },
@@ -1897,6 +2219,7 @@ export const FleetsPage: React.FC = () => {
 export const FleetCreatePage: React.FC = () => {
     const navigate = useNavigate();
     const { text } = useLocaleText();
+    const formRef = useRef<HTMLFormElement>(null);
     const [createResourcePool, createState] = useCreateResourcePoolMutation();
     const [name, setName] = useState('');
     const [nameError, setNameError] = useState<string | null>(null);
@@ -1904,10 +2227,19 @@ export const FleetCreatePage: React.FC = () => {
     const submit = async (event: FormEvent) => {
         event.preventDefault();
         const trimmedName = name.trim();
+        if (!trimmedName) {
+            setNameError(text('请输入资源池名称', 'Enter a resource pool name'));
+            setTimeout(() => focusFirstInvalidField(formRef.current), 0);
+            return;
+        }
         if (!RESOURCE_NAME_REGEX.test(trimmedName)) {
             setNameError(
-                text("资源池名称需匹配 '^[a-z][a-z0-9-]{1,40}$'。", "Resource pool name must match '^[a-z][a-z0-9-]{1,40}$'."),
+                text(
+                    '名称需以小写字母开头，仅可包含小写字母、数字和短横线。',
+                    'Start with a lowercase letter. Use lowercase letters, numbers, and hyphens.',
+                ),
             );
+            setTimeout(() => focusFirstInvalidField(formRef.current), 0);
             return;
         }
         setNameError(null);
@@ -1932,32 +2264,35 @@ export const FleetCreatePage: React.FC = () => {
     return (
         <>
             <PageHeader
-                title={text('创建资源池', 'Create fleet')}
+                title={text('创建资源池', 'Create resource pool')}
                 description={text(
-                    '资源池用于组织可接入的自有服务器。创建后继续生成接入命令，把服务器注册为实例。',
-                    'A fleet groups registered servers. After creation, generate a connection command to register servers as instances.',
+                    '资源池用于统一管理自有服务器和可调度资源。创建后可继续接入服务器。',
+                    'A resource pool manages self-hosted servers and schedulable capacity. Add servers after creating it.',
                 )}
             />
-            <form className="grid gap-6" onSubmit={submit}>
+            <form ref={formRef} className="grid gap-6" onSubmit={submit}>
+                {nameError && <RequiredFormNotice>{text('请补全必填信息', 'Complete the required fields')}</RequiredFormNotice>}
                 <Panel
                     title={text('基础信息', 'Basic information')}
                     description={text(
-                        '当前版本创建自有服务器资源池，只需要填写基础信息。',
-                        'This version creates self-hosted server fleets with basic information only.',
+                        '填写资源池名称后，可在实例页接入服务器。',
+                        'Enter a resource pool name, then add servers from the Instances page.',
                     )}
                 >
                     <div className="grid gap-4 md:grid-cols-2">
                         <Field
-                            label={text('资源池名称', 'Fleet name')}
+                            label={text('资源池名称', 'Resource pool name')}
                             hint={text(
                                 '小写字母开头，可包含小写字母、数字和短横线。',
                                 'Start with a lowercase letter. Use lowercase letters, numbers, and hyphens.',
                             )}
                             error={nameError}
+                            required
                         >
                             <TextInput
-                                aria-label={text('资源池名称', 'Fleet name')}
+                                aria-label={text('资源池名称', 'Resource pool name')}
                                 value={name}
+                                invalid={Boolean(nameError)}
                                 onChange={(event) => {
                                     setName(event.target.value);
                                     if (nameError) setNameError(null);
@@ -1967,14 +2302,14 @@ export const FleetCreatePage: React.FC = () => {
                     </div>
                     <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50/70 p-4 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300">
                         {text(
-                            '接入方式：自有服务器。服务器不会在创建资源池时自动出现，需要下一步在实例页生成接入命令。',
-                            'Access method: Self-hosted server. Servers are not added automatically; generate a connection command on the Instances page next.',
+                            '资源池创建后，可在实例页接入服务器并纳入统一调度。',
+                            'After creating a resource pool, add servers from the Instances page to make them schedulable.',
                         )}
                     </div>
                 </Panel>
                 <div className="flex justify-end">
                     <Button type="submit" variant="primary" loading={createState.isLoading}>
-                        {text('创建资源池', 'Create fleet')}
+                        {text('创建资源池', 'Create resource pool')}
                     </Button>
                 </div>
             </form>
@@ -2207,6 +2542,7 @@ export const InstancesPage: React.FC = () => {
     const navigate = useNavigate();
     const location = useLocation();
     const { emptyTitle, locale, text } = useLocaleText();
+    const connectFormRef = useRef<HTMLFormElement>(null);
     const [confirm] = useConfirmationDialog();
     const [pushNotification] = useNotifications();
     const tokens = useGetWorkerRegistrationTokensQuery();
@@ -2214,9 +2550,19 @@ export const InstancesPage: React.FC = () => {
         { only_active: false, limit: 500 },
         { pollingInterval: 5000, refetchOnMountOrArgChange: true },
     );
-    const [values, setValues] = useState({ fleet_name: '' });
+    const [connectMethod, setConnectMethod] = useState<'worker' | 'ssh'>('worker');
+    const [values, setValues] = useState({
+        fleet_name: '',
+        hostname: '',
+        user: 'root',
+        port: '22',
+        private_key: '',
+        internal_ip: '',
+    });
+    const [connectErrors, setConnectErrors] = useState<Partial<Record<keyof typeof values, string>>>({});
     const [createToken, createState] = useCreateWorkerRegistrationTokenMutation();
     const [deleteToken, deleteState] = useDeleteWorkerRegistrationTokenMutation();
+    const [addSshHost, addSshHostState] = useAddResourcePoolSshHostMutation();
     const [connectOpen, setConnectOpen] = useState(false);
     const [latestToken, setLatestToken] = useState<IWorkerRegistrationToken | null>(null);
     const availableFleets = useMemo(() => resourcePools.data ?? [], [resourcePools.data]);
@@ -2254,7 +2600,7 @@ export const InstancesPage: React.FC = () => {
             connectState?.openConnectServer && availableFleets.some((fleet) => fleet.name === connectState.fleetName)
                 ? connectState.fleetName
                 : undefined;
-        setValues({ fleet_name: stateFleetName ?? firstFleetName });
+        setValues((current) => ({ ...current, fleet_name: stateFleetName ?? firstFleetName }));
     }, [availableFleets, connectState?.fleetName, connectState?.openConnectServer, resourcePools.isLoading, values.fleet_name]);
 
     const buildServerCommand = (token?: string | null) =>
@@ -2262,6 +2608,13 @@ export const InstancesPage: React.FC = () => {
 
     const createRegistrationToken = async (event: FormEvent) => {
         event.preventDefault();
+        if (!values.fleet_name.trim()) {
+            setConnectErrors({ fleet_name: text('请选择资源池', 'Select a resource pool') });
+            setTimeout(() => focusFirstInvalidField(connectFormRef.current), 0);
+            pushNotification({ type: 'error', header: text('请补全必填信息', 'Complete the required fields') });
+            return;
+        }
+        setConnectErrors({});
         const token = await createToken({
             fleet_name: values.fleet_name.trim(),
         }).unwrap();
@@ -2269,6 +2622,39 @@ export const InstancesPage: React.FC = () => {
         pushNotification({
             type: 'success',
             header: text('接入命令已生成', 'Server connection command created'),
+        });
+    };
+
+    const addSshServer = async (event: FormEvent) => {
+        event.preventDefault();
+        const nextErrors: Partial<Record<keyof typeof values, string>> = {};
+        if (!values.fleet_name.trim()) nextErrors.fleet_name = text('请选择资源池', 'Select a resource pool');
+        if (!values.hostname.trim()) nextErrors.hostname = text('请输入主机地址', 'Enter the host address');
+        if (!values.user.trim()) nextErrors.user = text('请输入 SSH 用户', 'Enter the SSH user');
+        const port = Number(values.port);
+        if (!values.port.trim() || !Number.isFinite(port) || port < 1) {
+            nextErrors.port = text('请输入有效端口', 'Enter a valid port');
+        }
+        if (!values.private_key.trim()) nextErrors.private_key = text('请粘贴 SSH 私钥', 'Paste the SSH private key');
+        if (Object.keys(nextErrors).length) {
+            setConnectErrors(nextErrors);
+            setTimeout(() => focusFirstInvalidField(connectFormRef.current), 0);
+            pushNotification({ type: 'error', header: text('请补全必填信息', 'Complete the required fields') });
+            return;
+        }
+        setConnectErrors({});
+        await addSshHost({
+            resource_pool_name: values.fleet_name.trim(),
+            hostname: values.hostname.trim(),
+            user: values.user.trim(),
+            port: Number(values.port) || 22,
+            private_key: values.private_key.trim(),
+            internal_ip: values.internal_ip.trim() || null,
+        }).unwrap();
+        setConnectOpen(false);
+        pushNotification({
+            type: 'success',
+            header: text('SSH 服务器已加入资源池', 'SSH server added to resource pool'),
         });
     };
 
@@ -2302,7 +2688,20 @@ export const InstancesPage: React.FC = () => {
         if (backend === 'registered') {
             return text('自有服务器', 'Self-hosted server');
         }
+        if (backend === 'remote') {
+            return text('SSH 接入', 'SSH access');
+        }
         return backend ?? '-';
+    };
+
+    const updateConnectValue = (key: keyof typeof values, value: string) => {
+        setValues((current) => ({ ...current, [key]: value }));
+        setConnectErrors((current) => {
+            if (!current[key]) return current;
+            const next = { ...current };
+            delete next[key];
+            return next;
+        });
     };
 
     return (
@@ -2341,7 +2740,7 @@ export const InstancesPage: React.FC = () => {
                                 </button>
                             ),
                         },
-                        { id: 'fleet', header: text('资源池', 'Fleet'), cell: (item) => item.fleet_name },
+                        { id: 'fleet', header: text('资源池', 'Resource pool'), cell: (item) => item.fleet_name },
                         {
                             id: 'backend',
                             header: text('接入方式', 'Access method'),
@@ -2376,8 +2775,8 @@ export const InstancesPage: React.FC = () => {
                 className="mt-5"
                 title={text('注册 Token', 'Registration tokens')}
                 description={text(
-                    '注册 Token 用于授权物理服务器接入资源池，生成后放入 dstack worker 启动命令，不是用户登录 Token。',
-                    'Registration tokens authorize physical servers to join a fleet through the dstack worker command. They are not user login tokens.',
+                    '用于服务器接入认证，仅适用于 dstack worker 注册流程。',
+                    'Used for server enrollment and only valid for the dstack worker registration flow.',
                 )}
             >
                 <DataTable
@@ -2387,7 +2786,7 @@ export const InstancesPage: React.FC = () => {
                     empty={<EmptyState title={text('暂无注册 Token', 'No registration tokens')} />}
                     emptyTitle={emptyTitle}
                     columns={[
-                        { id: 'fleet', header: text('资源池', 'Fleet'), cell: (item) => item.fleet_name },
+                        { id: 'fleet', header: text('资源池', 'Resource pool'), cell: (item) => item.fleet_name },
                         {
                             id: 'status',
                             header: text('状态', 'Status'),
@@ -2417,23 +2816,58 @@ export const InstancesPage: React.FC = () => {
             <Modal
                 open={connectOpen}
                 title={text('接入服务器', 'Connect server')}
+                size="lg"
                 onClose={() => setConnectOpen(false)}
                 footer={<Button onClick={() => setConnectOpen(false)}>{text('关闭', 'Close')}</Button>}
             >
                 <div className="space-y-5">
-                    <form onSubmit={createRegistrationToken}>
+                    <div className="grid gap-2 rounded-xl bg-slate-100 p-1 dark:bg-slate-900 sm:grid-cols-2">
+                        <button
+                            type="button"
+                            className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                                connectMethod === 'worker'
+                                    ? 'bg-white text-blue-700 shadow-sm dark:bg-slate-800 dark:text-blue-300'
+                                    : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-50'
+                            }`}
+                            onClick={() => setConnectMethod('worker')}
+                        >
+                            {text('运行 Worker（推荐）', 'Run worker (recommended)')}
+                        </button>
+                        <button
+                            type="button"
+                            className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                                connectMethod === 'ssh'
+                                    ? 'bg-white text-blue-700 shadow-sm dark:bg-slate-800 dark:text-blue-300'
+                                    : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-50'
+                            }`}
+                            onClick={() => setConnectMethod('ssh')}
+                        >
+                            {text('SSH 直连', 'SSH direct')}
+                        </button>
+                    </div>
+                    {Object.keys(connectErrors).length > 0 && (
+                        <RequiredFormNotice>{text('请补全必填信息', 'Complete the required fields')}</RequiredFormNotice>
+                    )}
+                    <form
+                        id="worker-registration-form"
+                        ref={connectFormRef}
+                        onSubmit={connectMethod === 'worker' ? createRegistrationToken : addSshServer}
+                    >
                         <div className="space-y-4">
                             <Field
-                                label={text('资源池', 'Fleet')}
+                                label={text('资源池', 'Resource pool')}
                                 hint={text(
-                                    '服务器会作为实例加入所选资源池。',
-                                    'The server will join the selected fleet as an instance.',
+                                    '选择服务器要加入的资源池。',
+                                    'Choose the resource pool this server should join.',
                                 )}
+                                error={connectErrors.fleet_name}
+                                required
                             >
                                 <SelectInput
-                                    aria-label={text('资源池', 'Fleet')}
+                                    aria-label={text('资源池', 'Resource pool')}
                                     value={values.fleet_name}
-                                    onChange={(event) => setValues({ fleet_name: event.target.value })}
+                                    onChange={(event) => updateConnectValue('fleet_name', event.target.value)}
+                                    invalid={Boolean(connectErrors.fleet_name)}
                                     disabled={resourcePools.isLoading || availableFleets.length === 0}
                                 >
                                     {availableFleets.map((fleet) => (
@@ -2444,56 +2878,130 @@ export const InstancesPage: React.FC = () => {
                                 </SelectInput>
                             </Field>
                             {!resourcePools.isLoading && availableFleets.length === 0 && (
-                                <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
-                                    <div>{text('还没有资源池，请先创建资源池。', 'No fleets yet. Create a fleet first.')}</div>
+                                <div className="flex flex-col gap-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+                                    <div>{text('暂无资源池', 'No resource pools')}</div>
                                     <Button
                                         type="button"
-                                        className="mt-3"
                                         onClick={() => {
                                             setConnectOpen(false);
                                             navigate(CONSOLE_ROUTES.RESOURCES_FLEET_CREATE);
                                         }}
                                     >
-                                        {text('创建资源池', 'Create fleet')}
+                                    {text('创建资源池', 'Create resource pool')}
                                     </Button>
                                 </div>
                             )}
-                            <Button
-                                type="submit"
-                                variant="primary"
-                                loading={createState.isLoading}
-                                disabled={!values.fleet_name || availableFleets.length === 0}
-                            >
-                                {text('生成接入命令', 'Create connection command')}
-                            </Button>
+                            {connectMethod === 'ssh' && (
+                                <div className="grid gap-4 md:grid-cols-2">
+                                    <Field label={text('主机地址', 'Host address')} error={connectErrors.hostname}>
+                                        <TextInput
+                                            aria-label={text('主机地址', 'Host address')}
+                                            value={values.hostname}
+                                            onChange={(event) => updateConnectValue('hostname', event.target.value)}
+                                            invalid={Boolean(connectErrors.hostname)}
+                                            placeholder="192.168.1.10"
+                                        />
+                                    </Field>
+                                    <Field label={text('SSH 用户', 'SSH user')} error={connectErrors.user}>
+                                        <TextInput
+                                            aria-label={text('SSH 用户', 'SSH user')}
+                                            value={values.user}
+                                            onChange={(event) => updateConnectValue('user', event.target.value)}
+                                            invalid={Boolean(connectErrors.user)}
+                                        />
+                                    </Field>
+                                    <Field label={text('端口', 'Port')} error={connectErrors.port}>
+                                        <TextInput
+                                            aria-label={text('端口', 'Port')}
+                                            type="number"
+                                            min={1}
+                                            value={values.port}
+                                            onChange={(event) => updateConnectValue('port', event.target.value)}
+                                            invalid={Boolean(connectErrors.port)}
+                                        />
+                                    </Field>
+                                    <Field
+                                        label={text('内网地址', 'Internal IP')}
+                                        hint={text('可选，用于多机内部通信。', 'Optional. Used for internal multi-node communication.')}
+                                    >
+                                        <TextInput
+                                            aria-label={text('内网地址', 'Internal IP')}
+                                            value={values.internal_ip}
+                                            onChange={(event) => updateConnectValue('internal_ip', event.target.value)}
+                                            placeholder="10.0.0.10"
+                                        />
+                                    </Field>
+                                    <div className="md:col-span-2">
+                                        <Field
+                                            label={text('SSH 私钥', 'SSH private key')}
+                                            hint={text(
+                                                '私钥只用于服务器接入，不会在资源池详情中展示。',
+                                                'The private key is used only for server access and is not shown in fleet details.',
+                                            )}
+                                            error={connectErrors.private_key}
+                                        >
+                                            <TextArea
+                                                aria-label={text('SSH 私钥', 'SSH private key')}
+                                                value={values.private_key}
+                                                onChange={(event) => updateConnectValue('private_key', event.target.value)}
+                                                invalid={Boolean(connectErrors.private_key)}
+                                                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                                            />
+                                        </Field>
+                                    </div>
+                                </div>
+                            )}
+                            {connectMethod === 'ssh' && (
+                                <Button
+                                    type="submit"
+                                    variant="primary"
+                                    loading={addSshHostState.isLoading}
+                                    disabled={availableFleets.length === 0}
+                                >
+                                    {text('添加服务器', 'Add server')}
+                                </Button>
+                            )}
                         </div>
                     </form>
-                    <Panel
-                        title={text('启动命令', 'Start command')}
-                        description={text(
-                            'Token 只会在生成时展示一次，请复制命令到目标服务器执行。',
-                            'The token is shown only when it is created. Copy the command to the target server.',
-                        )}
-                        actions={
-                            latestToken?.token ? (
-                                <Button icon={<Copy className="h-4 w-4" />} onClick={copyServerCommand}>
-                                    {text('复制命令', 'Copy command')}
-                                </Button>
-                            ) : null
-                        }
-                    >
-                        {latestToken?.token ? (
-                            <CodeBlock value={buildServerCommand(latestToken.token)} />
-                        ) : (
-                            <EmptyState
-                                title={text('尚未生成接入命令', 'No connection command yet')}
-                                description={text(
-                                    '生成后这里会显示可复制的服务器启动命令。',
-                                    'After creation, the server start command appears here.',
-                                )}
-                            />
-                        )}
-                    </Panel>
+                    {connectMethod === 'worker' && (
+                        <Panel
+                            title={text('Worker 启动命令', 'Worker start command')}
+                            description={text(
+                                '命令包含一次性凭证；再次生成会替换当前资源池尚未使用的接入命令。',
+                                'The command includes a one-time credential. Generating it again replaces the unused command for this resource pool.',
+                            )}
+                            actions={
+                                <div className="flex flex-wrap gap-2">
+                                    <Button
+                                        type="submit"
+                                        form="worker-registration-form"
+                                        variant="primary"
+                                        loading={createState.isLoading}
+                                        disabled={availableFleets.length === 0 || !values.fleet_name}
+                                    >
+                                        {text('生成命令', 'Generate command')}
+                                    </Button>
+                                    {latestToken?.token && (
+                                        <Button icon={<Copy className="h-4 w-4" />} onClick={copyServerCommand}>
+                                            {text('复制命令', 'Copy command')}
+                                        </Button>
+                                    )}
+                                </div>
+                            }
+                        >
+                            {latestToken?.token ? (
+                                <CodeBlock value={buildServerCommand(latestToken.token)} />
+                            ) : (
+                                <EmptyState
+                                    title={text('尚未生成接入命令', 'No connection command yet')}
+                                    description={text(
+                                        '选择资源池后生成服务器接入命令。',
+                                        'Select a resource pool to generate a server enrollment command.',
+                                    )}
+                                />
+                            )}
+                        </Panel>
+                    )}
                 </div>
             </Modal>
         </>
@@ -2520,14 +3028,14 @@ export const InstanceDetailsPage: React.FC = () => {
         <>
             <PageHeader
                 title={instance?.name ?? instanceId}
-                description={pool ? `${text('资源池', 'Fleet')}: ${pool.name}` : text('全局实例', 'Global instance')}
+                description={pool ? `${text('资源池', 'Resource pool')}: ${pool.name}` : text('全局实例', 'Global instance')}
             />
             <Panel title={text('实例信息', 'Instance information')}>
                 {instance ? (
                     <DetailGrid
                         items={[
                             { label: text('名称', 'Name'), value: instance.name },
-                            { label: text('资源池', 'Fleet'), value: pool?.name },
+                            { label: text('资源池', 'Resource pool'), value: pool?.name },
                             { label: text('编号', 'Number'), value: instance.instance_num },
                             { label: text('状态', 'Status'), value: <RequestStatus status={instance.status} /> },
                             { label: text('接入方式', 'Access method'), value: pool ? formatFleetType(pool, locale) : '-' },
@@ -2574,7 +3082,7 @@ export const InstanceDetailsPage: React.FC = () => {
 
 export const OffersPage: React.FC = () => {
     const { projects } = useConsoleContext();
-    const { emptyTitle, text } = useLocaleText();
+    const { emptyTitle, locale, text } = useLocaleText();
     const [projectName, setProjectName] = useState(projects[0]?.project_name ?? '');
     const offers = useGetGpusListQuery(
         {
@@ -2590,7 +3098,7 @@ export const OffersPage: React.FC = () => {
 
     return (
         <>
-            <PageHeader title={text('资源报价', 'Offers')} />
+            <PageHeader title={text('资源报价', 'Pricing')} />
             <Panel
                 title={text('GPU 资源', 'GPU resources')}
                 actions={
@@ -2610,7 +3118,7 @@ export const OffersPage: React.FC = () => {
                     emptyTitle={emptyTitle}
                     columns={[
                         { id: 'name', header: 'GPU', cell: (item) => item.name },
-                        { id: 'backend', header: text('后端', 'Backend'), cell: (item) => valueOrDash(item.backend) },
+                        { id: 'backend', header: text('后端', 'Backend'), cell: (item) => formatBackendCode(item.backend, locale) },
                         { id: 'region', header: text('区域', 'Region'), cell: (item) => valueOrDash(item.region) },
                         { id: 'count', header: text('数量', 'Count'), cell: (item) => `${item.count.min}..${item.count.max}` },
                         { id: 'price', header: text('价格', 'Price'), cell: (item) => `${item.price.min}..${item.price.max}` },
@@ -2628,8 +3136,8 @@ export const ModelsPage: React.FC = () => {
 
     return (
         <>
-            <PageHeader title={text('模型服务', 'Models')} />
-            <Panel title={text('模型列表', 'Models')}>
+            <PageHeader title={text('模型服务', 'Model services')} />
+            <Panel title={text('模型列表', 'Model services')}>
                 <DataTable
                     items={models.data ?? []}
                     loading={models.isLoading}
@@ -2688,7 +3196,7 @@ export const ModelDetailsPage: React.FC = () => {
 };
 
 export const VolumesPage: React.FC = () => {
-    const { emptyTitle, text } = useLocaleText();
+    const { emptyTitle, locale, text } = useLocaleText();
     const volumes = useGetAllVolumesQuery({ limit: 500 });
     const [confirm] = useConfirmationDialog();
     const [deleteVolumes] = useDeleteVolumesMutation();
@@ -2702,8 +3210,8 @@ export const VolumesPage: React.FC = () => {
 
     return (
         <>
-            <PageHeader title={text('存储卷', 'Volumes')} />
-            <Panel title={text('存储卷列表', 'Volumes')}>
+            <PageHeader title={text('存储卷', 'Storage volumes')} />
+            <Panel title={text('存储卷列表', 'Storage volumes')}>
                 <DataTable
                     items={volumes.data ?? []}
                     loading={volumes.isLoading}
@@ -2717,7 +3225,11 @@ export const VolumesPage: React.FC = () => {
                             header: text('状态', 'Status'),
                             cell: (item) => <RequestStatus status={item.status} />,
                         },
-                        { id: 'backend', header: text('后端', 'Backend'), cell: (item) => item.configuration.backend },
+                        {
+                            id: 'backend',
+                            header: text('后端', 'Backend'),
+                            cell: (item) => formatBackendCode(item.configuration.backend, locale),
+                        },
                         {
                             id: 'size',
                             header: text('大小', 'Size'),
@@ -2801,24 +3313,64 @@ export const ProjectsPage: React.FC = () => {
 export const ProjectCreatePage: React.FC = () => {
     const navigate = useNavigate();
     const { text } = useLocaleText();
+    const formRef = useRef<HTMLFormElement>(null);
+    const [pushNotification] = useNotifications();
     const [createProject, createState] = useCreateProjectMutation();
     const [projectName, setProjectName] = useState('');
+    const [projectNameError, setProjectNameError] = useState<string | null>(null);
     const [isPublic, setIsPublic] = useState(false);
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
-        const project = await createProject({ project_name: projectName, is_public: isPublic }).unwrap();
+        const trimmedName = projectName.trim();
+        if (!trimmedName) {
+            setProjectNameError(text('请输入项目名称', 'Enter a project name'));
+            setTimeout(() => focusFirstInvalidField(formRef.current), 0);
+            pushNotification({ type: 'error', header: text('请补全必填信息', 'Complete the required fields') });
+            return;
+        }
+        if (!RESOURCE_NAME_REGEX.test(trimmedName)) {
+            setProjectNameError(
+                text(
+                    '名称需以小写字母开头，仅可包含小写字母、数字和短横线。',
+                    'Start with a lowercase letter. Use lowercase letters, numbers, and hyphens.',
+                ),
+            );
+            setTimeout(() => focusFirstInvalidField(formRef.current), 0);
+            pushNotification({ type: 'error', header: text('请检查项目名称', 'Check the project name') });
+            return;
+        }
+        setProjectNameError(null);
+        const project = await createProject({ project_name: trimmedName, is_public: isPublic }).unwrap();
         navigate(CONSOLE_ROUTES.WORKSPACE_PROJECT_DETAILS.FORMAT(project.project_name));
     };
 
     return (
         <>
             <PageHeader title={text('创建项目', 'Create project')} />
-            <form onSubmit={submit}>
+            <form ref={formRef} onSubmit={submit}>
+                {projectNameError && (
+                    <RequiredFormNotice>{text('请补全必填信息', 'Complete the required fields')}</RequiredFormNotice>
+                )}
                 <Panel title={text('项目设置', 'Project settings')}>
                     <div className="grid gap-4 md:grid-cols-2">
-                        <Field label={text('项目名称', 'Project name')}>
-                            <TextInput value={projectName} onChange={(event) => setProjectName(event.target.value)} />
+                        <Field
+                            label={text('项目名称', 'Project name')}
+                            hint={text(
+                                '小写字母开头，可包含小写字母、数字和短横线。',
+                                'Start with a lowercase letter. Use lowercase letters, numbers, and hyphens.',
+                            )}
+                            error={projectNameError}
+                            required
+                        >
+                            <TextInput
+                                value={projectName}
+                                invalid={Boolean(projectNameError)}
+                                onChange={(event) => {
+                                    setProjectName(event.target.value);
+                                    if (projectNameError) setProjectNameError(null);
+                                }}
+                            />
                         </Field>
                         <Field label={text('可见性', 'Visibility')}>
                             <SelectInput
@@ -2845,6 +3397,7 @@ export const ProjectDetailsPage: React.FC = () => {
     const { projectName = '' } = useParams();
     const navigate = useNavigate();
     const { emptyTitle, locale, text } = useLocaleText();
+    const settingsFormRef = useRef<HTMLFormElement>(null);
     const project = useGetProjectQuery({ name: projectName });
     const repos = useGetProjectReposQuery({ project_name: projectName });
     const backends = useGetProjectBackendsQuery({ projectName });
@@ -2874,6 +3427,7 @@ export const ProjectDetailsPage: React.FC = () => {
         autoApprovalMaxMemoryGib: 16,
         autoApprovalMaxDurationHours: 8,
     });
+    const [settingsErrors, setSettingsErrors] = useState<Partial<Record<keyof typeof settings, string>>>({});
     const [resourceAssignment, setResourceAssignment] = useState({
         resourcePoolName: '',
         assignWholePool: true,
@@ -2922,9 +3476,37 @@ export const ProjectDetailsPage: React.FC = () => {
 
     const submitSettings = async (event: FormEvent) => {
         event.preventDefault();
+        const nextErrors: Partial<Record<keyof typeof settings, string>> = {};
+        const trimmedProjectName = settings.projectName.trim();
+        if (!trimmedProjectName) {
+            nextErrors.projectName = text('请输入项目名称', 'Enter a project name');
+        } else if (!RESOURCE_NAME_REGEX.test(trimmedProjectName)) {
+            nextErrors.projectName = text(
+                '名称需以小写字母开头，仅可包含小写字母、数字和短横线。',
+                'Start with a lowercase letter. Use lowercase letters, numbers, and hyphens.',
+            );
+        }
+        const numericFields: Array<keyof typeof settings> = [
+            'autoApprovalMaxCpu',
+            'autoApprovalMaxMemoryGib',
+            'autoApprovalMaxDurationHours',
+        ];
+        for (const field of numericFields) {
+            const value = Number(settings[field]);
+            if (!Number.isFinite(value) || value < 0) {
+                nextErrors[field] = text('请输入不小于 0 的数值', 'Enter a value greater than or equal to 0');
+            }
+        }
+        if (Object.keys(nextErrors).length) {
+            setSettingsErrors(nextErrors);
+            setTimeout(() => focusFirstInvalidField(settingsFormRef.current), 0);
+            pushNotification({ type: 'error', header: text('请检查项目设置', 'Check project settings') });
+            return;
+        }
+        setSettingsErrors({});
         const updatedProject = await updateProject({
             project_name: projectName,
-            new_project_name: settings.projectName.trim(),
+            new_project_name: trimmedProjectName,
             is_public: settings.isPublic,
             auto_approval: {
                 enabled: settings.autoApprovalEnabled,
@@ -2980,8 +3562,8 @@ export const ProjectDetailsPage: React.FC = () => {
 
     const removeSecret = (name: string) =>
         confirm({
-            title: text('删除 Secret', 'Delete secret'),
-            content: text('确认删除该 Secret？此操作不可恢复。', 'Delete this secret? This action cannot be undone.'),
+            title: text('删除密钥', 'Delete secret'),
+            content: text('确认删除该密钥？此操作不可恢复。', 'Delete this secret? This action cannot be undone.'),
             confirmButtonLabel: text('删除', 'Delete'),
             onConfirm: () => deleteSecrets({ project_name: projectName, names: [name] }),
         });
@@ -3012,12 +3594,15 @@ export const ProjectDetailsPage: React.FC = () => {
             <PageHeader
                 title={projectName}
                 description={text(
-                    '项目设置、成员、后端、网关、Secrets 和事件。',
-                    'Project settings, members, backends, gateways, secrets, and events.',
+                    '项目设置、成员、后端配置、网关、密钥和事件。',
+                    'Project settings, members, backend configuration, gateways, secrets, and events.',
                 )}
             />
             <div className="grid gap-6">
-                <form onSubmit={submitSettings}>
+                <form ref={settingsFormRef} onSubmit={submitSettings}>
+                    {Object.keys(settingsErrors).length > 0 && (
+                        <RequiredFormNotice>{text('请检查项目设置', 'Check project settings')}</RequiredFormNotice>
+                    )}
                     <Panel
                         title={text('项目设置', 'Project settings')}
                         description={text(
@@ -3041,12 +3626,23 @@ export const ProjectDetailsPage: React.FC = () => {
                         }
                     >
                         <div className="grid gap-4 md:grid-cols-2">
-                            <Field label={text('项目名称', 'Project name')}>
+                            <Field
+                                label={text('项目名称', 'Project name')}
+                                error={settingsErrors.projectName}
+                                required
+                            >
                                 <TextInput
                                     value={settings.projectName}
-                                    onChange={(event) =>
-                                        setSettings((current) => ({ ...current, projectName: event.target.value }))
-                                    }
+                                    invalid={Boolean(settingsErrors.projectName)}
+                                    onChange={(event) => {
+                                        setSettings((current) => ({ ...current, projectName: event.target.value }));
+                                        setSettingsErrors((current) => {
+                                            if (!current.projectName) return current;
+                                            const next = { ...current };
+                                            delete next.projectName;
+                                            return next;
+                                        });
+                                    }}
                                 />
                             </Field>
                             <Field label={text('可见性', 'Visibility')}>
@@ -3093,10 +3689,11 @@ export const ProjectDetailsPage: React.FC = () => {
                                 </label>
                             </div>
                             <div className="mt-4 grid gap-4 md:grid-cols-3">
-                                <Field label={text('CPU 上限', 'CPU limit')}>
+                                <Field label={text('CPU 上限', 'CPU limit')} error={settingsErrors.autoApprovalMaxCpu}>
                                     <TextInput
                                         type="number"
                                         min={0}
+                                        invalid={Boolean(settingsErrors.autoApprovalMaxCpu)}
                                         value={settings.autoApprovalMaxCpu}
                                         onChange={(event) =>
                                             setSettings((current) => ({
@@ -3106,10 +3703,14 @@ export const ProjectDetailsPage: React.FC = () => {
                                         }
                                     />
                                 </Field>
-                                <Field label={text('内存上限 GiB', 'Memory limit GiB')}>
+                                <Field
+                                    label={text('内存上限 GiB', 'Memory limit GiB')}
+                                    error={settingsErrors.autoApprovalMaxMemoryGib}
+                                >
                                     <TextInput
                                         type="number"
                                         min={0}
+                                        invalid={Boolean(settingsErrors.autoApprovalMaxMemoryGib)}
                                         value={settings.autoApprovalMaxMemoryGib}
                                         onChange={(event) =>
                                             setSettings((current) => ({
@@ -3119,10 +3720,14 @@ export const ProjectDetailsPage: React.FC = () => {
                                         }
                                     />
                                 </Field>
-                                <Field label={text('运行时间上限 小时', 'Duration limit hours')}>
+                                <Field
+                                    label={text('运行时间上限 小时', 'Duration limit hours')}
+                                    error={settingsErrors.autoApprovalMaxDurationHours}
+                                >
                                     <TextInput
                                         type="number"
                                         min={0}
+                                        invalid={Boolean(settingsErrors.autoApprovalMaxDurationHours)}
                                         value={settings.autoApprovalMaxDurationHours}
                                         onChange={(event) =>
                                             setSettings((current) => ({
@@ -3168,7 +3773,7 @@ export const ProjectDetailsPage: React.FC = () => {
                                     ) : (
                                         <div className="px-4 py-3 text-sm text-slate-500 dark:text-slate-400">
                                             {userSearch.isFetching
-                                                ? text('搜索中...', 'Searching...')
+                                                ? text('正在搜索', 'Searching')
                                                 : text('没有可添加的用户', 'No users to add')}
                                         </div>
                                     )}
@@ -3203,7 +3808,7 @@ export const ProjectDetailsPage: React.FC = () => {
                         ]}
                     />
                 </Panel>
-                <Panel title="Backends">
+                <Panel title={text('后端配置', 'Backend configuration')}>
                     <DataTable
                         items={backends.data ?? project.data?.backends ?? []}
                         loading={backends.isLoading}
@@ -3219,14 +3824,14 @@ export const ProjectDetailsPage: React.FC = () => {
                     title={text('资源授权', 'Resource assignment')}
                     description={text(
                         '项目可使用被授权的整个资源池，或资源池中的指定实例。',
-                        'A project can use an assigned whole fleet or selected instances within a fleet.',
+                        'A project can use an assigned whole resource pool or selected instances within a resource pool.',
                     )}
                 >
                     <form
                         className="mb-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(220px,320px)_auto]"
                         onSubmit={submitResourceAssignment}
                     >
-                        <Field label={text('资源池', 'Fleet')}>
+                        <Field label={text('资源池', 'Resource pool')}>
                             <SelectInput
                                 value={resourceAssignment.resourcePoolName}
                                 onChange={(event) =>
@@ -3257,7 +3862,7 @@ export const ProjectDetailsPage: React.FC = () => {
                                 }
                                 disabled={!selectedResourcePool}
                             >
-                                <option value="whole">{text('整个资源池', 'Whole fleet')}</option>
+                                <option value="whole">{text('整个资源池', 'Whole resource pool')}</option>
                                 <option value="instances">{text('指定实例', 'Selected instances')}</option>
                             </SelectInput>
                         </Field>
@@ -3312,7 +3917,7 @@ export const ProjectDetailsPage: React.FC = () => {
                         columns={[
                             {
                                 id: 'name',
-                                header: text('资源池', 'Fleet'),
+                                header: text('资源池', 'Resource pool'),
                                 cell: (item) => (
                                     <button
                                         className="font-semibold text-blue-600 dark:text-blue-300"
@@ -3348,7 +3953,7 @@ export const ProjectDetailsPage: React.FC = () => {
                                     );
                                     if (!assignment) return '-';
                                     return assignment.whole_pool
-                                        ? text('整个资源池', 'Whole fleet')
+                                        ? text('整个资源池', 'Whole resource pool')
                                         : text('指定实例', 'Selected instances');
                                 },
                             },
@@ -3370,7 +3975,7 @@ export const ProjectDetailsPage: React.FC = () => {
                         ]}
                     />
                 </Panel>
-                <Panel title="Secrets">
+                <Panel title={text('密钥', 'Secrets')}>
                     <div className="mb-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
                         <TextInput
                             value={secretName}
@@ -3407,7 +4012,7 @@ export const ProjectDetailsPage: React.FC = () => {
                         ]}
                     />
                 </Panel>
-                <Panel title="Repos">
+                <Panel title={text('代码仓库', 'Repositories')}>
                     <DataTable
                         items={repos.data ?? []}
                         loading={repos.isLoading}
@@ -3453,8 +4058,8 @@ export const BackendPage: React.FC<{ create?: boolean }> = ({ create }) => {
     const [deleteBackend] = useDeleteProjectBackendMutation();
     const removeBackend = () =>
         confirm({
-            title: text('删除 Backend', 'Delete backend'),
-            content: text('确认删除该 Backend？此操作不可恢复。', 'Delete this backend? This action cannot be undone.'),
+            title: text('删除后端配置', 'Delete backend configuration'),
+            content: text('确认删除该后端配置？此操作不可恢复。', 'Delete this backend configuration? This action cannot be undone.'),
             confirmButtonLabel: text('删除', 'Delete'),
             onConfirm: () => deleteBackend({ projectName, backends_names: [backendName] }),
         });
@@ -3462,7 +4067,7 @@ export const BackendPage: React.FC<{ create?: boolean }> = ({ create }) => {
     return (
         <>
             <PageHeader
-                title={create ? text('新建 Backend', 'New backend') : backendName}
+                title={create ? text('新建后端配置', 'New backend configuration') : backendName}
                 actions={
                     !create && (
                         <Button variant="danger" onClick={removeBackend}>
@@ -3471,12 +4076,12 @@ export const BackendPage: React.FC<{ create?: boolean }> = ({ create }) => {
                     )
                 }
             />
-            <Panel title={text('Backend 配置', 'Backend configuration')}>
+            <Panel title={text('后端配置', 'Backend configuration')}>
                 <EmptyState
-                    title={text('请通过命令行管理 Backend', 'Manage backends from the command line')}
+                    title={text('请通过命令行管理后端配置', 'Manage backend configuration from the command line')}
                     description={text(
-                        '新控制台不再直接展示底层配置。请使用 dstack CLI 管理项目 Backend。',
-                        'The new console no longer displays low-level configuration. Use the dstack CLI to manage project backends.',
+                        '新控制台不再直接展示底层配置。请使用 dstack CLI 管理项目后端配置。',
+                        'The new console no longer displays low-level configuration. Use the dstack CLI to manage project backend configuration.',
                     )}
                 />
             </Panel>
@@ -3579,6 +4184,8 @@ export const UsersPage: React.FC = () => {
 export const UserCreatePage: React.FC = () => {
     const navigate = useNavigate();
     const { locale, text } = useLocaleText();
+    const formRef = useRef<HTMLFormElement>(null);
+    const [pushNotification] = useNotifications();
     const [createUser, createState] = useCreateUserMutation();
     const [values, setValues] = useState({
         username: '',
@@ -3586,36 +4193,66 @@ export const UserCreatePage: React.FC = () => {
         global_role: 'user' as TUserRole,
         active: true,
     });
+    const [errors, setErrors] = useState<Partial<Record<keyof typeof values, string>>>({});
+
+    const updateUserCreateValue = (key: keyof typeof values, value: string | boolean) => {
+        setValues((current) => ({ ...current, [key]: value }));
+        setErrors((current) => {
+            if (!current[key]) return current;
+            const next = { ...current };
+            delete next[key];
+            return next;
+        });
+    };
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
-        const user = await createUser({ ...values, email: values.email.trim() || null }).unwrap();
+        const nextErrors: Partial<Record<keyof typeof values, string>> = {};
+        const username = values.username.trim();
+        const email = values.email.trim();
+        if (!username) nextErrors.username = text('请输入用户名', 'Enter a username');
+        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            nextErrors.email = text('请输入有效邮箱', 'Enter a valid email address');
+        }
+        if (Object.keys(nextErrors).length) {
+            setErrors(nextErrors);
+            setTimeout(() => focusFirstInvalidField(formRef.current), 0);
+            pushNotification({ type: 'error', header: text('请补全必填信息', 'Complete the required fields') });
+            return;
+        }
+        setErrors({});
+        const user = await createUser({ ...values, username, email: email || null }).unwrap();
         navigate(CONSOLE_ROUTES.ADMIN_USER_DETAILS.FORMAT(user.username));
     };
 
     return (
         <>
             <PageHeader title={text('创建用户', 'Create user')} />
-            <form onSubmit={submit}>
+            <form ref={formRef} onSubmit={submit}>
+                {Object.keys(errors).length > 0 && (
+                    <RequiredFormNotice>{text('请补全必填信息', 'Complete the required fields')}</RequiredFormNotice>
+                )}
                 <Panel title={text('用户信息', 'User info')}>
                     <div className="grid gap-4 md:grid-cols-2">
-                        <Field label={text('用户名', 'Username')}>
+                        <Field label={text('用户名', 'Username')} error={errors.username} required>
                             <TextInput
                                 value={values.username}
-                                onChange={(event) => setValues((current) => ({ ...current, username: event.target.value }))}
+                                invalid={Boolean(errors.username)}
+                                onChange={(event) => updateUserCreateValue('username', event.target.value)}
                             />
                         </Field>
-                        <Field label="Email">
+                        <Field label="Email" error={errors.email}>
                             <TextInput
                                 value={values.email}
-                                onChange={(event) => setValues((current) => ({ ...current, email: event.target.value }))}
+                                invalid={Boolean(errors.email)}
+                                onChange={(event) => updateUserCreateValue('email', event.target.value)}
                             />
                         </Field>
                         <Field label={text('角色', 'Role')}>
                             <SelectInput
                                 value={values.global_role}
                                 onChange={(event) =>
-                                    setValues((current) => ({ ...current, global_role: event.target.value as TUserRole }))
+                                    updateUserCreateValue('global_role', event.target.value as TUserRole)
                                 }
                             >
                                 <option value="user">{getUserRoleText('user', locale)}</option>
@@ -3800,6 +4437,8 @@ export const UserDetailsPage: React.FC = () => {
 
 export const AdminSettingsPage: React.FC = () => {
     const { locale, text } = useLocaleText();
+    const oauthFormRef = useRef<HTMLFormElement>(null);
+    const imageFormRef = useRef<HTMLFormElement>(null);
     const [pushNotification] = useNotifications();
     const config = useGetFeishuConfigQuery();
     const [updateConfig, updateState] = useUpdateFeishuConfigMutation();
@@ -3812,6 +4451,8 @@ export const AdminSettingsPage: React.FC = () => {
         scope: '',
     });
     const [runtimeImageRows, setRuntimeImageRows] = useState<IRuntimeImage[]>([{ name: '', image: '' }]);
+    const [oauthErrors, setOauthErrors] = useState<Partial<Record<keyof typeof values, string>>>({});
+    const [runtimeImageErrors, setRuntimeImageErrors] = useState<Record<number, Partial<Record<keyof IRuntimeImage, string>>>>({});
 
     useEffect(() => {
         if (config.data) {
@@ -3832,6 +4473,13 @@ export const AdminSettingsPage: React.FC = () => {
 
     const updateRuntimeImageRow = (index: number, key: keyof IRuntimeImage, value: string) => {
         setRuntimeImageRows((rows) => rows.map((row, rowIndex) => (rowIndex === index ? { ...row, [key]: value } : row)));
+        setRuntimeImageErrors((current) => {
+            if (!current[index]?.[key]) return current;
+            const next = { ...current, [index]: { ...current[index] } };
+            delete next[index][key];
+            if (!Object.keys(next[index]).length) delete next[index];
+            return next;
+        });
     };
 
     const addRuntimeImageRow = () => {
@@ -3847,10 +4495,24 @@ export const AdminSettingsPage: React.FC = () => {
 
     const submit = async (event: FormEvent) => {
         event.preventDefault();
+        const nextErrors: Partial<Record<keyof typeof values, string>> = {};
+        if (values.enabled) {
+            if (!values.app_id.trim()) nextErrors.app_id = text('请输入 App ID', 'Enter an App ID');
+            if (!values.app_secret.trim() && !config.data?.has_app_secret) {
+                nextErrors.app_secret = text('请输入 App Secret', 'Enter an App Secret');
+            }
+        }
+        if (Object.keys(nextErrors).length) {
+            setOauthErrors(nextErrors);
+            setTimeout(() => focusFirstInvalidField(oauthFormRef.current), 0);
+            pushNotification({ type: 'error', header: text('请补全飞书配置', 'Complete Feishu settings') });
+            return;
+        }
+        setOauthErrors({});
         const payload: IFeishuOAuthConfigUpdate = {
             enabled: values.enabled,
-            app_id: values.app_id,
-            scope: values.scope,
+            app_id: values.app_id.trim(),
+            scope: values.scope.trim(),
         };
         if (values.app_secret.trim()) {
             payload.app_secret = values.app_secret;
@@ -3865,6 +4527,23 @@ export const AdminSettingsPage: React.FC = () => {
 
     const submitRuntimeImages = async (event: FormEvent) => {
         event.preventDefault();
+        const nextErrors: Record<number, Partial<Record<keyof IRuntimeImage, string>>> = {};
+        runtimeImageRows.forEach((row, index) => {
+            const hasName = Boolean(row.name.trim());
+            const hasImage = Boolean(row.image.trim());
+            if (hasName !== hasImage) {
+                nextErrors[index] = {};
+                if (!hasName) nextErrors[index].name = text('请输入显示名称', 'Enter a display name');
+                if (!hasImage) nextErrors[index].image = text('请输入镜像地址', 'Enter an image reference');
+            }
+        });
+        if (Object.keys(nextErrors).length) {
+            setRuntimeImageErrors(nextErrors);
+            setTimeout(() => focusFirstInvalidField(imageFormRef.current), 0);
+            pushNotification({ type: 'error', header: text('请补全任务镜像', 'Complete runtime images') });
+            return;
+        }
+        setRuntimeImageErrors({});
         const images = runtimeImageRows
             .map((row) => ({ name: row.name.trim(), image: row.image.trim() }))
             .filter((row) => row.name || row.image);
@@ -3881,7 +4560,10 @@ export const AdminSettingsPage: React.FC = () => {
                 title={text('系统设置', 'System settings')}
                 description={text('配置全局登录方式和系统级能力。', 'Configure global sign-in and system-level options.')}
             />
-            <form onSubmit={submit}>
+            <form ref={oauthFormRef} onSubmit={submit}>
+                {Object.keys(oauthErrors).length > 0 && (
+                    <RequiredFormNotice>{text('请补全飞书配置', 'Complete Feishu settings')}</RequiredFormNotice>
+                )}
                 <Panel
                     title={text('飞书 OAuth', 'Feishu OAuth')}
                     description={text(
@@ -3907,30 +4589,52 @@ export const AdminSettingsPage: React.FC = () => {
                             </SelectInput>
                         </Field>
                         <Field label={text('配置来源', 'Source')}>
-                            <TextInput value={config.data?.source ?? 'none'} readOnly />
+                            <TextInput value={formatConfigSource(config.data?.source, locale)} readOnly />
                         </Field>
-                        <Field label="App ID">
+                        <Field label="App ID" error={oauthErrors.app_id} required={values.enabled}>
                             <TextInput
                                 value={values.app_id}
-                                onChange={(event) => setValues((current) => ({ ...current, app_id: event.target.value }))}
+                                invalid={Boolean(oauthErrors.app_id)}
+                                onChange={(event) => {
+                                    setValues((current) => ({ ...current, app_id: event.target.value }));
+                                    if (oauthErrors.app_id) {
+                                        setOauthErrors((current) => {
+                                            const next = { ...current };
+                                            delete next.app_id;
+                                            return next;
+                                        });
+                                    }
+                                }}
                                 placeholder="cli_xxx"
                             />
                         </Field>
                         <Field
                             label="App Secret"
+                            error={oauthErrors.app_secret}
+                            required={values.enabled && !config.data?.has_app_secret}
                             hint={
                                 config.data?.has_app_secret
                                     ? text(
-                                          'Secret 已配置；留空表示保持不变。',
+                                          '密钥已配置；留空表示保持不变。',
                                           'A secret is configured. Leave empty to keep it unchanged.',
                                       )
-                                    : text('尚未配置 Secret。', 'No secret is configured.')
+                                    : text('尚未配置密钥。', 'No secret is configured.')
                             }
                         >
                             <TextInput
                                 type="password"
                                 value={values.app_secret}
-                                onChange={(event) => setValues((current) => ({ ...current, app_secret: event.target.value }))}
+                                invalid={Boolean(oauthErrors.app_secret)}
+                                onChange={(event) => {
+                                    setValues((current) => ({ ...current, app_secret: event.target.value }));
+                                    if (oauthErrors.app_secret) {
+                                        setOauthErrors((current) => {
+                                            const next = { ...current };
+                                            delete next.app_secret;
+                                            return next;
+                                        });
+                                    }
+                                }}
                                 placeholder={config.data?.has_app_secret ? '••••••••' : 'app secret'}
                             />
                         </Field>
@@ -3949,7 +4653,10 @@ export const AdminSettingsPage: React.FC = () => {
                     </div>
                 </Panel>
             </form>
-            <form className="mt-6" onSubmit={submitRuntimeImages}>
+            <form ref={imageFormRef} className="mt-6" onSubmit={submitRuntimeImages}>
+                {Object.keys(runtimeImageErrors).length > 0 && (
+                    <RequiredFormNotice>{text('请补全任务镜像', 'Complete runtime images')}</RequiredFormNotice>
+                )}
                 <Panel
                     title={text('任务镜像', 'Runtime images')}
                     description={text(
@@ -3968,16 +4675,24 @@ export const AdminSettingsPage: React.FC = () => {
                                 key={index}
                                 className="grid gap-3 rounded-xl border border-slate-200 p-4 dark:border-slate-800 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)_auto]"
                             >
-                                <Field label={text('显示名称', 'Display name')}>
+                                <Field
+                                    label={text('显示名称', 'Display name')}
+                                    error={runtimeImageErrors[index]?.name}
+                                >
                                     <TextInput
                                         value={row.name}
+                                        invalid={Boolean(runtimeImageErrors[index]?.name)}
                                         onChange={(event) => updateRuntimeImageRow(index, 'name', event.target.value)}
                                         placeholder="PyTorch CUDA"
                                     />
                                 </Field>
-                                <Field label={text('镜像地址', 'Image reference')}>
+                                <Field
+                                    label={text('镜像地址', 'Image reference')}
+                                    error={runtimeImageErrors[index]?.image}
+                                >
                                     <TextInput
                                         value={row.image}
+                                        invalid={Boolean(runtimeImageErrors[index]?.image)}
                                         onChange={(event) => updateRuntimeImageRow(index, 'image', event.target.value)}
                                         placeholder="pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime"
                                     />
@@ -4043,9 +4758,11 @@ export const AccountProfilePage: React.FC = () => {
     const user = useAppSelector(selectUserData);
     const { role, locale } = useConsoleContext();
     const { text } = useLocaleText();
+    const emailFormRef = useRef<HTMLFormElement>(null);
     const [pushNotification] = useNotifications();
     const [updateMyUser, updateState] = useUpdateMyUserMutation();
     const [email, setEmail] = useState(user?.email ?? '');
+    const [emailError, setEmailError] = useState<string | null>(null);
     const [editingEmail, setEditingEmail] = useState(false);
     const profileRoleText = getProfileRoleText(role, locale);
 
@@ -4055,8 +4772,15 @@ export const AccountProfilePage: React.FC = () => {
 
     const submitEmail = async (event: FormEvent) => {
         event.preventDefault();
+        const trimmedEmail = email.trim();
+        if (trimmedEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+            setEmailError(text('请输入有效邮箱', 'Enter a valid email address'));
+            setTimeout(() => focusFirstInvalidField(emailFormRef.current), 0);
+            return;
+        }
+        setEmailError(null);
         try {
-            await updateMyUser({ email: email.trim() || null }).unwrap();
+            await updateMyUser({ email: trimmedEmail || null }).unwrap();
             setEditingEmail(false);
             pushNotification({
                 type: 'success',
@@ -4116,13 +4840,23 @@ export const AccountProfilePage: React.FC = () => {
                                 {text('邮箱', 'Email')}
                             </div>
                             {editingEmail ? (
-                                <form className="mt-2 flex flex-col gap-2 sm:flex-row" onSubmit={submitEmail}>
-                                    <TextInput
-                                        type="email"
-                                        value={email}
-                                        onChange={(event) => setEmail(event.target.value)}
-                                        placeholder="name@example.com"
-                                    />
+                                <form
+                                    ref={emailFormRef}
+                                    className="mt-2 flex flex-col gap-2 sm:flex-row"
+                                    onSubmit={submitEmail}
+                                >
+                                    <Field label={text('邮箱', 'Email')} error={emailError}>
+                                        <TextInput
+                                            type="email"
+                                            value={email}
+                                            invalid={Boolean(emailError)}
+                                            onChange={(event) => {
+                                                setEmail(event.target.value);
+                                                if (emailError) setEmailError(null);
+                                            }}
+                                            placeholder="name@example.com"
+                                        />
+                                    </Field>
                                     <div className="flex gap-2">
                                         <Button
                                             type="submit"
@@ -4137,6 +4871,7 @@ export const AccountProfilePage: React.FC = () => {
                                             icon={<X className="h-4 w-4" />}
                                             onClick={() => {
                                                 setEmail(user?.email ?? '');
+                                                setEmailError(null);
                                                 setEditingEmail(false);
                                             }}
                                         >
@@ -4183,8 +4918,41 @@ export const AccountKeysPage: React.FC = () => {
     const [addKey] = useAddPublicKeyMutation();
     const [deleteKeys] = useDeletePublicKeysMutation();
     const [confirm] = useConfirmationDialog();
+    const [pushNotification] = useNotifications();
+    const formRef = useRef<HTMLFormElement>(null);
     const [key, setKey] = useState('');
     const [name, setName] = useState('');
+    const [errors, setErrors] = useState<{ name?: string; key?: string }>({});
+    const updateKeyForm = (field: 'name' | 'key', value: string) => {
+        if (field === 'name') {
+            setName(value);
+        } else {
+            setKey(value);
+        }
+        setErrors((current) => {
+            if (!current[field]) return current;
+            const next = { ...current };
+            delete next[field];
+            return next;
+        });
+    };
+    const submitKey = async (event: FormEvent) => {
+        event.preventDefault();
+        const nextErrors: { name?: string; key?: string } = {};
+        if (!name.trim()) nextErrors.name = text('请输入名称', 'Enter a name');
+        if (!key.trim()) nextErrors.key = text('请粘贴 SSH 公钥', 'Paste an SSH public key');
+        if (Object.keys(nextErrors).length) {
+            setErrors(nextErrors);
+            setTimeout(() => focusFirstInvalidField(formRef.current), 0);
+            pushNotification({ type: 'error', header: text('请补全必填信息', 'Complete the required fields') });
+            return;
+        }
+        setErrors({});
+        await addKey({ key: key.trim(), name: name.trim() }).unwrap();
+        setKey('');
+        setName('');
+        pushNotification({ type: 'success', header: text('SSH 公钥已添加', 'SSH key added') });
+    };
     const removeKey = (id: string) =>
         confirm({
             title: text('删除 SSH 公钥', 'Delete SSH key'),
@@ -4197,11 +4965,27 @@ export const AccountKeysPage: React.FC = () => {
         <>
             <PageHeader title={text('SSH 公钥', 'SSH Keys')} />
             <Panel title={text('添加公钥', 'Add key')}>
-                <div className="grid gap-3 md:grid-cols-[1fr_2fr_auto]">
-                    <TextInput value={name} onChange={(event) => setName(event.target.value)} placeholder="name" />
-                    <TextInput value={key} onChange={(event) => setKey(event.target.value)} placeholder="ssh-rsa ..." />
-                    <Button onClick={() => addKey({ key, name })}>{text('添加', 'Add')}</Button>
-                </div>
+                <form ref={formRef} className="grid gap-3 md:grid-cols-[1fr_2fr_auto]" onSubmit={submitKey}>
+                    <Field label={text('名称', 'Name')} error={errors.name} required>
+                        <TextInput
+                            value={name}
+                            invalid={Boolean(errors.name)}
+                            onChange={(event) => updateKeyForm('name', event.target.value)}
+                            placeholder="workstation"
+                        />
+                    </Field>
+                    <Field label={text('公钥', 'Public key')} error={errors.key} required>
+                        <TextInput
+                            value={key}
+                            invalid={Boolean(errors.key)}
+                            onChange={(event) => updateKeyForm('key', event.target.value)}
+                            placeholder="ssh-rsa ..."
+                        />
+                    </Field>
+                    <div className="flex items-end">
+                        <Button type="submit">{text('添加', 'Add')}</Button>
+                    </div>
+                </form>
             </Panel>
             <div className="mt-6">
                 <Panel title={text('公钥列表', 'Keys')}>

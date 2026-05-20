@@ -10,6 +10,7 @@ const mockNavigate = jest.fn();
 const mockPushNotification = jest.fn();
 const mockCreateRegistrationToken = jest.fn();
 const mockDeleteRegistrationToken = jest.fn();
+const mockAddResourcePoolSshHost = jest.fn();
 const mockConfirm = jest.fn();
 const mockGetResourcePoolsQuery = jest.fn();
 const mockGetInstancesQuery = jest.fn();
@@ -94,6 +95,7 @@ jest.mock('services/instance', () => ({
 }));
 
 jest.mock('services/resourcePool', () => ({
+    useAddResourcePoolSshHostMutation: () => [mockAddResourcePoolSshHost, { isLoading: false }],
     useCreateResourcePoolMutation: () => [jest.fn(), { isLoading: false }],
     useDeleteResourcePoolsMutation: () => [jest.fn(), { isLoading: false }],
     useGetProjectResourcePoolsQuery: () => ({ data: mockResourcePools, isLoading: false }),
@@ -173,6 +175,7 @@ describe('InstancesPage', () => {
         mockPushNotification.mockReset();
         mockCreateRegistrationToken.mockReset();
         mockDeleteRegistrationToken.mockReset();
+        mockAddResourcePoolSshHost.mockReset();
         mockConfirm.mockReset();
         mockGetResourcePoolsQuery.mockReset();
         mockGetInstancesQuery.mockReset();
@@ -236,17 +239,61 @@ describe('InstancesPage', () => {
 
         expect(screen.getByText('资源池')).toBeInTheDocument();
         expect(screen.queryByText('集群')).not.toBeInTheDocument();
-        await userEvent.click(screen.getByRole('button', { name: '接入服务器' }));
+        await userEvent.click(screen.getAllByRole('button', { name: '接入服务器' }).at(-1)!);
 
         const fleetSelect = await screen.findByRole('combobox', { name: '资源池' });
         await waitFor(() => expect(fleetSelect).toHaveValue('gpu-cluster'));
         await userEvent.selectOptions(fleetSelect, 'training-cluster');
-        await userEvent.click(screen.getByRole('button', { name: '生成接入命令' }));
+        await userEvent.click(screen.getByRole('button', { name: '生成命令' }));
 
         expect(mockCreateRegistrationToken).toHaveBeenCalledWith({
             fleet_name: 'training-cluster',
         });
         expect(await screen.findByText(/dstack worker --server/)).toBeInTheDocument();
+    });
+
+    test('adds a server through SSH direct access', async () => {
+        mockAddResourcePoolSshHost.mockReturnValue({
+            unwrap: () => Promise.resolve(mockResourcePools[0]),
+        });
+
+        render(<InstancesPage />);
+
+        await userEvent.click(screen.getAllByRole('button', { name: '接入服务器' }).at(-1)!);
+        await userEvent.click(screen.getByRole('button', { name: 'SSH 直连' }));
+        await userEvent.type(screen.getByLabelText('主机地址'), '10.0.0.10');
+        await userEvent.clear(screen.getByLabelText('SSH 用户'));
+        await userEvent.type(screen.getByLabelText('SSH 用户'), 'ubuntu');
+        await userEvent.clear(screen.getByLabelText('端口'));
+        await userEvent.type(screen.getByLabelText('端口'), '2222');
+        await userEvent.type(screen.getByLabelText('SSH 私钥'), '-----BEGIN OPENSSH PRIVATE KEY-----\\nkey\\n-----END OPENSSH PRIVATE KEY-----');
+        await userEvent.click(screen.getByRole('button', { name: '添加服务器' }));
+
+        expect(mockAddResourcePoolSshHost).toHaveBeenCalledWith({
+            resource_pool_name: 'gpu-cluster',
+            hostname: '10.0.0.10',
+            user: 'ubuntu',
+            port: 2222,
+            private_key: '-----BEGIN OPENSSH PRIVATE KEY-----\\nkey\\n-----END OPENSSH PRIVATE KEY-----',
+            internal_ip: null,
+        });
+    });
+
+    test('shows clear required field feedback before adding an SSH server', async () => {
+        render(<InstancesPage />);
+
+        await userEvent.click(screen.getAllByRole('button', { name: '接入服务器' }).at(-1)!);
+        await userEvent.click(screen.getByRole('button', { name: 'SSH 直连' }));
+        await userEvent.clear(screen.getByLabelText('主机地址'));
+        await userEvent.clear(screen.getByLabelText('SSH 私钥'));
+        await userEvent.click(screen.getByRole('button', { name: '添加服务器' }));
+
+        expect(mockAddResourcePoolSshHost).not.toHaveBeenCalled();
+        expect(screen.getByText('请补全必填信息')).toBeInTheDocument();
+        expect(screen.getByText('请输入主机地址')).toBeInTheDocument();
+        expect(screen.getByText('请粘贴 SSH 私钥')).toBeInTheDocument();
+        expect(screen.getByLabelText('主机地址')).toHaveAttribute('aria-invalid', 'true');
+        expect(screen.getByLabelText('SSH 私钥')).toHaveAttribute('aria-invalid', 'true');
     });
 
     test('refreshes resource pools while the instances page is open', () => {
@@ -282,7 +329,7 @@ describe('InstancesPage', () => {
         render(<InstancesPage />);
 
         expect(screen.getByText('注册 Token')).toBeInTheDocument();
-        expect(screen.getByText(/注册 Token 用于授权物理服务器接入资源池/)).toBeInTheDocument();
+        expect(screen.getByText(/用于服务器接入认证/)).toBeInTheDocument();
         expect(screen.getByText('可用')).toBeInTheDocument();
         expect(screen.queryByText('Page not found')).not.toBeInTheDocument();
     });
@@ -397,8 +444,8 @@ describe('InstancesPage', () => {
 
         await userEvent.click(screen.getByRole('button', { name: '接入服务器' }));
 
-        expect(await screen.findByText('还没有资源池，请先创建资源池。')).toBeInTheDocument();
-        expect(screen.getByRole('button', { name: '生成接入命令' })).toBeDisabled();
+        expect(await screen.findByText('暂无资源池')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: '生成命令' })).toBeDisabled();
 
         await userEvent.click(screen.getByRole('button', { name: '创建资源池' }));
 

@@ -55,6 +55,7 @@ from dstack._internal.server.models import (
 from dstack._internal.server.schemas.health.dcgm import DCGMHealthResponse
 from dstack._internal.server.schemas.runner import InstanceHealthResponse, TaskStatus
 from dstack._internal.server.services import events
+from dstack._internal.server.services.encryption import decrypt
 from dstack._internal.server.services.logging import fmt
 from dstack._internal.server.services.offers import generate_shared_offer
 from dstack._internal.server.services.projects import list_user_project_models
@@ -353,15 +354,27 @@ def get_instance_remote_connection_info(
 ) -> Optional[RemoteConnectionInfo]:
     if instance_model.remote_connection_info is None:
         return None
-    return RemoteConnectionInfo.__response__.parse_raw(instance_model.remote_connection_info)
+    rci = RemoteConnectionInfo.__response__.parse_raw(instance_model.remote_connection_info)
+    _decrypt_ssh_keys(rci.ssh_keys)
+    if rci.ssh_proxy_keys is not None:
+        _decrypt_ssh_keys(rci.ssh_proxy_keys)
+    return rci
 
 
 def get_instance_ssh_private_keys(instance_model: InstanceModel) -> tuple[str, Optional[str]]:
     """
     Returns a pair of SSH private keys: host key and optional proxy jump key.
     """
-    host_private_key = instance_model.project.ssh_private_key
     rci = get_instance_remote_connection_info(instance_model)
+    if instance_model.project is None:
+        if rci is None:
+            raise ValueError("Global resource pool instance is missing remote connection info")
+        host_private_keys = [key.private for key in rci.ssh_keys if key.private is not None]
+        if not host_private_keys:
+            raise ValueError("Global resource pool instance has no SSH private key")
+        host_private_key = host_private_keys[0]
+    else:
+        host_private_key = instance_model.project.ssh_private_key
     if rci is None:
         # Cloud instance
         return host_private_key, None
@@ -547,7 +560,7 @@ def get_shared_instances_with_offers(
 
 async def get_pool_instances(
     session: AsyncSession,
-    project: ProjectModel,
+    project: Optional[ProjectModel],
 ) -> List[InstanceModel]:
     is_instance_in_authorized_pool = exists().where(
         ProjectResourcePoolAssignmentModel.project_id == project.id,
@@ -824,6 +837,15 @@ async def create_ssh_instance_model(
         busy_blocks=0,
     )
     return im
+
+
+def _decrypt_ssh_keys(ssh_keys: list[SSHKey]) -> None:
+    for key in ssh_keys:
+        if key.private is None:
+            continue
+        if key.private.startswith("enc:"):
+            key.private = decrypt(key.private)
+            continue
 
 
 def remove_dangling_tasks_from_instance(shim_client: ShimClient, instance: InstanceModel) -> None:

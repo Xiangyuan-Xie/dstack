@@ -191,30 +191,52 @@ export const Field: React.FC<{
     label: ReactNode;
     hint?: ReactNode;
     error?: ReactNode;
+    required?: boolean;
     children: ReactNode;
-}> = ({ label, hint, error, children }) => (
-    <label className="block min-w-0">
-        <span className="mb-2 block text-sm font-semibold text-slate-700 dark:text-slate-200">{label}</span>
-        {children}
+}> = ({ label, hint, error, required, children }) => (
+    <div className="block min-w-0">
+        <label className="block min-w-0" data-required={required ? true : undefined}>
+            <span
+                className={classNames(
+                    'mb-2 block text-sm font-semibold text-slate-700 dark:text-slate-200',
+                    error && 'text-red-700 dark:text-red-300',
+                )}
+            >
+                {label}
+            </span>
+            {children}
+        </label>
         {hint && !error && <span className="mt-1.5 block text-xs text-slate-500 dark:text-slate-400">{hint}</span>}
         {error && <span className="mt-1.5 block text-xs font-medium text-red-600 dark:text-red-300">{error}</span>}
-    </label>
+    </div>
 );
 
 const inputClass =
-    'min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500';
+    'min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 aria-[invalid=true]:border-red-400 aria-[invalid=true]:bg-red-50/40 aria-[invalid=true]:focus:border-red-500 aria-[invalid=true]:focus:ring-red-500/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500 dark:aria-[invalid=true]:border-red-500/80 dark:aria-[invalid=true]:bg-red-500/10';
 
-export const TextInput: React.FC<React.InputHTMLAttributes<HTMLInputElement>> = ({ className, ...props }) => (
-    <input {...props} className={classNames(inputClass, className)} />
+type TextInputProps = React.InputHTMLAttributes<HTMLInputElement> & { invalid?: boolean };
+type TextAreaProps = React.TextareaHTMLAttributes<HTMLTextAreaElement> & { invalid?: boolean };
+type SelectInputProps = React.SelectHTMLAttributes<HTMLSelectElement> & { invalid?: boolean };
+
+export const TextInput: React.FC<TextInputProps> = ({ className, invalid, ...props }) => (
+    <input {...props} aria-invalid={invalid ? true : props['aria-invalid']} className={classNames(inputClass, className)} />
 );
 
-export const TextArea: React.FC<React.TextareaHTMLAttributes<HTMLTextAreaElement>> = ({ className, ...props }) => (
-    <textarea {...props} className={classNames(inputClass, 'min-h-28 resize-y', className)} />
+export const TextArea: React.FC<TextAreaProps> = ({ className, invalid, ...props }) => (
+    <textarea
+        {...props}
+        aria-invalid={invalid ? true : props['aria-invalid']}
+        className={classNames(inputClass, 'min-h-28 resize-y', className)}
+    />
 );
 
-export const SelectInput: React.FC<React.SelectHTMLAttributes<HTMLSelectElement>> = ({ className, children, ...props }) => (
+export const SelectInput: React.FC<SelectInputProps> = ({ className, children, invalid, ...props }) => (
     <div className="relative">
-        <select {...props} className={classNames(inputClass, 'appearance-none pr-10', className)}>
+        <select
+            {...props}
+            aria-invalid={invalid ? true : props['aria-invalid']}
+            className={classNames(inputClass, 'appearance-none pr-10', className)}
+        >
             {children}
         </select>
         <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -343,22 +365,35 @@ export const Modal: React.FC<{
     children: ReactNode;
     open: boolean;
     footer?: ReactNode;
+    size?: 'sm' | 'md' | 'lg' | 'xl';
     onClose: () => void;
-}> = ({ title, children, open, footer, onClose }) => {
+}> = ({ title, children, open, footer, size = 'md', onClose }) => {
     if (!open) {
         return null;
     }
 
+    const sizeClass = {
+        sm: 'max-w-md',
+        md: 'max-w-xl',
+        lg: 'max-w-3xl',
+        xl: 'max-w-5xl',
+    }[size];
+
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
-            <div className="w-full max-w-xl rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/60 p-3 sm:items-center sm:p-6">
+            <div
+                className={classNames(
+                    'flex max-h-[calc(100vh-1.5rem)] w-full flex-col rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900 sm:max-h-[calc(100vh-3rem)]',
+                    sizeClass,
+                )}
+            >
                 <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
                     <h2 className="text-base font-semibold text-slate-950 dark:text-slate-50">{title}</h2>
                     <IconButton label={i18n.language === 'zh' ? '关闭' : 'Close'} icon={<X className="h-4 w-4" />} onClick={onClose} />
                 </div>
-                <div className="p-5">{children}</div>
+                <div className="console-scrollbar min-h-0 flex-1 overflow-y-auto p-5">{children}</div>
                 {footer && (
-                    <div className="flex justify-end gap-2 border-t border-slate-200 px-5 py-4 dark:border-slate-800">
+                    <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 px-5 py-4 dark:border-slate-800">
                         {footer}
                     </div>
                 )}

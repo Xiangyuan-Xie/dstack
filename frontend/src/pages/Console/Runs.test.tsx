@@ -2,7 +2,7 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { RunDetailsPage, RunRequestCreatePage } from './pages';
+import { RunDetailsPage, RunRequestCreatePage, RunsPage } from './pages';
 
 const mockNavigate = jest.fn();
 const mockPushNotification = jest.fn();
@@ -12,6 +12,8 @@ const mockApplyRun = jest.fn();
 const mockStopRuns = jest.fn();
 const mockGetProjectResourcePoolsQuery = jest.fn();
 const mockGetRuntimeImagesQuery = jest.fn();
+const mockGetAllRunRequestsQuery = jest.fn();
+const mockGetRunsQuery = jest.fn();
 const regularRole = {
     isGlobalAdmin: false,
     canUseProjectAdmin: false,
@@ -126,7 +128,7 @@ jest.mock('services/runtimeImages', () => ({
 jest.mock('services/runRequest', () => ({
     useCreateRunRequestMutation: () => [mockCreateRunRequest, { isLoading: false }],
     useApproveRunRequestMutation: () => [jest.fn(), { isLoading: false }],
-    useGetAllRunRequestsQuery: () => ({ data: [], isLoading: false }),
+    useGetAllRunRequestsQuery: (...args: unknown[]) => mockGetAllRunRequestsQuery(...args),
     useGetRunRequestQuery: () => ({ data: null, isLoading: false }),
     useRejectRunRequestMutation: () => [jest.fn(), { isLoading: false }],
     useRetryRunRequestMutation: () => [jest.fn(), { isLoading: false }],
@@ -151,7 +153,7 @@ jest.mock('services/run', () => ({
         },
         isLoading: false,
     }),
-    useGetRunsQuery: () => ({ data: [], isLoading: false }),
+    useGetRunsQuery: (...args: unknown[]) => mockGetRunsQuery(...args),
     useStopRunsMutation: () => [mockStopRuns, { isLoading: false }],
 }));
 
@@ -218,6 +220,8 @@ describe('RunRequestCreatePage', () => {
             ],
             isLoading: false,
         });
+        mockGetAllRunRequestsQuery.mockReturnValue({ data: [], isLoading: false });
+        mockGetRunsQuery.mockReturnValue({ data: [], isLoading: false });
     });
 
     test('bounds resource sliders and run duration by allowed ranges', () => {
@@ -271,6 +275,7 @@ describe('RunRequestCreatePage', () => {
         expect(mockCreateRunRequest).toHaveBeenCalledWith(
             expect.objectContaining({
                 request: expect.objectContaining({
+                    run_type: 'task',
                     image: 'pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime',
                     max_duration: '168h',
                     resources: {
@@ -283,7 +288,41 @@ describe('RunRequestCreatePage', () => {
         );
     });
 
-    test('submits structured Docker startup options', async () => {
+    test('submits dev environment requests without a startup command', async () => {
+        mockCreateRunRequest.mockReturnValue({
+            unwrap: () => Promise.resolve({ id: 'req-1', project_name: 'research' }),
+        });
+
+        render(<RunRequestCreatePage kind="dev-environments" />);
+
+        expect(screen.queryByPlaceholderText('python train.py')).not.toBeInTheDocument();
+        expect(screen.queryByText('环境变量')).not.toBeInTheDocument();
+        expect(screen.queryByText('端口映射')).not.toBeInTheDocument();
+        expect(screen.queryByText('特权模式')).not.toBeInTheDocument();
+        expect(screen.queryByLabelText('连接工具')).not.toBeInTheDocument();
+        expect(screen.getByLabelText('工作目录')).toHaveAttribute('placeholder', '/root');
+        await userEvent.type(screen.getByLabelText('开发环境名称'), 'code-box');
+        await userEvent.type(screen.getByPlaceholderText('pip install -r requirements.txt'), 'pip install uv');
+        await userEvent.type(screen.getByLabelText('服务器路径'), '/data/dev/alice');
+        await userEvent.type(screen.getByLabelText('环境内路径'), '/workspace/data');
+        await userEvent.click(screen.getByRole('button', { name: '提交审批' }));
+
+        expect(mockCreateRunRequest).toHaveBeenCalledWith(
+            expect.objectContaining({
+                request: expect.objectContaining({
+                    run_type: 'dev-environment',
+                    commands: [],
+                    init: ['pip install uv'],
+                    ide: undefined,
+                    inactivity_duration: 'off',
+                    persistent_dirs: [{ host_path: '/data/dev/alice', mount_path: '/workspace/data', read_only: false }],
+                }),
+            }),
+        );
+        expect(mockNavigate).toHaveBeenCalledWith('/resources/dev-environments/requests/research/req-1');
+    });
+
+    test('submits persistent directory mappings without raw volume syntax', async () => {
         mockCreateRunRequest.mockReturnValue({
             unwrap: () => Promise.resolve({ id: 'req-1', project_name: 'research' }),
         });
@@ -292,27 +331,25 @@ describe('RunRequestCreatePage', () => {
 
         await userEvent.type(screen.getByLabelText('任务名称'), 'dev-box');
         await userEvent.type(screen.getByPlaceholderText('python train.py'), 'python train.py');
-        await userEvent.type(screen.getByLabelText('入口点'), '/bin/bash');
+        expect(screen.queryByLabelText('入口点')).not.toBeInTheDocument();
         await userEvent.type(screen.getByLabelText('工作目录'), '/workspace/project');
         await userEvent.type(screen.getByLabelText('环境变量名'), 'MODEL');
         await userEvent.type(screen.getByLabelText('环境变量值'), 'qwen');
         await userEvent.type(screen.getByLabelText('宿主端口'), '18080');
-        await userEvent.type(screen.getByLabelText('容器端口'), '8080');
-        await userEvent.type(screen.getByLabelText('来源路径'), '/data/shared');
-        await userEvent.type(screen.getByLabelText('容器路径'), '/workspace/data');
+        await userEvent.type(screen.getByLabelText('环境端口'), '8080');
+        await userEvent.type(screen.getByLabelText('服务器路径'), '/data/shared');
+        await userEvent.type(screen.getByLabelText('环境内路径'), '/workspace/data');
         await userEvent.click(screen.getByLabelText('只读'));
-        await userEvent.click(screen.getByText('特权模式'));
         await userEvent.click(screen.getByRole('button', { name: '提交审批' }));
 
         expect(mockCreateRunRequest).toHaveBeenCalledWith(
             expect.objectContaining({
                 request: expect.objectContaining({
-                    entrypoint: '/bin/bash',
+                    entrypoint: undefined,
                     working_dir: '/workspace/project',
                     env: { MODEL: 'qwen' },
                     ports: ['18080:8080'],
-                    volumes: ['/data/shared:/workspace/data:ro'],
-                    privileged: true,
+                    persistent_dirs: [{ host_path: '/data/shared', mount_path: '/workspace/data', read_only: true }],
                 }),
             }),
         );
@@ -335,6 +372,24 @@ describe('RunRequestCreatePage', () => {
         );
     });
 
+    test('shows field-level required feedback before submitting a run request', async () => {
+        render(<RunRequestCreatePage />);
+
+        await userEvent.clear(screen.getByLabelText('任务名称'));
+        await userEvent.selectOptions(screen.getByLabelText('镜像'), '');
+        await userEvent.clear(screen.getByLabelText('启动命令'));
+        await userEvent.click(screen.getByRole('button', { name: '提交审批' }));
+
+        expect(mockCreateRunRequest).not.toHaveBeenCalled();
+        expect(screen.getByText('请补全必填信息')).toBeInTheDocument();
+        expect(screen.getByText('请输入任务名称')).toBeInTheDocument();
+        expect(screen.getAllByText('请选择镜像')).toHaveLength(2);
+        expect(screen.getByText('请输入启动命令')).toBeInTheDocument();
+        expect(screen.getByLabelText('任务名称')).toHaveAttribute('aria-invalid', 'true');
+        expect(screen.getByLabelText('镜像')).toHaveAttribute('aria-invalid', 'true');
+        expect(screen.getByLabelText('启动命令')).toHaveAttribute('aria-invalid', 'true');
+    });
+
     test('shows an empty project state before any project is created', async () => {
         mockProjects = [];
 
@@ -350,6 +405,97 @@ describe('RunRequestCreatePage', () => {
                 header: '请先创建项目',
             }),
         );
+    });
+});
+
+describe('RunsPage', () => {
+    beforeEach(() => {
+        mockNavigate.mockReset();
+        mockRole = regularRole;
+        mockGetAllRunRequestsQuery.mockReturnValue({
+            data: [
+                {
+                    id: 'task-req',
+                    project_name: 'research',
+                    applicant: 'alice',
+                    status: 'pending',
+                    created_at: '2026-05-16T09:00:00+08:00',
+                    request: {
+                        run_type: 'task',
+                        name: 'train-task',
+                        image: 'ubuntu:22.04',
+                        commands: ['python train.py'],
+                        resources: {},
+                    },
+                },
+                {
+                    id: 'dev-req',
+                    project_name: 'research',
+                    applicant: 'alice',
+                    status: 'pending',
+                    created_at: '2026-05-16T10:00:00+08:00',
+                    request: {
+                        run_type: 'dev-environment',
+                        name: 'code-box',
+                        image: 'ubuntu:22.04',
+                        commands: [],
+                        init: [],
+                        resources: {},
+                    },
+                },
+            ],
+            isLoading: false,
+        });
+        mockGetRunsQuery.mockReturnValue({
+            data: [
+                {
+                    id: 'run-task',
+                    project_name: 'research',
+                    user: 'alice',
+                    submitted_at: '2026-05-16T11:00:00+08:00',
+                    status: 'running',
+                    jobs: [],
+                    run_spec: { run_name: 'direct-task', configuration: { type: 'task' } },
+                    cost: 0,
+                    service: null,
+                },
+                {
+                    id: 'run-dev',
+                    project_name: 'research',
+                    user: 'alice',
+                    submitted_at: '2026-05-16T12:00:00+08:00',
+                    status: 'running',
+                    jobs: [],
+                    run_spec: { run_name: 'direct-dev', configuration: { type: 'dev-environment' } },
+                    cost: 0,
+                    service: null,
+                },
+            ],
+            isLoading: false,
+        });
+    });
+
+    test('shows task runs separately from dev environments', () => {
+        render(<RunsPage kind="runs" />);
+
+        expect(screen.getByText('运行任务')).toBeInTheDocument();
+        expect(screen.getByText('train-task')).toBeInTheDocument();
+        expect(screen.getByText('direct-task')).toBeInTheDocument();
+        expect(screen.queryByText('code-box')).not.toBeInTheDocument();
+        expect(screen.queryByText('direct-dev')).not.toBeInTheDocument();
+    });
+
+    test('shows dev environments separately from task runs', async () => {
+        render(<RunsPage kind="dev-environments" />);
+
+        expect(screen.getByText('开发环境')).toBeInTheDocument();
+        expect(screen.getByText('code-box')).toBeInTheDocument();
+        expect(screen.getByText('direct-dev')).toBeInTheDocument();
+        expect(screen.queryByText('train-task')).not.toBeInTheDocument();
+        expect(screen.queryByText('direct-task')).not.toBeInTheDocument();
+
+        await userEvent.click(screen.getByText('code-box'));
+        expect(mockNavigate).toHaveBeenCalledWith('/resources/dev-environments/requests/research/dev-req');
     });
 });
 

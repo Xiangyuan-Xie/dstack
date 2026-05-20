@@ -97,7 +97,8 @@ async def add_ssh_instance(instance_model: InstanceModel) -> ProcessResult:
         return result
 
     authorized_keys = [pkey.public.strip() for pkey in remote_details.ssh_keys]
-    authorized_keys.append(instance_model.project.ssh_public_key.strip())
+    if instance_model.project is not None:
+        authorized_keys.append(instance_model.project.ssh_public_key.strip())
 
     try:
         future = run_async(

@@ -63,6 +63,7 @@ const request = {
     run_id: 'run-1',
     run_name: 'train-a',
     request: {
+        run_type: 'task',
         name: 'train-a',
         image: 'pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime',
         commands: ['python train.py'],
@@ -82,8 +83,8 @@ describe('Console utils', () => {
         const labels = sections.flatMap((section) => section.items.map((item) => item.label));
         const resources = sections.find((section) => section.title === '资源');
 
-        expect(labels).toEqual(expect.arrayContaining(['工作台', '运行任务', '个人资料', 'SSH 公钥']));
-        expect(resources?.items.map((item) => item.label)).toEqual(['运行任务']);
+        expect(labels).toEqual(expect.arrayContaining(['工作台', '运行任务', '开发环境', '个人资料', 'SSH 公钥']));
+        expect(resources?.items.map((item) => item.label)).toEqual(['运行任务', '开发环境']);
         expect(labels).not.toContain('审批');
         expect(labels).not.toContain('项目');
         expect(labels).not.toContain('系统设置');
@@ -112,8 +113,8 @@ describe('Console utils', () => {
         const resources = sections.find((section) => section.title === '资源');
         const adminSection = sections.find((section) => section.title === '管理');
 
-        expect(labels).toEqual(expect.arrayContaining(['工作台', '运行任务', '审批']));
-        expect(resources?.items.map((item) => item.label)).toEqual(['运行任务']);
+        expect(labels).toEqual(expect.arrayContaining(['工作台', '运行任务', '开发环境', '审批']));
+        expect(resources?.items.map((item) => item.label)).toEqual(['运行任务', '开发环境']);
         expect(adminSection?.items.map((item) => item.label)).toEqual(['审批']);
         expect(labels).not.toContain('项目');
         expect(labels).not.toContain('服务器管理');
@@ -129,7 +130,7 @@ describe('Console utils', () => {
         const labels = sections.flatMap((section) => section.items.map((item) => item.label));
         const adminSection = sections.find((section) => section.title === '管理');
 
-        expect(labels).toEqual(expect.arrayContaining(['工作台', '运行任务', '审批']));
+        expect(labels).toEqual(expect.arrayContaining(['工作台', '运行任务', '开发环境', '审批']));
         expect(adminSection?.items.map((item) => item.label)).toEqual(['审批']);
         expect(labels).not.toContain('项目');
         expect(labels).not.toContain('服务器管理');
@@ -146,9 +147,10 @@ describe('Console utils', () => {
         const resources = sections.find((section) => section.title === '资源');
         const adminSection = sections.find((section) => section.title === '管理');
 
-        expect(labels).toEqual(expect.arrayContaining(['运行任务', '资源池', '实例', '项目', '审批', '用户管理', '系统事件']));
+        expect(labels).toEqual(expect.arrayContaining(['运行任务', '开发环境', '资源池', '实例', '项目', '审批', '用户管理', '系统事件']));
         expect(resources?.items.map((item) => item.label)).toEqual([
             '运行任务',
+            '开发环境',
             '资源池',
             '实例',
             '资源报价',
@@ -187,6 +189,10 @@ describe('Console utils', () => {
         expect(canAccessConsoleRoute(role, '/resources/runs/new')).toBe(true);
         expect(canAccessConsoleRoute(role, '/resources/runs/requests/research/req-1')).toBe(true);
         expect(canAccessConsoleRoute(role, '/resources/runs/research/run-1')).toBe(true);
+        expect(canAccessConsoleRoute(role, '/resources/dev-environments')).toBe(true);
+        expect(canAccessConsoleRoute(role, '/resources/dev-environments/new')).toBe(true);
+        expect(canAccessConsoleRoute(role, '/resources/dev-environments/requests/research/req-1')).toBe(true);
+        expect(canAccessConsoleRoute(role, '/resources/dev-environments/research/run-1')).toBe(true);
         expect(canAccessConsoleRoute(role, '/account/profile')).toBe(true);
         expect(canAccessConsoleRoute(role, '/resources/fleets')).toBe(false);
         expect(canAccessConsoleRoute(role, '/workspace/projects')).toBe(false);
@@ -207,11 +213,13 @@ describe('Console utils', () => {
         expect(canAccessConsoleRoute(projectRole, '/admin/users')).toBe(false);
         expect(canAccessConsoleRoute(projectRole, '/account/projects')).toBe(false);
         expect(canAccessConsoleRoute(projectRole, '/resources/runs')).toBe(true);
+        expect(canAccessConsoleRoute(projectRole, '/resources/dev-environments')).toBe(true);
         expect(canAccessConsoleRoute(projectRole, '/resources/fleets')).toBe(false);
         expect(canAccessConsoleRoute(globalRole, '/admin/users')).toBe(true);
         expect(canAccessConsoleRoute(globalRole, '/admin/settings')).toBe(true);
         expect(canAccessConsoleRoute(globalRole, '/admin/workers')).toBe(false);
         expect(canAccessConsoleRoute(globalRole, '/resources/runs')).toBe(true);
+        expect(canAccessConsoleRoute(globalRole, '/resources/dev-environments')).toBe(true);
         expect(canAccessConsoleRoute(globalRole, '/resources/fleets')).toBe(true);
     });
 
@@ -237,6 +245,14 @@ describe('Console utils', () => {
         expect(isConsoleNavItemActive('/resources/runs/new', '/resources/runs')).toBe(true);
         expect(isConsoleNavItemActive('/resources/runs/requests/research/req-1', '/resources/runs')).toBe(true);
         expect(isConsoleNavItemActive('/resources/runs/research/run-1', '/resources/runs')).toBe(true);
+        expect(isConsoleNavItemActive('/resources/dev-environments/new', '/resources/runs')).toBe(false);
+        expect(isConsoleNavItemActive('/resources/dev-environments/new', '/resources/dev-environments')).toBe(true);
+        expect(
+            isConsoleNavItemActive('/resources/dev-environments/requests/research/req-1', '/resources/dev-environments'),
+        ).toBe(true);
+        expect(isConsoleNavItemActive('/resources/dev-environments/research/run-1', '/resources/dev-environments')).toBe(
+            true,
+        );
     });
 
     test('formats known event messages in Chinese and leaves English untouched', () => {
@@ -332,6 +348,7 @@ describe('Console utils', () => {
         expect(
             buildRunRequestCreateParams({
                 project_name: 'research',
+                run_type: 'task',
                 name: 'train-a',
                 image: 'pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime',
                 commands: 'python train.py\npython eval.py',
@@ -347,9 +364,9 @@ describe('Console utils', () => {
                     { host: '', container: '6006', protocol: 'tcp' },
                     { host: '', container: '', protocol: 'tcp' },
                 ],
-                volumes: [
-                    { source: '/data/shared', target: '/workspace/data', read_only: true },
-                    { source: '', target: '/ignored', read_only: false },
+                persistent_dirs: [
+                    { host_path: '/data/shared', mount_path: '/workspace/data', read_only: true },
+                    { host_path: '', mount_path: '/ignored', read_only: false },
                 ],
                 privileged: true,
                 cpu: '8',
@@ -363,7 +380,11 @@ describe('Console utils', () => {
             request: {
                 name: 'train-a',
                 image: 'pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime',
+                run_type: 'task',
                 commands: ['python train.py', 'python eval.py'],
+                init: undefined,
+                ide: undefined,
+                inactivity_duration: undefined,
                 entrypoint: '/bin/bash',
                 working_dir: '/workspace/project',
                 env: {
@@ -371,8 +392,7 @@ describe('Console utils', () => {
                     EMPTY_VALUE: '',
                 },
                 ports: ['18080:8080', '6006'],
-                volumes: ['/data/shared:/workspace/data:ro'],
-                privileged: true,
+                persistent_dirs: [{ host_path: '/data/shared', mount_path: '/workspace/data', read_only: true }],
                 nodes: 1,
                 resources: {
                     cpu: '8',

@@ -8,6 +8,7 @@ from dstack._internal.core.errors import ServerClientError
 from dstack._internal.server.db import get_session
 from dstack._internal.server.models import ProjectModel, UserModel
 from dstack._internal.server.schemas.resource_pools import (
+    AddResourcePoolSshHostRequest,
     CreateResourcePoolRequest,
     DeleteResourcePoolsRequest,
     GetResourcePoolRequest,
@@ -139,6 +140,29 @@ async def update_resource_pool_assignment(
             project_name=body.project_name,
             assign_whole_pool=body.assign_whole_pool,
             instance_ids=body.instance_ids,
+        )
+    )
+
+
+@root_router.post("/ssh_hosts/add", response_model=ResourcePool)
+async def add_resource_pool_ssh_host(
+    body: AddResourcePoolSshHostRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    user: Annotated[UserModel, Depends(GlobalAdmin())],
+    pipeline_hinter: Annotated[PipelineHinterProtocol, Depends(get_pipeline_hinter)],
+):
+    return CustomORJSONResponse(
+        await resource_pools_services.add_ssh_host(
+            session=session,
+            user=user,
+            resource_pool_name=body.resource_pool_name,
+            hostname=body.hostname,
+            ssh_user=body.user,
+            port=body.port,
+            private_key=body.private_key,
+            internal_ip=body.internal_ip,
+            blocks=body.blocks,
+            pipeline_hinter=pipeline_hinter,
         )
     )
 

@@ -7,6 +7,23 @@ export const CONSOLE_ROUTES = {
     DASHBOARD: '/dashboard',
     RUNS: '/resources/runs',
     RUN_CREATE: '/resources/runs/new',
+    DEV_ENVIRONMENTS: '/resources/dev-environments',
+    DEV_ENVIRONMENT_CREATE: '/resources/dev-environments/new',
+    DEV_ENVIRONMENT_REQUEST_DETAILS: {
+        TEMPLATE: '/resources/dev-environments/requests/:projectName/:requestId',
+        FORMAT: (projectName: string, requestId: string) =>
+            buildRoute(CONSOLE_ROUTES.DEV_ENVIRONMENT_REQUEST_DETAILS.TEMPLATE, { projectName, requestId }),
+    },
+    DEV_ENVIRONMENT_DETAILS: {
+        TEMPLATE: '/resources/dev-environments/:projectName/:runId',
+        FORMAT: (projectName: string, runId: string) =>
+            buildRoute(CONSOLE_ROUTES.DEV_ENVIRONMENT_DETAILS.TEMPLATE, { projectName, runId }),
+    },
+    DEV_ENVIRONMENT_JOB_DETAILS: {
+        TEMPLATE: '/resources/dev-environments/:projectName/:runId/jobs/:jobName',
+        FORMAT: (projectName: string, runId: string, jobName: string) =>
+            buildRoute(CONSOLE_ROUTES.DEV_ENVIRONMENT_JOB_DETAILS.TEMPLATE, { projectName, runId, jobName }),
+    },
     RUN_APPROVALS: '/admin/approvals',
     RUN_REQUEST_DETAILS: {
         TEMPLATE: '/resources/runs/requests/:projectName/:requestId',

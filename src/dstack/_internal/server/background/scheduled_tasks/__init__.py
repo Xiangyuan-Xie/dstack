@@ -41,9 +41,10 @@ def start_scheduled_tasks() -> AsyncIOScheduler:
     """
     # DateTrigger() to run one-time init tasks immediately.
     _scheduler.add_job(init_gateways_in_background, DateTrigger(), max_instances=1)
-    # Pre-load catalog offers both on server start and before catalog needs reload (15m).
-    _scheduler.add_job(preload_offers_catalog, DateTrigger(), max_instances=1)
-    _scheduler.add_job(preload_offers_catalog, IntervalTrigger(minutes=10), max_instances=1)
+    if settings.PRELOAD_OFFERS_CATALOG_ENABLED:
+        # Pre-load catalog offers both on server start and before catalog needs reload (15m).
+        _scheduler.add_job(preload_offers_catalog, DateTrigger(), max_instances=1)
+        _scheduler.add_job(preload_offers_catalog, IntervalTrigger(minutes=10), max_instances=1)
     _scheduler.add_job(process_probes, IntervalTrigger(seconds=3, jitter=1))
     _scheduler.add_job(collect_metrics, IntervalTrigger(seconds=10), max_instances=1)
     _scheduler.add_job(delete_metrics, IntervalTrigger(minutes=5), max_instances=1)

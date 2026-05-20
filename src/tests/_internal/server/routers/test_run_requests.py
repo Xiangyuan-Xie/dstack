@@ -23,6 +23,7 @@ pytestmark = pytest.mark.usefixtures("image_config_mock")
 def _request_body(name: str = "train-job") -> dict:
     return {
         "request": {
+            "run_type": "task",
             "name": name,
             "image": "ubuntu:22.04",
             "commands": ["echo hello"],
@@ -43,6 +44,7 @@ def _request_body(name: str = "train-job") -> dict:
 def _auto_approvable_request_body(name: str = "cpu-job") -> dict:
     return {
         "request": {
+            "run_type": "task",
             "name": name,
             "image": "ubuntu:22.04",
             "entrypoint": "/bin/bash",
@@ -60,6 +62,33 @@ def _auto_approvable_request_body(name: str = "cpu-job") -> dict:
             "max_duration": "2h",
             "privileged": True,
             "volumes": ["/data:/data"],
+        }
+    }
+
+
+def _dev_environment_request_body(name: str = "dev-box") -> dict:
+    return {
+        "request": {
+            "run_type": "dev-environment",
+            "name": name,
+            "image": "ubuntu:22.04",
+            "init": ["pip install -r requirements.txt"],
+            "ide": "vscode",
+            "inactivity_duration": "2h",
+            "env": {"MODEL": "qwen"},
+            "ports": [8888],
+            "resources": {
+                "cpu": "4",
+                "memory": "16GB",
+                "gpu": "A100:1",
+                "disk": "200GB",
+            },
+            "max_duration": "8h",
+            "volumes": ["/dev-data:/dev-data"],
+            "persistent_dirs": [
+                {"host_path": "/mnt/dev-cache", "mount_path": "/cache"},
+                {"host_path": "/mnt/dev-ro", "mount_path": "/readonly", "read_only": True},
+            ],
         }
     }
 
@@ -114,6 +143,42 @@ async def _create_run_request(
 class TestRunRequests:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_task_request_requires_commands(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        project, applicant, *_ = await _create_project_with_users(session)
+        body = _request_body()
+        body["request"]["commands"] = []
+
+        response = await client.post(
+            f"/api/project/{project.name}/run_requests/create",
+            headers=get_auth_headers(applicant.token),
+            json=body,
+        )
+
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_dev_environment_request_allows_empty_commands(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        project, applicant, *_ = await _create_project_with_users(session)
+
+        response = await client.post(
+            f"/api/project/{project.name}/run_requests/create",
+            headers=get_auth_headers(applicant.token),
+            json=_dev_environment_request_body(),
+        )
+
+        assert response.status_code == 200, response.json()
+        created = response.json()
+        assert created["status"] == "pending"
+        assert created["request"]["run_type"] == "dev-environment"
+        assert created["request"]["commands"] == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
     async def test_member_can_create_and_list_own_requests(
         self, test_db, session: AsyncSession, client: AsyncClient
     ):
@@ -132,6 +197,7 @@ class TestRunRequests:
         assert created["project_name"] == project.name
         assert created["applicant"] == applicant.name
         assert created["request"]["image"] == "ubuntu:22.04"
+        assert created["request"]["persistent_dirs"] == []
         assert created["run_id"] is None
 
         member_list = await client.post(
@@ -141,6 +207,7 @@ class TestRunRequests:
         )
         assert member_list.status_code == 200, member_list.json()
         assert [item["id"] for item in member_list.json()] == [created["id"]]
+        assert member_list.json()[0]["request"]["persistent_dirs"] == []
 
         manager_list = await client.post(
             f"/api/project/{project.name}/run_requests/list",
@@ -253,6 +320,35 @@ class TestRunRequests:
 
         assert response.status_code == 200, response.json()
         assert response.json()["status"] == expected_status
+        assert response.json()["run_id"] is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_auto_approval_leaves_persistent_directory_requests_pending(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        project, applicant, *_ = await _create_project_with_users(session)
+        project.auto_approval_enabled = True
+        project.auto_approval_max_cpu = 4
+        project.auto_approval_max_memory_gib = 16
+        project.auto_approval_max_duration_hours = 2
+        await session.commit()
+        body = _auto_approvable_request_body()
+        body["request"]["persistent_dirs"] = [
+            {"host_path": "/mnt/cache", "mount_path": "/cache"},
+        ]
+
+        response = await client.post(
+            f"/api/project/{project.name}/run_requests/create",
+            headers=get_auth_headers(applicant.token),
+            json=body,
+        )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["status"] == "pending"
+        assert response.json()["request"]["persistent_dirs"] == [
+            {"host_path": "/mnt/cache", "mount_path": "/cache", "read_only": False}
+        ]
         assert response.json()["run_id"] is None
 
     @pytest.mark.asyncio
@@ -499,7 +595,50 @@ class TestRunRequests:
         assert run_model is not None
         assert run_model.user_id == applicant.id
         assert run_model.run_name == "train-job"
-        assert '"type":"task"' in run_model.run_spec
+        run_spec = json.loads(run_model.run_spec)
+        configuration = run_spec["configuration"]
+        assert configuration["type"] == "task"
+        assert configuration["volumes"] == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_manager_approve_creates_applicant_owned_dev_environment_run(
+        self, test_db, session: AsyncSession, client: AsyncClient
+    ):
+        project, applicant, manager, *_ = await _create_project_with_users(session)
+        create_response = await client.post(
+            f"/api/project/{project.name}/run_requests/create",
+            headers=get_auth_headers(applicant.token),
+            json=_dev_environment_request_body(),
+        )
+        assert create_response.status_code == 200, create_response.json()
+
+        response = await client.post(
+            f"/api/project/{project.name}/run_requests/approve",
+            headers=get_auth_headers(manager.token),
+            json={"id": create_response.json()["id"]},
+        )
+
+        assert response.status_code == 200, response.json()
+        approved = response.json()
+        assert approved["status"] == "approved"
+        assert approved["run_id"] is not None
+
+        run_model = await session.get(RunModel, UUID(approved["run_id"]))
+        assert run_model is not None
+        assert run_model.user_id == applicant.id
+        run_spec = json.loads(run_model.run_spec)
+        configuration = run_spec["configuration"]
+        assert configuration["type"] == "dev-environment"
+        assert configuration["init"] == ["pip install -r requirements.txt"]
+        assert configuration["ide"] == "vscode"
+        assert configuration["inactivity_duration"] == 7200
+        assert configuration["volumes"][0]["instance_path"] == "/dev-data"
+        assert configuration["volumes"][0]["path"] == "/dev-data"
+        assert configuration["volumes"][1]["instance_path"] == "/mnt/dev-cache"
+        assert configuration["volumes"][1]["path"] == "/cache"
+        assert configuration["volumes"][2]["instance_path"] == "/mnt/dev-ro"
+        assert configuration["volumes"][2]["path"] == "/readonly"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
