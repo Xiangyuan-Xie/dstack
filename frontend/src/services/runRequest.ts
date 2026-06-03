@@ -3,6 +3,8 @@ import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 
 import fetchBaseQueryHeaders from 'libs/fetchBaseQueryHeaders';
 
+import { runApi } from './run';
+
 export const runRequestApi = createApi({
     reducerPath: 'runRequestApi',
     refetchOnMountOrArgChange: true,
@@ -63,6 +65,14 @@ export const runRequestApi = createApi({
             }),
 
             invalidatesTags: (result, error, params) => ['RunRequests', { type: 'RunRequest' as const, id: params.id }],
+            async onQueryStarted(_params, { dispatch, queryFulfilled }) {
+                try {
+                    await queryFulfilled;
+                    dispatch(runApi.util.invalidateTags(['Runs', 'AllRuns']));
+                } catch {
+                    // Run caches should refresh only after successful approval.
+                }
+            },
         }),
 
         rejectRunRequest: builder.mutation<IRunRequest, TRunRequestRejectParams>({
@@ -83,6 +93,14 @@ export const runRequestApi = createApi({
             }),
 
             invalidatesTags: (result, error, params) => ['RunRequests', { type: 'RunRequest' as const, id: params.id }],
+            async onQueryStarted(_params, { dispatch, queryFulfilled }) {
+                try {
+                    await queryFulfilled;
+                    dispatch(runApi.util.invalidateTags(['Runs', 'AllRuns']));
+                } catch {
+                    // Run caches should refresh only after successful retry.
+                }
+            },
         }),
     }),
 });

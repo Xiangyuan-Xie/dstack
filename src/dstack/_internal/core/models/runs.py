@@ -705,11 +705,17 @@ class Run(CoreModel):
         )
 
 
+class JobPlanCapacityIssue(CoreModel):
+    code: str
+    message: str
+
+
 class JobPlan(CoreModel):
     job_spec: JobSpec
     offers: List[InstanceOfferWithAvailability]
     total_offers: int
     max_price: Optional[float]
+    capacity_issue: Optional[JobPlanCapacityIssue] = None
 
 
 class RunPlan(CoreModel):

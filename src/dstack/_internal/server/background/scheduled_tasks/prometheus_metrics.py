@@ -7,6 +7,7 @@ from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import joinedload
 
 from dstack._internal.core.consts import DSTACK_SHIM_HTTP_PORT
+from dstack._internal.core.models.backends.base import BackendType
 from dstack._internal.core.models.runs import JobStatus
 from dstack._internal.server.db import get_session_ctx
 from dstack._internal.server.models import (
@@ -113,6 +114,8 @@ async def _collect_jobs_metrics(job_models: list[JobModel], collected_at: dateti
 async def _collect_job_metrics(job_model: JobModel) -> Optional[str]:
     jpd = get_job_provisioning_data(job_model)
     if jpd is None:
+        return None
+    if jpd.backend == BackendType.REGISTERED:
         return None
     if not jpd.dockerized:
         # Container-based backend, no shim

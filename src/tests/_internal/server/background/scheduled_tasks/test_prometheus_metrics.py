@@ -8,6 +8,7 @@ from freezegun import freeze_time
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from dstack._internal.core.models.backends.base import BackendType
 from dstack._internal.core.models.instances import InstanceStatus
 from dstack._internal.core.models.runs import JobStatus
 from dstack._internal.core.models.users import GlobalRole, ProjectRole
@@ -153,6 +154,42 @@ class TestCollectPrometheusMetrics:
     async def test_skips_non_dockerized_jobs(
         self, session: AsyncSession, job: JobModel, ssh_tunnel_mock: Mock, shim_client_mock: Mock
     ):
+        await collect_prometheus_metrics()
+
+        ssh_tunnel_mock.assert_not_called()
+        shim_client_mock.get_task_metrics.assert_not_called()
+        res = await session.execute(
+            select(JobPrometheusMetrics).where(JobPrometheusMetrics.job_id == job.id)
+        )
+        metrics = res.scalar_one_or_none()
+        assert metrics is None
+
+    @freeze_time(datetime(2023, 1, 2, 3, 5, 20, tzinfo=timezone.utc))
+    async def test_skips_registered_worker_jobs(
+        self, session: AsyncSession, ssh_tunnel_mock: Mock, shim_client_mock: Mock
+    ):
+        user = await create_user(session=session, global_role=GlobalRole.USER)
+        project = await create_project(session=session, owner=user)
+        repo = await create_repo(session=session, project_id=project.id)
+        instance = await create_instance(
+            session=session,
+            project=None,
+            status=InstanceStatus.BUSY,
+            backend=BackendType.REGISTERED,
+        )
+        run = await create_run(session=session, project=project, repo=repo, user=user)
+        job = await create_job(
+            session=session,
+            run=run,
+            status=JobStatus.RUNNING,
+            job_provisioning_data=get_job_provisioning_data(
+                dockerized=True,
+                backend=BackendType.REGISTERED,
+            ),
+            instance_assigned=True,
+            instance=instance,
+        )
+
         await collect_prometheus_metrics()
 
         ssh_tunnel_mock.assert_not_called()

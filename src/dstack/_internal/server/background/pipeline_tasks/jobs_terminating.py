@@ -13,6 +13,7 @@ from dstack._internal.core.backends.base.backend import Backend
 from dstack._internal.core.backends.base.compute import ComputeWithVolumeSupport
 from dstack._internal.core.consts import DSTACK_SHIM_HTTP_PORT
 from dstack._internal.core.errors import BackendError, GatewayError, SSHError
+from dstack._internal.core.models.backends.base import BackendType
 from dstack._internal.core.models.instances import InstanceStatus, InstanceTerminationReason
 from dstack._internal.core.models.runs import (
     JobProvisioningData,
@@ -663,7 +664,7 @@ async def _process_terminating_job(
 
     jrd = get_job_runtime_data(job_model)
     jpd = get_job_provisioning_data(job_model)
-    if jpd is not None:
+    if jpd is not None and jpd.backend != BackendType.REGISTERED:
         logger.debug("%s: stopping container", fmt(job_model))
         ssh_private_keys = get_instance_ssh_private_keys(instance_model)
         if not await _stop_container(job_model, jpd, ssh_private_keys):

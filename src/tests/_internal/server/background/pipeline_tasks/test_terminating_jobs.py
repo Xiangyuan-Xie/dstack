@@ -19,9 +19,17 @@ from dstack._internal.server.background.pipeline_tasks.jobs_terminating import (
     JobTerminatingWorker,
     _get_related_instance_lock_owner,
 )
-from dstack._internal.server.models import InstanceModel, JobModel, VolumeAttachmentModel
+from dstack._internal.server.models import (
+    InstanceModel,
+    JobModel,
+    RegisteredWorkerGpuAllocationModel,
+    RegisteredWorkerModel,
+    VolumeAttachmentModel,
+    WorkerRegistrationTokenModel,
+)
 from dstack._internal.server.testing.common import (
     ComputeMockSpec,
+    create_fleet,
     create_instance,
     create_job,
     create_project,
@@ -404,6 +412,73 @@ class TestJobTerminatingWorker:
         assert any(
             event.message == "Job status changed TERMINATING -> TERMINATED" for event in events
         )
+
+    async def test_terminates_registered_worker_job_without_ssh(
+        self, test_db, session: AsyncSession, worker: JobTerminatingWorker
+    ):
+        project = await create_project(session=session)
+        user = await create_user(session=session)
+        fleet = await create_fleet(session=session, project=None, assign_to_project=False)
+        instance = await create_instance(
+            session=session,
+            project=None,
+            fleet=fleet,
+            status=InstanceStatus.BUSY,
+            backend=BackendType.REGISTERED,
+            busy_blocks=1,
+        )
+        token = WorkerRegistrationTokenModel(fleet_name=fleet.name, token_hash="token")
+        session.add(token)
+        await session.flush()
+        worker_model = RegisteredWorkerModel(
+            registration_token=token,
+            fleet=fleet,
+            instance=instance,
+            name="gpu-box-1",
+        )
+        session.add(worker_model)
+        repo = await create_repo(session=session, project_id=project.id)
+        run = await create_run(session=session, project=project, repo=repo, user=user)
+        job = await create_job(
+            session=session,
+            run=run,
+            status=JobStatus.TERMINATING,
+            termination_reason=JobTerminationReason.TERMINATED_BY_USER,
+            submitted_at=datetime(2023, 1, 2, 5, 12, 30, 5, tzinfo=timezone.utc),
+            job_provisioning_data=get_job_provisioning_data(
+                dockerized=True,
+                backend=BackendType.REGISTERED,
+            ),
+            job_runtime_data=get_job_runtime_data(gpu=1),
+            instance=instance,
+            instance_assigned=True,
+        )
+        allocation = RegisteredWorkerGpuAllocationModel(
+            worker=worker_model,
+            instance=instance,
+            job=job,
+            gpu_uuid="GPU-111",
+        )
+        session.add(allocation)
+        _lock_job(job)
+        await session.commit()
+
+        with (
+            patch("dstack._internal.server.services.runner.ssh.SSHTunnel") as ssh_tunnel_cls,
+            patch("dstack._internal.server.services.runner.client.ShimClient") as shim_client_cls,
+        ):
+            await worker.process(_job_to_pipeline_item(job))
+            ssh_tunnel_cls.assert_not_called()
+            shim_client_cls.assert_not_called()
+
+        await session.refresh(job)
+        await session.refresh(instance)
+        await session.refresh(allocation)
+        assert job.status == JobStatus.TERMINATED
+        assert job.instance_id is None
+        assert instance.status == InstanceStatus.IDLE
+        assert instance.busy_blocks == 0
+        assert allocation.released_at is not None
 
     async def test_detaches_job_volumes(
         self, test_db, session: AsyncSession, worker: JobTerminatingWorker

@@ -24,6 +24,12 @@ class TestRuntimeImages:
         images = response.json()
         assert any(image["category"] == "PyTorch" for image in images)
         assert any(image["category"] == "CUDA" and "devel" in image["tags"] for image in images)
+        assert any(
+            image["category"] == "Testing"
+            and image["image"] == "python:3.11-slim"
+            and "test" in image["tags"]
+            for image in images
+        )
         isaac_sim_images = [image for image in images if image["category"] == "Isaac Sim"]
         assert len(isaac_sim_images) >= 3
 

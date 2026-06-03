@@ -187,6 +187,44 @@ declare type TRunApplyRequestParams = {
     force: boolean;
 };
 
+declare type TRunGetPlanRequestParams = {
+    project_name: string;
+    run_spec: TRunSpec;
+    max_offers?: number;
+};
+
+declare interface IInstanceOfferWithAvailability {
+    backend?: TBackendType;
+    instance?: InstanceType;
+    region?: string;
+    price?: number;
+    availability: TAvailability;
+    availability_zones?: string[] | null;
+}
+
+declare interface ICapacityIssue {
+    code: string;
+    message: string;
+}
+
+declare interface IJobPlan {
+    job_spec: IJobSpec;
+    offers: IInstanceOfferWithAvailability[];
+    total_offers: number;
+    max_price?: number | null;
+    capacity_issue?: ICapacityIssue | null;
+}
+
+declare interface IRunPlan {
+    project_name: string;
+    user: string;
+    run_spec: TRunSpec;
+    effective_run_spec?: TRunSpec | null;
+    job_plans: IJobPlan[];
+    current_resource?: IRun | null;
+    action: string;
+}
+
 declare type TDeleteRunsRequestParams = {
     project_name: IProject['project_name'];
     runs_names: IRun['run_name'][];
@@ -384,9 +422,10 @@ declare interface IRun {
     submitted_at: string;
     status: TJobStatus;
     error?: string | null;
+    termination_reason?: string | null;
     jobs: IJob[];
     run_spec: IRunSpec;
-    latest_job_submission?: IJobSubmission;
+    latest_job_submission?: IJobSubmission | null;
     cost: number;
     service: IRunService | null;
     status_message?: string | null;

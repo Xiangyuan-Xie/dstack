@@ -63,6 +63,8 @@ from dstack._internal.server.models import (
     JobModel,
     ProbeModel,
     ProjectModel,
+    ProjectResourceInstanceAssignmentModel,
+    ProjectResourcePoolAssignmentModel,
     RepoModel,
     RunModel,
     UserModel,
@@ -415,7 +417,6 @@ async def _load_process_context(item: JobRunningPipelineItem) -> Optional[_Proce
             job = find_job(run.jobs, job_model.replica_num, job_model.job_num)
         instance_access_revoked = await _is_instance_access_revoked(session, job_model)
         job_submission = job_model_to_job_submission(job_model)
-        server_ssh_private_keys = get_instance_ssh_private_keys(get_or_error(job_model.instance))
         return _ProcessContext(
             job_model=job_model,
             run_model=run_model,
@@ -424,7 +425,6 @@ async def _load_process_context(item: JobRunningPipelineItem) -> Optional[_Proce
             job_submission=job_submission,
             job_provisioning_data=job_submission.job_provisioning_data,
             instance_access_revoked=instance_access_revoked,
-            server_ssh_private_keys=server_ssh_private_keys,
         )
 
 
@@ -455,6 +455,20 @@ async def _process_running_job(context: _ProcessContext) -> _ProcessResult:
 
     if context.job_provisioning_data.backend == BackendType.REGISTERED:
         result.job_update_map["skip_min_processing_interval"] = True
+        return result
+
+    try:
+        context.server_ssh_private_keys = get_instance_ssh_private_keys(
+            get_or_error(context.job_model.instance)
+        )
+    except ValueError as e:
+        logger.error("%s: failed to get instance SSH private keys: %s", fmt(context.job_model), e)
+        _terminate_job(
+            job_model=context.job_model,
+            job_update_map=result.job_update_map,
+            termination_reason=JobTerminationReason.TERMINATED_BY_SERVER,
+            termination_reason_message=str(e),
+        )
         return result
 
     if context.job_model.status == JobStatus.PROVISIONING:
@@ -703,6 +717,19 @@ async def _fetch_run_model(
 async def _is_instance_access_revoked(session: AsyncSession, job_model: JobModel) -> bool:
     if job_model.instance is None or job_model.instance.project_id == job_model.project_id:
         return False
+    if job_model.instance.project_id is None:
+        is_instance_in_authorized_pool = exists().where(
+            ProjectResourcePoolAssignmentModel.project_id == job_model.project_id,
+            ProjectResourcePoolAssignmentModel.fleet_id == job_model.instance.fleet_id,
+            ProjectResourcePoolAssignmentModel.whole_pool == True,
+        )
+        is_instance_authorized = exists().where(
+            ProjectResourceInstanceAssignmentModel.project_id == job_model.project_id,
+            ProjectResourceInstanceAssignmentModel.instance_id == job_model.instance.id,
+        )
+        return not (
+            await session.execute(select(or_(is_instance_in_authorized_pool, is_instance_authorized)))
+        ).scalar()
     return not (
         await session.execute(
             select(

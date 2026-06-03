@@ -1,12 +1,20 @@
+from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import Mock
+
+import pytest
 
 from dstack._internal.cli.commands.worker import (
     _build_docker_run_command,
     _detect_resources,
     _detect_usage,
+    _ensure_workspace,
+    _get_user_workspace,
+    _report_finished_assignments,
+    _RunningAssignment,
     _WorkerAssignment,
 )
+from dstack._internal.core.errors import CLIError
 
 
 def test_detect_resources_reports_nvidia_gpus(monkeypatch):
@@ -155,3 +163,76 @@ def test_build_docker_run_command_applies_assignment_limits():
     assert command[command.index("-w") + 1] == "/workspace"
     image_index = command.index("pytorch/pytorch:2.4.0-cuda12.4-cudnn9-runtime")
     assert command[image_index + 1 :] == ["python", "train.py"]
+
+
+def test_get_user_workspace_prefers_env_var(monkeypatch):
+    monkeypatch.setenv("DSTACK_WORKER_DATA_DIR", "/tmp/dstack-worker")
+
+    assert _get_user_workspace("alice") == Path("/tmp/dstack-worker/users/alice")
+
+
+def test_get_user_workspace_defaults_to_user_dir_for_non_root(monkeypatch, tmp_path):
+    monkeypatch.delenv("DSTACK_WORKER_DATA_DIR", raising=False)
+    monkeypatch.setattr("os.geteuid", lambda: 1000)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    assert _get_user_workspace("alice") == tmp_path / ".dstack" / "worker" / "users" / "alice"
+
+
+def test_get_user_workspace_defaults_to_var_lib_for_root(monkeypatch):
+    monkeypatch.delenv("DSTACK_WORKER_DATA_DIR", raising=False)
+    monkeypatch.setattr("os.geteuid", lambda: 0)
+
+    assert _get_user_workspace("alice") == Path("/var/lib/dstack/worker/users/alice")
+
+
+def test_ensure_workspace_reports_data_dir_override_on_permission_error(monkeypatch):
+    workspace = Path("/var/lib/dstack/worker/users/alice")
+
+    def mkdir(*args, **kwargs):
+        raise PermissionError(13, "Permission denied", "/var/lib/dstack")
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+
+    with pytest.raises(CLIError) as exc_info:
+        _ensure_workspace(workspace)
+
+    message = str(exc_info.value)
+    assert "DSTACK_WORKER_DATA_DIR" in message
+    assert "/var/lib/dstack/worker/users/alice" in message
+
+
+def test_report_finished_assignment_includes_docker_output_on_failure():
+    assignment = _WorkerAssignment(
+        job_id="job-1",
+        run_name="train",
+        image="python:3.11-slim",
+        command=["python", "missing.py"],
+    )
+    process = Mock()
+    process.poll.return_value = 125
+    output_tail = Mock()
+    output_tail.text.return_value = "docker: Error response from daemon: could not select device driver"
+    client = Mock()
+    running_assignments = {
+        assignment.job_id: _RunningAssignment(
+            assignment=assignment,
+            process=process,
+            output_tail=output_tail,
+        ),
+    }
+
+    _report_finished_assignments(
+        client=client,
+        worker_id="worker-1",
+        running_assignments=running_assignments,
+    )
+
+    client.report.assert_called_once_with(
+        worker_id="worker-1",
+        assignment=assignment,
+        status="failed",
+        exit_status=125,
+        message="Docker exited with status 125: docker: Error response from daemon: could not select device driver",
+    )
+    assert running_assignments == {}

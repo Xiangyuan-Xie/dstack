@@ -19,6 +19,7 @@ from dstack._internal.core.models.profiles import CreationPolicy, Profile
 from dstack._internal.core.models.runs import (
     Job,
     JobPlan,
+    JobPlanCapacityIssue,
     JobProvisioningData,
     Requirements,
     RunSpec,
@@ -839,13 +840,34 @@ def _get_job_plan(
     if profile.creation_policy == CreationPolicy.REUSE_OR_CREATE:
         job_offers.extend(offer for _, offer in backend_offers)
     job_offers.sort(key=lambda offer: not offer.availability.is_available())
+    capacity_issue = _get_job_plan_capacity_issue(job_offers)
     remove_job_spec_sensitive_info(job.job_spec)
     return JobPlan(
         job_spec=job.job_spec,
         offers=job_offers[: (max_offers or _DEFAULT_MAX_OFFERS)],
         total_offers=len(job_offers),
         max_price=max((offer.price for offer in job_offers), default=None),
+        capacity_issue=capacity_issue,
     )
+
+
+def _get_job_plan_capacity_issue(
+    job_offers: list[InstanceOfferWithAvailability],
+) -> Optional[JobPlanCapacityIssue]:
+    if not job_offers:
+        return JobPlanCapacityIssue(
+            code="no_matching_instance",
+            message=(
+                "No resource pool instance or backend offer matches the current resource "
+                "configuration."
+            ),
+        )
+    if not any(offer.availability.is_available() for offer in job_offers):
+        return JobPlanCapacityIssue(
+            code="no_launchable_offer",
+            message="Matching resources were found, but none are currently launchable.",
+        )
+    return None
 
 
 def _should_select_best_fleet_candidate(run_spec: RunSpec) -> bool:

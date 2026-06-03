@@ -15,7 +15,8 @@ from dstack._internal.core.models.instances import (
     Resources,
 )
 from dstack._internal.core.models.profiles import Profile
-from dstack._internal.core.models.runs import JobStatus
+from dstack._internal.core.models.resources import CPUSpec, GPUSpec, Memory, Range, ResourcesSpec
+from dstack._internal.core.models.runs import JobStatus, Requirements
 from dstack._internal.server.models import InstanceModel
 from dstack._internal.server.schemas.runner import TaskListItem, TaskListResponse, TaskStatus
 from dstack._internal.server.services.runner.client import ShimClient
@@ -26,6 +27,7 @@ from dstack._internal.server.testing.common import (
     create_repo,
     create_run,
     create_user,
+    get_instance_offer_with_availability,
     get_kubernetes_volume_configuration,
     get_volume,
     get_volume_configuration,
@@ -79,6 +81,43 @@ class TestSwitchInstanceStatus:
 
 
 class TestFilterInstances:
+    def test_registered_worker_offer_matches_resource_share_requirements(self):
+        offer = get_instance_offer_with_availability(
+            backend=BackendType.REGISTERED,
+            cpu_count=16,
+            memory_gib=30,
+            gpu_count=1,
+            gpu_name="RTX4060LaptopGPU",
+            gpu_memory_gib=8,
+        )
+        requirements = Requirements(
+            resources=ResourcesSpec(
+                cpu=CPUSpec(count=Range[int](min=2, max=2)),
+                memory=Range[Memory](min=Memory.parse("8GB"), max=Memory.parse("8GB")),
+                gpu=GPUSpec(count=Range[int](min=0, max=0)),
+            )
+        )
+
+        assert instances_services._offer_matches_instance_reuse_requirements(offer, requirements)
+
+    def test_registered_worker_offer_rejects_resource_share_above_capacity(self):
+        offer = get_instance_offer_with_availability(
+            backend=BackendType.REGISTERED,
+            cpu_count=16,
+            memory_gib=30,
+        )
+        requirements = Requirements(
+            resources=ResourcesSpec(
+                cpu=CPUSpec(count=Range[int](min=64, max=None)),
+                memory=Range[Memory](min=Memory.parse("8GB"), max=None),
+                gpu=GPUSpec(count=Range[int](min=0, max=None)),
+            )
+        )
+
+        assert not instances_services._offer_matches_instance_reuse_requirements(
+            offer, requirements
+        )
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
     async def test_returns_all_instances(self, test_db, session: AsyncSession):

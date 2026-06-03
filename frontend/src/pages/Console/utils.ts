@@ -322,6 +322,7 @@ export const formatStatusLabel = (status: string | null | undefined, locale: TLo
     const normalized = status.toLowerCase();
     const labels: Record<string, { zh: string; en: string }> = {
         pending: { zh: '待处理', en: 'Pending' },
+        pending_approval: { zh: '待审批', en: 'Pending approval' },
         approved: { zh: '已通过', en: 'Approved' },
         rejected: { zh: '已拒绝', en: 'Rejected' },
         failed: { zh: '失败', en: 'Failed' },
@@ -501,9 +502,19 @@ export const getRunRequestStats = (requests: IRunRequest[]): RunRequestStats => 
 
 export const buildRunRequestCreateParams = (values: IRunRequestFormValues): TRunRequestCreateParams => {
     const resources: TRunRequestResources = {};
-    if (values.cpu.trim()) resources.cpu = values.cpu.trim();
-    if (values.memory.trim()) resources.memory = values.memory.trim();
-    if (values.gpu.trim()) resources.gpu = values.gpu.trim();
+    const resourceValue = (value: string) => {
+        const trimmed = value.trim();
+        if (!trimmed) return undefined;
+        const parsed = Number(trimmed.replace(/[^\d.]/g, ''));
+        if (Number.isFinite(parsed) && parsed === 0) return undefined;
+        return trimmed;
+    };
+    const cpu = resourceValue(values.cpu);
+    const memory = resourceValue(values.memory);
+    const gpu = resourceValue(values.gpu);
+    if (cpu) resources.cpu = cpu;
+    if (memory) resources.memory = memory;
+    if (gpu) resources.gpu = gpu;
 
     const fleets = splitComma(values.fleets);
 

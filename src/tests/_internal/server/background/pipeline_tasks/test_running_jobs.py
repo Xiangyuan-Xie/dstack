@@ -51,7 +51,13 @@ from dstack._internal.server.background.pipeline_tasks.jobs_running import (
     _SubmitJobToRunnerResult,
 )
 from dstack._internal.server.background.pipeline_tasks.runs import RunPipeline
-from dstack._internal.server.models import JobModel, ProbeModel
+from dstack._internal.server.models import (
+    JobModel,
+    ProbeModel,
+    ProjectResourcePoolAssignmentModel,
+    RegisteredWorkerModel,
+    WorkerRegistrationTokenModel,
+)
 from dstack._internal.server.schemas.runner import (
     HealthcheckResponse,
     JobInfoResponse,
@@ -540,6 +546,114 @@ class TestJobRunningWorker:
 
         await session.refresh(job)
         assert job.status == JobStatus.PROVISIONING
+        assert job.lock_token is None
+        assert job.lock_owner is None
+
+    async def test_global_registered_worker_without_remote_connection_waits_for_worker_report(
+        self, test_db, session: AsyncSession, worker: JobRunningWorker
+    ):
+        project = await create_project(session=session)
+        user = await create_user(session=session)
+        repo = await create_repo(session=session, project_id=project.id)
+        fleet = await create_fleet(session=session, project=None, assign_to_project=False)
+        session.add(
+            ProjectResourcePoolAssignmentModel(
+                project=project,
+                fleet=fleet,
+                whole_pool=True,
+            )
+        )
+        run = await create_run(session=session, project=project, repo=repo, user=user)
+        instance = await create_instance(
+            session=session,
+            project=None,
+            fleet=fleet,
+            status=InstanceStatus.BUSY,
+            backend=BackendType.REGISTERED,
+        )
+        token = WorkerRegistrationTokenModel(fleet_name=fleet.name, token_hash="token")
+        session.add(token)
+        await session.flush()
+        session.add(
+            RegisteredWorkerModel(
+                registration_token=token,
+                fleet=fleet,
+                instance=instance,
+                name="gpu-box-1",
+            )
+        )
+        job = await create_job(
+            session=session,
+            run=run,
+            status=JobStatus.PROVISIONING,
+            submitted_at=get_current_datetime(),
+            job_provisioning_data=get_job_provisioning_data(
+                dockerized=True,
+                backend=BackendType.REGISTERED,
+            ),
+            instance=instance,
+            instance_assigned=True,
+        )
+
+        with (
+            patch("dstack._internal.server.services.runner.ssh.SSHTunnel") as ssh_tunnel_cls,
+            patch("dstack._internal.server.services.runner.client.ShimClient") as shim_client_cls,
+        ):
+            await _process_job(session, worker, job)
+            ssh_tunnel_cls.assert_not_called()
+            shim_client_cls.assert_not_called()
+
+        await session.refresh(job)
+        assert job.status == JobStatus.PROVISIONING
+        assert job.lock_token is None
+        assert job.lock_owner is None
+
+    async def test_non_registered_global_instance_without_remote_connection_terminates_job(
+        self, test_db, session: AsyncSession, worker: JobRunningWorker
+    ):
+        project = await create_project(session=session)
+        user = await create_user(session=session)
+        repo = await create_repo(session=session, project_id=project.id)
+        fleet = await create_fleet(session=session, project=None, assign_to_project=False)
+        session.add(
+            ProjectResourcePoolAssignmentModel(
+                project=project,
+                fleet=fleet,
+                whole_pool=True,
+            )
+        )
+        run = await create_run(session=session, project=project, repo=repo, user=user)
+        instance = await create_instance(
+            session=session,
+            project=None,
+            fleet=fleet,
+            status=InstanceStatus.BUSY,
+            backend=BackendType.AWS,
+        )
+        job = await create_job(
+            session=session,
+            run=run,
+            status=JobStatus.PROVISIONING,
+            submitted_at=get_current_datetime(),
+            job_provisioning_data=get_job_provisioning_data(
+                dockerized=True,
+                backend=BackendType.AWS,
+            ),
+            instance=instance,
+            instance_assigned=True,
+        )
+
+        with patch("dstack._internal.server.services.runner.ssh.SSHTunnel") as ssh_tunnel_cls:
+            await _process_job(session, worker, job)
+            ssh_tunnel_cls.assert_not_called()
+
+        await session.refresh(job)
+        assert job.status == JobStatus.TERMINATING
+        assert job.termination_reason == JobTerminationReason.TERMINATED_BY_SERVER
+        assert (
+            job.termination_reason_message
+            == "Global resource pool instance is missing remote connection info"
+        )
         assert job.lock_token is None
         assert job.lock_owner is None
 

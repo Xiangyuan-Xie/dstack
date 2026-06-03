@@ -8,6 +8,13 @@ from dstack._internal.utils.common import get_current_datetime
 
 DEFAULT_RUNTIME_IMAGES = [
     RuntimeImage(
+        name="Python 3.11 slim",
+        image="python:3.11-slim",
+        category="Testing",
+        description="Lightweight CPU image for container creation smoke tests.",
+        tags=["python", "cpu", "slim", "test"],
+    ),
+    RuntimeImage(
         name="PyTorch 2.5 CUDA 12.4",
         image="pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime",
         category="PyTorch",

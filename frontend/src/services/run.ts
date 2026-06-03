@@ -29,7 +29,7 @@ export const runApi = createApi({
         prepareHeaders: fetchBaseQueryHeaders,
     }),
 
-    tagTypes: ['Runs', 'Models', 'Metrics'],
+    tagTypes: ['Runs', 'AllRuns', 'Models', 'Metrics'],
 
     endpoints: (builder) => ({
         getRuns: builder.query<IRun[], TRunsRequestParams>({
@@ -57,7 +57,17 @@ export const runApi = createApi({
             providesTags: (result) => (result ? [{ type: 'Runs' as const, id: result?.id }] : []),
         }),
 
-        applyRun: builder.mutation<{ id: string; project_name: string }, TRunApplyRequestParams>({
+        getRunPlan: builder.mutation<IRunPlan, TRunGetPlanRequestParams>({
+            query: ({ project_name, ...body }) => {
+                return {
+                    url: API.PROJECTS.RUN_GET_PLAN(project_name ?? ''),
+                    method: 'POST',
+                    body,
+                };
+            },
+        }),
+
+        applyRun: builder.mutation<IRun, TRunApplyRequestParams>({
             query: ({ project_name, ...body }) => {
                 return {
                     url: API.PROJECTS.RUNS_APPLY(project_name ?? ''),
@@ -66,7 +76,7 @@ export const runApi = createApi({
                 };
             },
 
-            // providesTags: (result) => (result ? [{ type: 'Runs' as const, id: result?.id }] : []),
+            invalidatesTags: ['Runs', 'AllRuns'],
         }),
 
         stopRuns: builder.mutation<void, TStopRunsRequestParams>({
@@ -181,6 +191,7 @@ export const {
     useGetRunsQuery,
     useLazyGetRunsQuery,
     useGetRunQuery,
+    useGetRunPlanMutation,
     useApplyRunMutation,
     useStopRunsMutation,
     useDeleteRunsMutation,

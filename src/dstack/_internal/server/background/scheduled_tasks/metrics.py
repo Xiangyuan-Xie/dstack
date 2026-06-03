@@ -6,6 +6,7 @@ from sqlalchemy import Delete, delete, select
 from sqlalchemy.orm import joinedload
 
 from dstack._internal.core.consts import DSTACK_RUNNER_HTTP_PORT
+from dstack._internal.core.models.backends.base import BackendType
 from dstack._internal.core.models.runs import JobStatus
 from dstack._internal.server import settings
 from dstack._internal.server.db import get_session_ctx
@@ -118,11 +119,13 @@ def _get_recently_collected_metric_cutoff() -> int:
 
 
 async def _collect_job_metrics(job_model: JobModel) -> Optional[JobMetricsPoint]:
-    ssh_private_keys = get_instance_ssh_private_keys(get_or_error(job_model.instance))
     jpd = get_job_provisioning_data(job_model)
     jrd = get_job_runtime_data(job_model)
     if jpd is None:
         return None
+    if jpd.backend == BackendType.REGISTERED:
+        return None
+    ssh_private_keys = get_instance_ssh_private_keys(get_or_error(job_model.instance))
     try:
         res = await run_async(
             _pull_runner_metrics,

@@ -28,7 +28,6 @@ from dstack._internal.server.db import (
     get_db,
     get_session_ctx,
     migrate,
-    reset_sqlite_database_for_test_users,
 )
 from dstack._internal.server.routers import (
     admin_oauth,
@@ -129,7 +128,6 @@ async def lifespan(app: FastAPI):
         )
     server_executor = ThreadPoolExecutor(max_workers=settings.SERVER_EXECUTOR_MAX_WORKERS)
     asyncio.get_running_loop().set_default_executor(server_executor)
-    await reset_sqlite_database_for_test_users()
     await migrate()
     _print_dstack_logo()
     if not check_required_ssh_version():

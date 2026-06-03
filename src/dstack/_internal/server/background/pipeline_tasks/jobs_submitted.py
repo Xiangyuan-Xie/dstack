@@ -42,7 +42,7 @@ from dstack._internal.core.models.profiles import (
     Profile,
     TerminationPolicy,
 )
-from dstack._internal.core.models.resources import Memory
+from dstack._internal.core.models.resources import GPUSpec, Memory
 from dstack._internal.core.models.runs import (
     Job,
     JobProvisioningData,
@@ -459,6 +459,7 @@ class _ExistingInstanceProvisioning:
 @dataclass
 class _FailedNewCapacityProvisioning:
     placement_group_cleanup: Optional[_PlacementGroupCleanup]
+    message: Optional[str] = None
 
 
 @dataclass
@@ -1146,7 +1147,7 @@ async def _assign_registered_worker_gpus(
 ) -> Optional[list[str]]:
     if instance_model.backend != BackendType.REGISTERED:
         return None
-    gpu_count = len(offer.instance.resources.gpus)
+    gpu_count = _get_requested_registered_gpu_count(job_model)
     if gpu_count == 0:
         return []
     worker_model = await _get_registered_worker_for_instance(session, instance_model.id)
@@ -1170,6 +1171,16 @@ async def _assign_registered_worker_gpus(
             )
         )
     return assigned_gpu_uuids
+
+
+def _get_requested_registered_gpu_count(job_model: JobModel) -> int:
+    gpu_spec = get_job_spec(job_model).requirements.resources.gpu
+    if gpu_spec is None:
+        return 0
+    gpu_spec = GPUSpec.parse_obj(gpu_spec)
+    if gpu_spec.count.max is not None:
+        return gpu_spec.count.max
+    return gpu_spec.count.min or 0
 
 
 async def _get_registered_worker_for_instance(
@@ -1433,6 +1444,7 @@ async def _process_new_capacity_provisioning(
         logger.debug("%s: provisioning failed", fmt(context.job_model))
         return _TerminateSubmittedJobResult(
             reason=JobTerminationReason.FAILED_TO_START_DUE_TO_NO_CAPACITY,
+            message=provision_new_capacity_result.message,
             locked_fleet_id=locked_fleet_id,
             placement_group_cleanup=provision_new_capacity_result.placement_group_cleanup,
         )
@@ -2209,6 +2221,16 @@ async def _provision_new_capacity(
         instance_mounts=check_run_spec_requires_instance_mounts(run.run_spec),
         placement_group=placement_group_model_to_placement_group_optional(placement_group_model),
     )
+    if not offers:
+        return _FailedNewCapacityProvisioning(
+            placement_group_cleanup=_build_placement_group_cleanup(
+                fleet_model=fleet_model,
+                offers_tried=0,
+                selected_placement_group_id=None,
+                new_placement_group_models=new_placement_group_models,
+            ),
+            message="No offers available",
+        )
     offers_tried = 0
     for backend, offer in offers[: settings.MAX_OFFERS_TRIED]:
         logger.debug(
@@ -2328,7 +2350,8 @@ async def _provision_new_capacity(
             offers_tried=offers_tried,
             selected_placement_group_id=None,
             new_placement_group_models=new_placement_group_models,
-        )
+        ),
+        message="Failed to provision capacity",
     )
 
 

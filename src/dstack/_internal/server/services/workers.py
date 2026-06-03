@@ -224,12 +224,12 @@ async def register_worker(
         session.add(worker_model)
     else:
         instance_model = worker_model.instance
-        instance_model.status = InstanceStatus.IDLE
-        instance_model.unreachable = False
-        instance_model.backend = BackendType.REGISTERED
-        instance_model.offer = offer.json()
-        instance_model.job_provisioning_data = job_provisioning_data.json()
-        instance_model.total_blocks = total_blocks
+        prepare_existing_registered_instance_for_reconnect(
+            instance_model=instance_model,
+            offer_json=offer.json(),
+            job_provisioning_data_json=job_provisioning_data.json(),
+            total_blocks=total_blocks,
+        )
     worker_model.hostname = body.hostname
     worker_model.labels = json.dumps(body.labels)
     worker_model.last_heartbeat_at = now
@@ -238,6 +238,24 @@ async def register_worker(
     await session.commit()
     await session.refresh(worker_model, ["fleet", "instance"])
     return worker_model
+
+
+def prepare_existing_registered_instance_for_reconnect(
+    instance_model: InstanceModel,
+    offer_json: str,
+    job_provisioning_data_json: str,
+    total_blocks: int,
+) -> None:
+    instance_model.status = InstanceStatus.IDLE
+    instance_model.unreachable = False
+    instance_model.deleted = False
+    instance_model.deleted_at = None
+    instance_model.finished_at = None
+    instance_model.backend = BackendType.REGISTERED
+    instance_model.offer = offer_json
+    instance_model.job_provisioning_data = job_provisioning_data_json
+    instance_model.total_blocks = total_blocks
+    instance_model.busy_blocks = 0
 
 
 async def heartbeat_worker(

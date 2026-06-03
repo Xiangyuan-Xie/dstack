@@ -3,9 +3,11 @@ import os
 import socket
 import subprocess
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Thread
 
 import requests
 
@@ -52,6 +54,7 @@ class _WorkerAssignment:
 class _RunningAssignment:
     assignment: _WorkerAssignment
     process: subprocess.Popen
+    output_tail: "_ProcessOutputTail"
 
 
 class WorkerCommand(BaseCommand):
@@ -305,7 +308,7 @@ def _start_assignment(
     assignment: _WorkerAssignment,
 ) -> _RunningAssignment:
     host_workspace = _get_user_workspace(assignment.username)
-    host_workspace.mkdir(parents=True, exist_ok=True)
+    _ensure_workspace(host_workspace)
     container_name = f"dstack-{assignment.job_id}"
     command = _build_docker_run_command(
         assignment=assignment,
@@ -314,7 +317,12 @@ def _start_assignment(
     )
     client.report(worker_id=worker_id, assignment=assignment, status="pulling")
     try:
-        process = subprocess.Popen(command)
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
     except FileNotFoundError as exc:
         client.report(
             worker_id=worker_id,
@@ -323,8 +331,9 @@ def _start_assignment(
             message="Docker is not installed or not available in PATH",
         )
         raise CLIError("Docker is not installed or not available in PATH") from exc
+    output_tail = _ProcessOutputTail(process)
     client.report(worker_id=worker_id, assignment=assignment, status="running")
-    return _RunningAssignment(assignment=assignment, process=process)
+    return _RunningAssignment(assignment=assignment, process=process, output_tail=output_tail)
 
 
 def _report_finished_assignments(
@@ -338,11 +347,15 @@ def _report_finished_assignments(
         if exit_status is None:
             continue
         status = "done" if exit_status == 0 else "failed"
+        message = None
+        if exit_status != 0:
+            message = _format_docker_failure_message(exit_status, running.output_tail.text())
         client.report(
             worker_id=worker_id,
             assignment=running.assignment,
             status=status,
             exit_status=exit_status,
+            message=message,
         )
         finished_job_ids.append(job_id)
     for job_id in finished_job_ids:
@@ -380,13 +393,55 @@ def _build_docker_run_command(
     return command
 
 
+class _ProcessOutputTail:
+    def __init__(self, process: subprocess.Popen, max_lines: int = 20):
+        self._lines: deque[str] = deque(maxlen=max_lines)
+        self._thread = Thread(target=self._read, args=(process,), daemon=True)
+        self._thread.start()
+
+    def text(self) -> str:
+        self._thread.join(timeout=1)
+        return "\n".join(self._lines).strip()
+
+    def _read(self, process: subprocess.Popen) -> None:
+        if process.stdout is None:
+            return
+        for line in process.stdout:
+            line = line.rstrip()
+            if line:
+                console.print(line)
+                self._lines.append(line)
+
+
+def _format_docker_failure_message(exit_status: int, output: str) -> str:
+    message = f"Docker exited with status {exit_status}"
+    if output:
+        message = f"{message}: {output}"
+    return message
+
+
 def _get_user_workspace(username: str) -> Path:
     safe_username = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in username)
-    return (
-        Path(os.environ.get("DSTACK_WORKER_DATA_DIR", str(_WORKER_DATA_DIR)))
-        / "users"
-        / safe_username
-    )
+    return _get_worker_data_dir() / "users" / safe_username
+
+
+def _get_worker_data_dir() -> Path:
+    if "DSTACK_WORKER_DATA_DIR" in os.environ:
+        return Path(os.environ["DSTACK_WORKER_DATA_DIR"])
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return _WORKER_DATA_DIR
+    return Path.home() / ".dstack" / "worker"
+
+
+def _ensure_workspace(path: Path) -> None:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise CLIError(
+            "Failed to create worker workspace "
+            f"{path}. Set DSTACK_WORKER_DATA_DIR to a writable directory, "
+            "or run the worker with permissions for the configured data directory."
+        ) from exc
 
 
 def _detect_nvidia_gpu_usage() -> list[dict]:

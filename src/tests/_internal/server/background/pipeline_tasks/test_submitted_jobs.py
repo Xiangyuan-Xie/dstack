@@ -20,7 +20,12 @@ from dstack._internal.core.models.instances import Gpu, InstanceStatus
 from dstack._internal.core.models.placement import PlacementGroup
 from dstack._internal.core.models.profiles import Profile
 from dstack._internal.core.models.resources import GPUSpec, Range, ResourcesSpec
-from dstack._internal.core.models.runs import JobStatus, JobTerminationReason
+from dstack._internal.core.models.runs import (
+    JobSpec,
+    JobStatus,
+    JobTerminationReason,
+    Requirements,
+)
 from dstack._internal.core.models.users import GlobalRole
 from dstack._internal.core.models.volumes import (
     VolumeAttachmentData,
@@ -33,7 +38,13 @@ from dstack._internal.server.background.pipeline_tasks.jobs_submitted import (
     JobSubmittedPipeline,
     JobSubmittedPipelineItem,
     JobSubmittedWorker,
+    _FailedNewCapacityProvisioning,
+    _get_requested_registered_gpu_count,
     _load_submitted_job_context,
+    _PreparedJobVolumes,
+    _process_new_capacity_provisioning,
+    _ProcessedPreconditions,
+    _TerminateSubmittedJobResult,
 )
 from dstack._internal.server.models import (
     ComputeGroupModel,
@@ -120,6 +131,38 @@ def _job_to_pipeline_item(job_model: JobModel) -> JobSubmittedPipelineItem:
         lock_token=job_model.lock_token,
         prev_lock_expired=False,
     )
+
+
+def _make_job_model_with_resources(resources: ResourcesSpec) -> JobModel:
+    job_spec = JobSpec(
+        job_num=0,
+        job_name="test-0-0",
+        app_specs=None,
+        commands=["echo ok"],
+        env={},
+        home_dir=None,
+        image_name="ubuntu",
+        max_duration=None,
+        registry_auth=None,
+        requirements=Requirements(resources=resources),
+        retry=None,
+        working_dir=None,
+    )
+    return JobModel(job_spec_data=job_spec.json())
+
+
+def test_requested_registered_gpu_count_treats_default_gpu_spec_as_cpu_only():
+    job = _make_job_model_with_resources(ResourcesSpec())
+
+    assert _get_requested_registered_gpu_count(job) == 0
+
+
+def test_requested_registered_gpu_count_uses_explicit_gpu_count():
+    job = _make_job_model_with_resources(
+        ResourcesSpec(gpu=GPUSpec(count=Range[int](min=1, max=1)))
+    )
+
+    assert _get_requested_registered_gpu_count(job) == 1
 
 
 async def _process_job(
@@ -1156,6 +1199,76 @@ class TestJobSubmittedWorker:
         assert job.job_runtime_data is not None
         assert json.loads(job.job_runtime_data)["gpu_uuids"] == ["GPU-111"]
 
+    async def test_does_not_assign_registered_worker_gpu_uuid_to_cpu_only_job(
+        self, test_db, session: AsyncSession, worker: JobSubmittedWorker
+    ):
+        project = await create_project(session=session)
+        user = await create_user(session=session)
+        repo = await create_repo(session=session, project_id=project.id)
+        fleet = await create_fleet(session=session, project=project)
+        offer = get_instance_offer_with_availability(
+            backend=BackendType.REGISTERED,
+            gpu_count=0,
+            cpu_count=16,
+            memory_gib=128,
+        )
+        offer.instance.resources.gpus = [
+            Gpu(uuid="GPU-111", index=0, name="RTX4090D", memory_mib=24564),
+        ]
+        provisioning_data = get_job_provisioning_data(
+            dockerized=True,
+            backend=BackendType.REGISTERED,
+            instance_type=offer.instance,
+        )
+        instance = await create_instance(
+            session=session,
+            project=project,
+            fleet=fleet,
+            status=InstanceStatus.IDLE,
+            backend=BackendType.REGISTERED,
+            offer=offer,
+            job_provisioning_data=provisioning_data,
+            total_blocks=1,
+            name="gpu-box-1",
+        )
+        token = WorkerRegistrationTokenModel(
+            created_by=user,
+            fleet_name=fleet.name,
+            token_hash="worker-token-hash",
+            enabled=True,
+        )
+        session.add(token)
+        await session.flush()
+        session.add(
+            RegisteredWorkerModel(
+                registration_token=token,
+                fleet=fleet,
+                instance=instance,
+                name="gpu-box-1",
+                gpus=(
+                    '[{"uuid":"GPU-111","index":0,"name":"RTX4090D","memory_mib":24564,'
+                    '"vendor":"nvidia"}]'
+                ),
+            )
+        )
+        run_spec = get_run_spec(
+            run_name="test-run",
+            repo_id=repo.name,
+            configuration=TaskConfiguration(image="ubuntu", resources=ResourcesSpec()),
+        )
+        run = await create_run(
+            session=session, project=project, repo=repo, user=user, run_spec=run_spec
+        )
+        job = await create_job(session=session, run=run)
+
+        await _process_job(session=session, worker=worker, job_model=job)
+
+        job = await _get_job(session, job.id)
+        allocations = (await session.execute(select(RegisteredWorkerGpuAllocationModel))).all()
+        assert allocations == []
+        assert job.job_runtime_data is not None
+        assert json.loads(job.job_runtime_data)["gpu_uuids"] == []
+
     async def test_skips_registered_worker_without_free_gpu_uuid(
         self, test_db, session: AsyncSession, worker: JobSubmittedWorker
     ):
@@ -2183,6 +2296,56 @@ class TestJobSubmittedWorker:
         assert job.termination_reason_message is not None
         assert "Secrets interpolation error" in job.termination_reason_message
         backend_mock.compute.return_value.run_job.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_new_capacity_provisioning_preserves_failed_capacity_message():
+    fleet_model = Mock(spec=FleetModel)
+    fleet_model.id = uuid.uuid4()
+    context = Mock()
+    context.fleet_model = fleet_model
+    context.project = Mock()
+    context.project.ssh_public_key = ""
+    context.project.ssh_private_key = ""
+    context.job_model = JobModel(id=uuid.uuid4(), job_name="test-0-0")
+    context.run = Mock()
+    context.jobs_to_provision = []
+    context.job = Mock()
+    preconditions = _ProcessedPreconditions(
+        master_job_provisioning_data=None,
+        prepared_job_volumes=_PreparedJobVolumes(volume_model_ids=[], volumes=[]),
+    )
+
+    with (
+        patch(
+            "dstack._internal.server.background.pipeline_tasks.jobs_submitted._should_refresh_related_cluster_master_fleet",
+            return_value=False,
+        ),
+        patch(
+            "dstack._internal.server.background.pipeline_tasks.jobs_submitted._get_fleet_master_provisioning_data",
+            return_value=None,
+        ),
+        patch(
+            "dstack._internal.server.background.pipeline_tasks.jobs_submitted.is_master_job",
+            return_value=False,
+        ),
+        patch(
+            "dstack._internal.server.background.pipeline_tasks.jobs_submitted._provision_new_capacity",
+            return_value=_FailedNewCapacityProvisioning(
+                placement_group_cleanup=None,
+                message="Failed to provision capacity",
+            ),
+        ),
+    ):
+        result = await _process_new_capacity_provisioning(
+            item=Mock(spec=JobSubmittedPipelineItem),
+            context=context,
+            preconditions=preconditions,
+        )
+
+    assert isinstance(result, _TerminateSubmittedJobResult)
+    assert result.reason == JobTerminationReason.FAILED_TO_START_DUE_TO_NO_CAPACITY
+    assert result.message == "Failed to provision capacity"
 
 
 @pytest.mark.asyncio

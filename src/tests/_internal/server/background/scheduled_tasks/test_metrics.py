@@ -6,6 +6,7 @@ from freezegun import freeze_time
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from dstack._internal.core.models.backends.base import BackendType
 from dstack._internal.core.models.instances import InstanceStatus
 from dstack._internal.core.models.runs import JobStatus
 from dstack._internal.core.models.users import GlobalRole, ProjectRole
@@ -88,6 +89,42 @@ class TestCollectMetrics:
         res = await session.execute(select(JobMetricsPoint))
         metrics_point = res.scalar_one()
         assert metrics_point.job_id == job.id
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("test_db", ["sqlite", "postgres"], indirect=True)
+    async def test_skips_registered_worker_jobs(self, test_db, session: AsyncSession):
+        user = await create_user(session=session, global_role=GlobalRole.USER)
+        project = await create_project(session=session, owner=user)
+        repo = await create_repo(session=session, project_id=project.id)
+        instance = await create_instance(
+            session=session,
+            project=None,
+            status=InstanceStatus.BUSY,
+            backend=BackendType.REGISTERED,
+        )
+        run = await create_run(session=session, project=project, repo=repo, user=user)
+        job = await create_job(
+            session=session,
+            run=run,
+            status=JobStatus.RUNNING,
+            job_provisioning_data=get_job_provisioning_data(
+                dockerized=True,
+                backend=BackendType.REGISTERED,
+            ),
+            instance_assigned=True,
+            instance=instance,
+        )
+
+        with (
+            patch("dstack._internal.server.services.runner.ssh.SSHTunnel") as ssh_tunnel_mock,
+            patch("dstack._internal.server.services.runner.client.RunnerClient") as client_mock,
+        ):
+            await collect_metrics()
+            ssh_tunnel_mock.assert_not_called()
+            client_mock.return_value.get_metrics.assert_not_called()
+
+        res = await session.execute(select(JobMetricsPoint).where(JobMetricsPoint.job_id == job.id))
+        assert res.scalar_one_or_none() is None
 
 
 class TestDeleteMetrics:

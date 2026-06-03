@@ -57,6 +57,7 @@ import {
     useDeleteRunsMutation,
     useGetMetricsQuery,
     useGetModelsQuery,
+    useGetRunPlanMutation,
     useGetRunQuery,
     useGetRunsQuery,
     useStopRunsMutation,
@@ -573,6 +574,176 @@ const RequestStatus = ({ status }: { status?: TRunRequestStatus | TJobStatus | s
     return <StatusBadge tone={statusTone(status)}>{formatStatusLabel(status, locale)}</StatusBadge>;
 };
 
+const CAPACITY_TERMINATION_REASONS = ['failed_to_start_due_to_no_capacity', 'interrupted_by_no_capacity'];
+
+const AVAILABLE_CAPACITY_STATES: TAvailability[] = ['unknown', 'available', 'idle'];
+
+type TCapacityIssue = { message?: string | null; statusMessage?: string | null };
+type TExecutionIssue = { message?: string | null; exitStatus?: number | null };
+
+const getCapacityAdviceText = (text: (zh: string, en: string) => string) =>
+    text(
+        '请调整资源池、CPU/GPU/内存配置，或稍后重试。',
+        'Adjust the resource pool, CPU/GPU/memory settings, or retry later.',
+    );
+
+const getLatestJobSubmission = (job?: IJob | null): IJobSubmission | null =>
+    job?.job_submissions?.[job.job_submissions.length - 1] ?? null;
+
+const getRunCapacityIssue = (run?: IRun | null): TCapacityIssue | null => {
+    const submissions = [
+        run?.latest_job_submission,
+        ...(run?.jobs ?? []).map((job) => getLatestJobSubmission(job)),
+    ].filter((submission): submission is IJobSubmission => Boolean(submission));
+    const submission = submissions.find((item) => CAPACITY_TERMINATION_REASONS.includes(item.termination_reason ?? ''));
+    if (!submission) {
+        return null;
+    }
+    return {
+        message: submission.termination_reason_message ?? submission.error ?? null,
+        statusMessage: submission.status_message ?? null,
+    };
+};
+
+const getJobSubmissionMessage = (submission?: IJobSubmission | null): string | null =>
+    submission?.termination_reason_message ?? submission?.status_message ?? submission?.error ?? null;
+
+const getRunExecutionIssue = (run?: IRun | null): TExecutionIssue | null => {
+    const submissions = [
+        run?.latest_job_submission,
+        ...(run?.jobs ?? []).map((job) => getLatestJobSubmission(job)),
+    ].filter((submission): submission is IJobSubmission => Boolean(submission));
+    const submission = submissions.find((item) => {
+        if (!item.termination_reason) return false;
+        if (CAPACITY_TERMINATION_REASONS.includes(item.termination_reason)) return false;
+        return Boolean(getJobSubmissionMessage(item) || item.exit_status !== null || item.exit_status !== undefined);
+    });
+    if (!submission) {
+        return null;
+    }
+    return {
+        message: getJobSubmissionMessage(submission),
+        exitStatus: submission.exit_status,
+    };
+};
+
+const jobPlanHasLaunchableOffer = (jobPlan: IJobPlan): boolean =>
+    jobPlan.offers.some((offer) => AVAILABLE_CAPACITY_STATES.includes(offer.availability));
+
+const getPlanCapacityIssue = (plan: IRunPlan, text: (zh: string, en: string) => string): TCapacityIssue | null => {
+    if (!plan.job_plans.length) {
+        return {
+            message: text('预检没有生成可启动作业计划。', 'The precheck did not produce a launchable job plan.'),
+        };
+    }
+    const blockedJobPlan = plan.job_plans.find((jobPlan) => !jobPlanHasLaunchableOffer(jobPlan));
+    if (!blockedJobPlan) {
+        return null;
+    }
+    if (blockedJobPlan.capacity_issue?.message) {
+        return {
+            message: blockedJobPlan.capacity_issue.message,
+        };
+    }
+    if (blockedJobPlan.total_offers <= 0) {
+        return {
+            message: text(
+                '未找到满足当前配置的可启动资源。',
+                'No launchable resource matches the current configuration.',
+            ),
+        };
+    }
+    const availabilityStates = Array.from(new Set(blockedJobPlan.offers.map((offer) => offer.availability))).join(', ');
+    return {
+        message: text(
+            '预检返回的资源暂不可启动，可能已被占用或不满足本次配置。',
+            'The precheck returned resources that cannot be launched yet. They may be occupied or incompatible with this configuration.',
+        ),
+        statusMessage: availabilityStates ? text(`状态：${availabilityStates}`, `States: ${availabilityStates}`) : null,
+    };
+};
+
+const getApiErrorMessage = (error: unknown): string | null => {
+    if (!error || typeof error !== 'object') {
+        return null;
+    }
+    const data = 'data' in error ? (error as { data?: unknown }).data : undefined;
+    if (data && typeof data === 'object' && 'message' in data && typeof (data as { message?: unknown }).message === 'string') {
+        return (data as { message: string }).message;
+    }
+    if (data && typeof data === 'object' && 'detail' in data) {
+        const detail = (data as { detail?: unknown }).detail;
+        if (typeof detail === 'string') {
+            return detail;
+        }
+        if (Array.isArray(detail)) {
+            return detail
+                .map((item) => (item && typeof item === 'object' && 'msg' in item ? (item as { msg?: unknown }).msg : null))
+                .filter((item): item is string => typeof item === 'string')
+                .join(', ');
+        }
+    }
+    if ('error' in error && typeof (error as { error?: unknown }).error === 'string') {
+        return (error as { error: string }).error;
+    }
+    return null;
+};
+
+const CapacityIssueNotice = ({ issue }: { issue: TCapacityIssue | null }) => {
+    const { text } = useLocaleText();
+    if (!issue) {
+        return null;
+    }
+    const advice = getCapacityAdviceText(text);
+    const details = [issue.message, issue.statusMessage]
+        .filter((detail): detail is string => Boolean(detail) && detail !== advice)
+        .join(' · ');
+    return (
+        <div
+            role="alert"
+            className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 shadow-sm dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200"
+        >
+            <div className="font-semibold">{text('当前配置暂无可启动容量', 'No launch capacity for this configuration')}</div>
+            {details && <div className="mt-1 break-words">{details}</div>}
+            <div className="mt-1">{advice}</div>
+        </div>
+    );
+};
+
+const ExecutionIssueNotice = ({ issue }: { issue: TExecutionIssue | null }) => {
+    const { text } = useLocaleText();
+    if (!issue) {
+        return null;
+    }
+    const details = [
+        issue.message,
+        issue.exitStatus !== null && issue.exitStatus !== undefined
+            ? text(`退出码：${issue.exitStatus}`, `Exit status: ${issue.exitStatus}`)
+            : null,
+    ]
+        .filter((detail): detail is string => Boolean(detail))
+        .join(' · ');
+    return (
+        <div
+            role="alert"
+            className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800 shadow-sm dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-200"
+        >
+            <div className="font-semibold">{text('执行失败', 'Execution failed')}</div>
+            {details && <div className="mt-1 break-words">{details}</div>}
+        </div>
+    );
+};
+
+const JobSubmissionStatus = ({ submission }: { submission?: IJobSubmission | null }) => {
+    const message = getJobSubmissionMessage(submission);
+    return (
+        <div className="grid gap-1">
+            <RequestStatus status={submission?.status} />
+            {message && <span className="max-w-sm whitespace-normal text-xs text-slate-500 dark:text-slate-400">{message}</span>}
+        </div>
+    );
+};
+
 const DetailGrid: React.FC<{ items: Array<{ label: React.ReactNode; value: React.ReactNode }> }> = ({ items }) => (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((item, index) => (
@@ -598,6 +769,28 @@ type TUnifiedRunItem = {
     run?: IRun;
 };
 
+type TRunDisplayStatus = TRunRequestStatus | TJobStatus | 'pending_approval' | string | null;
+
+const getCurrentRunItemStatus = (item: Pick<TUnifiedRunItem, 'request_status' | 'run_status'>): TRunDisplayStatus => {
+    if (item.run_status) {
+        return item.run_status;
+    }
+    if (item.request_status === 'pending') {
+        return 'pending_approval';
+    }
+    return item.request_status ?? null;
+};
+
+const getCurrentRunRequestStatus = (request?: IRunRequest | null, run?: IRun | null): TRunDisplayStatus => {
+    if (run?.status) {
+        return run.status;
+    }
+    if (request?.status === 'pending') {
+        return 'pending_approval';
+    }
+    return request?.status ?? null;
+};
+
 type TRunPageKind = 'runs' | 'dev-environments';
 
 const isDevEnvironmentKind = (kind: TRunPageKind) => kind === 'dev-environments';
@@ -619,6 +812,46 @@ const getRunKindRoutes = (kind: TRunPageKind) =>
               requestDetails: CONSOLE_ROUTES.RUN_REQUEST_DETAILS.FORMAT,
               runDetails: CONSOLE_ROUTES.RUN_DETAILS.FORMAT,
           };
+
+const buildDirectRunSpec = (
+    createParams: TRunRequestCreateParams,
+    isDevEnvironment: boolean,
+): TRunApplyRequestParams['plan']['run_spec'] => {
+    const baseConfiguration = {
+        image: createParams.request.image,
+        env: createParams.request.env ? Object.entries(createParams.request.env).map(([key, value]) => `${key}=${value}`) : undefined,
+        ports: createParams.request.ports,
+        resources: createParams.request.resources,
+        max_duration: createParams.request.max_duration ?? undefined,
+        fleets: createParams.request.fleets ?? undefined,
+        working_dir: createParams.request.working_dir ?? undefined,
+        volumes:
+            createParams.request.volumes ??
+            createParams.request.persistent_dirs?.map((dir) =>
+                dir.read_only ? `${dir.host_path}:${dir.mount_path}:ro` : `${dir.host_path}:${dir.mount_path}`,
+            ),
+        privileged: createParams.request.privileged ?? undefined,
+    };
+    const configuration: TTaskConfigurationRequest | TDevEnvironmentConfiguration = isDevEnvironment
+        ? {
+              ...baseConfiguration,
+              type: 'dev-environment',
+              init: createParams.request.init,
+              ide: createParams.request.ide,
+              inactivity_duration: createParams.request.inactivity_duration ?? undefined,
+          }
+        : {
+              ...baseConfiguration,
+              type: 'task',
+              commands: createParams.request.commands,
+              nodes: createParams.request.nodes,
+              entrypoint: createParams.request.entrypoint ?? undefined,
+          };
+    return {
+        run_name: createParams.request.name ?? '',
+        configuration,
+    };
+};
 
 const getRunResourcesText = (run: IRun): string => {
     const resources = run.latest_job_submission?.job_provisioning_data?.instance_type?.resources;
@@ -973,7 +1206,9 @@ export const RunRequestCreatePage: React.FC<{ kind?: TRunPageKind }> = ({ kind =
     const formRef = useRef<HTMLFormElement>(null);
     const [createRunRequest, createState] = useCreateRunRequestMutation();
     const [applyRun, applyState] = useApplyRunMutation();
+    const [getRunPlan, getRunPlanState] = useGetRunPlanMutation();
     const [pushNotification] = useNotifications();
+    const [capacityIssue, setCapacityIssue] = useState<TCapacityIssue | null>(null);
     const [values, setValues] = useState<IRunRequestFormValues>({
         run_type: isDevEnvironmentKind(kind) ? 'dev-environment' : 'task',
         project_name: projects[0]?.project_name ?? '',
@@ -989,9 +1224,9 @@ export const RunRequestCreatePage: React.FC<{ kind?: TRunPageKind }> = ({ kind =
         ports: [{ host: '', container: '', protocol: 'tcp' }],
         persistent_dirs: [{ host_path: '', mount_path: '', read_only: false }],
         privileged: false,
-        cpu: '',
-        memory: '',
-        gpu: '',
+        cpu: '0',
+        memory: '0GB',
+        gpu: '0',
         max_duration: '4h',
         fleets: '',
     });
@@ -1112,55 +1347,57 @@ export const RunRequestCreatePage: React.FC<{ kind?: TRunPageKind }> = ({ kind =
             return;
         }
         setFormErrors({});
+        setCapacityIssue(null);
         const createParams = buildRunRequestCreateParams(values);
         if (canManageConsoleProject(role, values.project_name)) {
-            const baseConfiguration = {
-                image: createParams.request.image,
-                env: createParams.request.env
-                    ? Object.entries(createParams.request.env).map(([key, value]) => `${key}=${value}`)
-                    : undefined,
-                ports: createParams.request.ports,
-                resources: createParams.request.resources,
-                max_duration: createParams.request.max_duration ?? undefined,
-                fleets: createParams.request.fleets ?? undefined,
-                working_dir: createParams.request.working_dir ?? undefined,
-                volumes:
-                    createParams.request.volumes ??
-                    createParams.request.persistent_dirs?.map((dir) =>
-                        dir.read_only ? `${dir.host_path}:${dir.mount_path}:ro` : `${dir.host_path}:${dir.mount_path}`,
-                    ),
-                privileged: createParams.request.privileged ?? undefined,
-            };
-            const configuration: TTaskConfigurationRequest | TDevEnvironmentConfiguration = isDevEnvironment
-                ? {
-                      ...baseConfiguration,
-                      type: 'dev-environment',
-                      init: createParams.request.init,
-                      ide: createParams.request.ide,
-                      inactivity_duration: createParams.request.inactivity_duration ?? undefined,
-                  }
-                : {
-                      ...baseConfiguration,
-                      type: 'task',
-                      commands: createParams.request.commands,
-                      nodes: createParams.request.nodes,
-                      entrypoint: createParams.request.entrypoint ?? undefined,
-                  };
-            const result = await applyRun({
-                project_name: values.project_name,
-                force: true,
-                plan: {
-                    run_spec: {
-                        run_name: createParams.request.name ?? '',
-                        configuration,
+            const runSpec = buildDirectRunSpec(createParams, isDevEnvironment);
+            try {
+                const plan = await getRunPlan({
+                    project_name: values.project_name,
+                    run_spec: runSpec,
+                    max_offers: 1,
+                }).unwrap();
+                const issue = getPlanCapacityIssue(plan, text);
+                if (issue) {
+                    setCapacityIssue(issue);
+                    pushNotification({
+                        type: 'error',
+                        header: text('当前配置暂无可启动容量', 'No launch capacity for this configuration'),
+                        content: issue.message ?? getCapacityAdviceText(text),
+                    });
+                    return;
+                }
+                const result = await applyRun({
+                    project_name: values.project_name,
+                    force: true,
+                    plan: {
+                        run_spec: runSpec,
                     },
-                },
-            }).unwrap();
-            navigate(routes.runDetails(result.project_name, result.id));
+                }).unwrap();
+                navigate(routes.runDetails(result.project_name, result.id));
+            } catch (error) {
+                const message =
+                    getApiErrorMessage(error) ??
+                    text('请稍后重试，或调整资源配置后再次提交。', 'Retry later or adjust the resource configuration.');
+                setCapacityIssue({ message });
+                pushNotification({
+                    type: 'error',
+                    header: text('创建失败', 'Failed to create'),
+                    content: message,
+                });
+            }
             return;
         }
-        const result = await createRunRequest(createParams).unwrap();
-        navigate(routes.requestDetails(result.project_name, result.id));
+        try {
+            const result = await createRunRequest(createParams).unwrap();
+            navigate(routes.requestDetails(result.project_name, result.id));
+        } catch (error) {
+            pushNotification({
+                type: 'error',
+                header: text('提交失败', 'Failed to submit'),
+                content: getApiErrorMessage(error) ?? text('请稍后重试。', 'Retry later.'),
+            });
+        }
     };
     const selectedProjectCanDirectCreate = values.project_name ? canManageConsoleProject(role, values.project_name) : false;
     const kindLabel = getRunKindLabel(kind, text);
@@ -1185,6 +1422,7 @@ export const RunRequestCreatePage: React.FC<{ kind?: TRunPageKind }> = ({ kind =
                 {Object.keys(formErrors).length > 0 && (
                     <RequiredFormNotice>{text('请补全必填信息', 'Complete the required fields')}</RequiredFormNotice>
                 )}
+                <CapacityIssueNotice issue={capacityIssue} />
                 <Panel title={text('基础信息', 'Basic information')}>
                     <div className="grid gap-4 md:grid-cols-2">
                         <Field label={text('项目', 'Project')} error={formErrors.project_name} required>
@@ -1526,7 +1764,7 @@ export const RunRequestCreatePage: React.FC<{ kind?: TRunPageKind }> = ({ kind =
                             value={values.cpu}
                             max={resourceLimits.cpu}
                             unit={locale === 'zh' ? '核心' : 'cores'}
-                            maxLabel={text('可用上限', 'Available max')}
+                            maxLabel={text('规格上限', 'Resource limit')}
                             onChange={(value) => updateResource('cpu', value)}
                         />
                         <ResourceSliderField
@@ -1536,7 +1774,7 @@ export const RunRequestCreatePage: React.FC<{ kind?: TRunPageKind }> = ({ kind =
                             value={values.memory}
                             max={resourceLimits.memory}
                             unit="GiB"
-                            maxLabel={text('可用上限', 'Available max')}
+                            maxLabel={text('规格上限', 'Resource limit')}
                             onChange={(value) => updateResource('memory', value)}
                         />
                         <ResourceSliderField
@@ -1546,7 +1784,7 @@ export const RunRequestCreatePage: React.FC<{ kind?: TRunPageKind }> = ({ kind =
                             value={values.gpu}
                             max={resourceLimits.gpu}
                             unit={locale === 'zh' ? '张' : 'GPU'}
-                            maxLabel={text('可用上限', 'Available max')}
+                            maxLabel={text('规格上限', 'Resource limit')}
                             onChange={(value) => updateResource('gpu', value)}
                         />
                         <ResourceSliderField
@@ -1570,7 +1808,7 @@ export const RunRequestCreatePage: React.FC<{ kind?: TRunPageKind }> = ({ kind =
                         className="w-full sm:w-auto"
                         type="submit"
                         variant="primary"
-                        loading={createState.isLoading || applyState.isLoading}
+                        loading={createState.isLoading || applyState.isLoading || getRunPlanState.isLoading}
                     >
                         {selectedProjectCanDirectCreate ? createButtonLabel : text('提交审批', 'Submit for approval')}
                     </Button>
@@ -1585,8 +1823,14 @@ export const RunRequestDetailsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind 
     const navigate = useNavigate();
     const { role } = useConsoleContext();
     const { emptyTitle, locale, text } = useLocaleText();
-    const request = useGetRunRequestQuery({ project_name: projectName, id: requestId });
-    const run = useGetRunQuery({ project_name: projectName, id: request.data?.run_id ?? '' }, { skip: !request.data?.run_id });
+    const request = useGetRunRequestQuery(
+        { project_name: projectName, id: requestId },
+        { pollingInterval: 5000, refetchOnMountOrArgChange: true },
+    );
+    const run = useGetRunQuery(
+        { project_name: projectName, id: request.data?.run_id ?? '' },
+        { skip: !request.data?.run_id, pollingInterval: 5000, refetchOnMountOrArgChange: true },
+    );
     const requestKind: TRunPageKind =
         request.data?.request.run_type === 'dev-environment' ? 'dev-environments' : kind;
     const routes = getRunKindRoutes(requestKind);
@@ -1609,6 +1853,8 @@ export const RunRequestDetailsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind 
     const [rejectOpen, setRejectOpen] = useState(false);
     const [reason, setReason] = useState('');
     const canReview = request.data && canManageConsoleProject(role, request.data.project_name);
+    const capacityIssue = getRunCapacityIssue(run.data);
+    const currentStatus = getCurrentRunRequestStatus(request.data, run.data);
 
     const approveRequest = async () => {
         const result = await approve({ project_name: projectName, id: requestId }).unwrap();
@@ -1723,8 +1969,10 @@ export const RunRequestDetailsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind 
                     <Panel title={text('状态', 'Status')}>
                         <div className="grid gap-4 text-sm">
                             <div className="flex items-center justify-between">
-                                <span className="text-slate-500 dark:text-slate-400">{text('状态', 'Status')}</span>
-                                <RequestStatus status={request.data.status} />
+                                <span className="text-slate-500 dark:text-slate-400">
+                                    {text('当前状态', 'Current status')}
+                                </span>
+                                <RequestStatus status={currentStatus} />
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-slate-500 dark:text-slate-400">{text('资源', 'Resources')}</span>
@@ -1758,11 +2006,11 @@ export const RunRequestDetailsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind 
                                         </div>
                                     )}
                                     {submission && (
-                                        <div className="flex justify-between">
+                                        <div className="flex items-start justify-between gap-4">
                                             <span className="text-slate-500 dark:text-slate-400">
                                                 {text('提交状态', 'Submission')}
                                             </span>
-                                            <RequestStatus status={submission.status} />
+                                            <JobSubmissionStatus submission={submission} />
                                         </div>
                                     )}
                                 </>
@@ -1784,6 +2032,7 @@ export const RunRequestDetailsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind 
                                     {request.data.review_message ?? '-'}
                                 </div>
                             )}
+                            <CapacityIssueNotice issue={capacityIssue} />
                         </div>
                     </Panel>
                 )}
@@ -1810,11 +2059,7 @@ export const RunRequestDetailsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind 
                                 {
                                     id: 'status',
                                     header: text('状态', 'Status'),
-                                    cell: (item) => (
-                                        <RequestStatus
-                                            status={item.job_submissions?.[item.job_submissions.length - 1]?.status}
-                                        />
-                                    ),
+                                    cell: (item) => <JobSubmissionStatus submission={getLatestJobSubmission(item)} />,
                                 },
                                 {
                                     id: 'commands',
@@ -1867,8 +2112,14 @@ export const RunsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind = 'runs' }) =
     const { role } = useConsoleContext();
     const { emptyTitle, text } = useLocaleText();
     const [query, setQuery] = useState('');
-    const runs = useGetRunsQuery({ limit: 500, job_submissions_limit: 1 });
-    const requests = useGetAllRunRequestsQuery({ include_all: role.canUseProjectAdmin, limit: 500 });
+    const runs = useGetRunsQuery(
+        { limit: 100, job_submissions_limit: 1 },
+        { pollingInterval: 5000, refetchOnMountOrArgChange: true },
+    );
+    const requests = useGetAllRunRequestsQuery(
+        { include_all: role.canUseProjectAdmin, limit: 100 },
+        { pollingInterval: 5000, refetchOnMountOrArgChange: true },
+    );
     const routes = getRunKindRoutes(kind);
     const isDevEnvironment = isDevEnvironmentKind(kind);
     const runItems = useMemo(
@@ -1882,8 +2133,7 @@ export const RunsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind = 'runs' }) =
         (item) => item.name,
         (item) => item.project_name,
         (item) => item.applicant,
-        (item) => item.request_status,
-        (item) => item.run_status,
+        (item) => getCurrentRunItemStatus(item),
     ]);
 
     return (
@@ -1955,14 +2205,9 @@ export const RunsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind = 'runs' }) =
                         { id: 'user', header: text('提交人', 'Applicant'), cell: (item) => item.applicant },
                         { id: 'resources', header: text('资源', 'Resources'), cell: (item) => item.resources },
                         {
-                            id: 'approval',
-                            header: text('审批', 'Approval'),
-                            cell: (item) => <RequestStatus status={item.request_status} />,
-                        },
-                        {
-                            id: 'runtime',
-                            header: text('运行', 'Runtime'),
-                            cell: (item) => <RequestStatus status={item.run_status} />,
+                            id: 'currentStatus',
+                            header: text('当前状态', 'Current status'),
+                            cell: (item) => <RequestStatus status={getCurrentRunItemStatus(item)} />,
                         },
                         {
                             id: 'url',
@@ -2025,6 +2270,8 @@ export const RunDetailsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind = 'runs
 
     const runName = data?.run_spec.run_name ?? runId;
     const canOperate = role.canUseGlobalAdmin || canManageConsoleProject(role, projectName);
+    const capacityIssue = getRunCapacityIssue(data);
+    const executionIssue = capacityIssue ? null : getRunExecutionIssue(data);
     const stop = () =>
         confirm({
             title: isDevEnvironment ? text('停止开发环境', 'Stop development') : text('停止运行任务', 'Stop run'),
@@ -2068,6 +2315,8 @@ export const RunDetailsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind = 'runs
                 }
             />
             <div className="grid gap-6">
+                <CapacityIssueNotice issue={capacityIssue} />
+                <ExecutionIssueNotice issue={executionIssue} />
                 <Panel title={text('概览', 'Overview')}>
                     {data ? (
                         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -2094,11 +2343,7 @@ export const RunDetailsPage: React.FC<{ kind?: TRunPageKind }> = ({ kind = 'runs
                                 {
                                     id: 'status',
                                     header: text('状态', 'Status'),
-                                    cell: (item) => (
-                                        <RequestStatus
-                                            status={item.job_submissions?.[item.job_submissions.length - 1]?.status}
-                                        />
-                                    ),
+                                    cell: (item) => <JobSubmissionStatus submission={getLatestJobSubmission(item)} />,
                                 },
                                 {
                                     id: 'commands',

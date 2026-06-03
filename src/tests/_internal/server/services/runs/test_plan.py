@@ -4,10 +4,12 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from dstack._internal.core.models.backends.base import BackendType
 from dstack._internal.core.models.configurations import TaskConfiguration
 from dstack._internal.core.models.fleets import FleetNodesSpec, InstanceGroupPlacement
 from dstack._internal.core.models.instances import InstanceAvailability
 from dstack._internal.core.models.profiles import Profile
+from dstack._internal.core.models.resources import CPUSpec, GPUSpec, Memory, Range, ResourcesSpec
 from dstack._internal.server.models import (
     ProjectResourceInstanceAssignmentModel,
     ProjectResourcePoolAssignmentModel,
@@ -17,9 +19,12 @@ from dstack._internal.server.services.runs.plan import (
     _freeze_offer_identity_value,
     _get_backend_offer_identity,
     _get_backend_offers_in_fleet,
+    get_instance_offers_in_fleet,
+    get_job_plans,
     get_run_candidate_fleet_models_filters,
     select_run_candidate_fleet_models_with_filters,
 )
+from dstack._internal.server.services.runs.spec import validate_run_spec_and_set_defaults
 from dstack._internal.server.testing.common import (
     create_fleet,
     create_instance,
@@ -205,6 +210,182 @@ class TestRunCandidateResourcePoolAuthorization:
             first_instance.id,
             second_instance.id,
         }
+
+    @pytest.mark.asyncio
+    async def test_registered_worker_offer_matches_authorized_global_pool(
+        self, session: AsyncSession
+    ) -> None:
+        user = await create_user(session=session)
+        project = await create_project(session=session, name="test", owner=user)
+        pool = await create_fleet(
+            session=session,
+            project=None,
+            name="test",
+            assign_to_project=False,
+        )
+        offer = get_instance_offer_with_availability(
+            backend=BackendType.REGISTERED,
+            cpu_count=16,
+            memory_gib=30,
+            gpu_count=1,
+            gpu_name="RTX4060LaptopGPU",
+            gpu_memory_gib=8,
+        )
+        await create_instance(
+            session=session,
+            project=None,
+            fleet=pool,
+            backend=BackendType.REGISTERED,
+            offer=offer,
+            job_provisioning_data=get_job_provisioning_data(
+                dockerized=True,
+                backend=BackendType.REGISTERED,
+                instance_type=offer.instance,
+            ),
+            total_blocks=1,
+            name="registered-worker",
+        )
+        session.add(ProjectResourcePoolAssignmentModel(project=project, fleet=pool, whole_pool=True))
+        await session.commit()
+        run_spec = get_run_spec(
+            repo_id="repo",
+            configuration=TaskConfiguration(
+                commands=["python --version"],
+                image="python:3.11-slim",
+            ),
+        )
+        validate_run_spec_and_set_defaults(user=user, run_spec=run_spec)
+        jobs = await get_jobs_from_run_spec(run_spec=run_spec, secrets={}, replica_num=0)
+
+        offers = get_instance_offers_in_fleet(
+            fleet_model=pool,
+            run_spec=run_spec,
+            job=jobs[0],
+        )
+
+        assert len(offers) == 1
+        assert offers[0][1].backend == BackendType.REGISTERED
+        assert offers[0][1].availability == InstanceAvailability.IDLE
+
+    @pytest.mark.asyncio
+    async def test_registered_worker_offer_matches_when_fleet_is_selected(
+        self, session: AsyncSession
+    ) -> None:
+        user = await create_user(session=session)
+        project = await create_project(session=session, name="test", owner=user)
+        pool = await create_fleet(
+            session=session,
+            project=None,
+            name="test",
+            assign_to_project=False,
+        )
+        offer = get_instance_offer_with_availability(
+            backend=BackendType.REGISTERED,
+            cpu_count=16,
+            memory_gib=30,
+            gpu_count=1,
+            gpu_name="RTX4060LaptopGPU",
+            gpu_memory_gib=8,
+        )
+        await create_instance(
+            session=session,
+            project=None,
+            fleet=pool,
+            backend=BackendType.REGISTERED,
+            offer=offer,
+            job_provisioning_data=get_job_provisioning_data(
+                dockerized=True,
+                backend=BackendType.REGISTERED,
+                instance_type=offer.instance,
+            ),
+            total_blocks=1,
+            name="registered-worker",
+        )
+        session.add(ProjectResourcePoolAssignmentModel(project=project, fleet=pool, whole_pool=True))
+        await session.commit()
+        run_spec = get_run_spec(
+            repo_id="repo",
+            profile=Profile(fleets=["test"]),
+            configuration=TaskConfiguration(
+                commands=["python --version"],
+                image="python:3.11-slim",
+                fleets=["test"],
+            ),
+        )
+        validate_run_spec_and_set_defaults(user=user, run_spec=run_spec)
+        jobs = await get_jobs_from_run_spec(run_spec=run_spec, secrets={}, replica_num=0)
+
+        offers = get_instance_offers_in_fleet(
+            fleet_model=pool,
+            run_spec=run_spec,
+            job=jobs[0],
+        )
+
+        assert len(offers) == 1
+        assert offers[0][1].backend == BackendType.REGISTERED
+        assert offers[0][1].availability == InstanceAvailability.IDLE
+
+    @pytest.mark.asyncio
+    async def test_job_plan_reports_capacity_issue_without_auth_hint_for_authorized_pool(
+        self, session: AsyncSession
+    ) -> None:
+        user = await create_user(session=session)
+        project = await create_project(session=session, name="test", owner=user)
+        pool = await create_fleet(
+            session=session,
+            project=None,
+            name="test",
+            assign_to_project=False,
+        )
+        offer = get_instance_offer_with_availability(
+            backend=BackendType.REGISTERED,
+            cpu_count=16,
+            memory_gib=30,
+        )
+        await create_instance(
+            session=session,
+            project=None,
+            fleet=pool,
+            backend=BackendType.REGISTERED,
+            offer=offer,
+            job_provisioning_data=get_job_provisioning_data(
+                dockerized=True,
+                backend=BackendType.REGISTERED,
+                instance_type=offer.instance,
+            ),
+            total_blocks=1,
+            name="registered-worker",
+        )
+        session.add(ProjectResourcePoolAssignmentModel(project=project, fleet=pool, whole_pool=True))
+        await session.commit()
+        run_spec = get_run_spec(
+            repo_id="repo",
+            configuration=TaskConfiguration(
+                commands=["python --version"],
+                image="python:3.11-slim",
+                resources=ResourcesSpec(
+                    cpu=CPUSpec(count=Range[int](min=64, max=None)),
+                    memory=Range[Memory](min=Memory.parse("8GB"), max=None),
+                    gpu=GPUSpec(count=Range[int](min=0, max=None)),
+                ),
+            ),
+        )
+        validate_run_spec_and_set_defaults(user=user, run_spec=run_spec)
+
+        job_plans = await get_job_plans(
+            session=session,
+            project=project,
+            profile=run_spec.merged_profile,
+            run_spec=run_spec,
+            max_offers=1,
+        )
+
+        assert job_plans[0].total_offers == 0
+        assert job_plans[0].offers == []
+        assert job_plans[0].capacity_issue is not None
+        assert job_plans[0].capacity_issue.code in ["no_matching_instance", "no_launchable_offer"]
+        assert "授权" not in job_plans[0].capacity_issue.message
+        assert "authorized" not in job_plans[0].capacity_issue.message.lower()
 
     @pytest.mark.asyncio
     async def test_instance_assignment_limits_pool_instances(self, session: AsyncSession) -> None:

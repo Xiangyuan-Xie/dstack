@@ -14,12 +14,65 @@ from dstack._internal.server.background.pipeline_tasks.instances import Instance
 from dstack._internal.server.background.pipeline_tasks.instances import (
     termination as instances_termination,
 )
-from dstack._internal.server.testing.common import create_instance, create_project
+from dstack._internal.server.models import InstanceModel
+from dstack._internal.server.testing.common import (
+    create_instance,
+    create_project,
+    get_instance_offer_with_availability,
+    get_job_provisioning_data,
+)
 from tests._internal.server.background.pipeline_tasks.test_instances.helpers import (
     instance_to_pipeline_item,
     lock_instance,
     process_instance,
 )
+
+
+@pytest.mark.asyncio
+async def test_terminate_registered_global_instance_does_not_use_project_backend():
+    now = dt.datetime.now(dt.timezone.utc)
+    job_provisioning_data = get_job_provisioning_data(
+        dockerized=True,
+        backend=BackendType.REGISTERED,
+        region="registered",
+        hostname="registered-worker",
+        internal_ip=None,
+    )
+    instance = InstanceModel(
+        name="registered-worker",
+        instance_num=0,
+        project=None,
+        status=InstanceStatus.TERMINATING,
+        unreachable=False,
+        created_at=now,
+        started_at=now,
+        backend=BackendType.REGISTERED,
+        price=0,
+        region="registered",
+        offer=get_instance_offer_with_availability(
+            backend=BackendType.REGISTERED,
+            region="registered",
+        ).json(),
+        job_provisioning_data=job_provisioning_data.json(),
+        termination_reason=InstanceTerminationReason.IDLE_TIMEOUT,
+        volume_attachments=[],
+        total_blocks=1,
+        busy_blocks=0,
+        deleted=False,
+    )
+
+    with patch.object(
+        instances_termination.backends_services,
+        "get_project_backend_by_type",
+        AsyncMock(side_effect=AssertionError("registered instances do not use backends")),
+    ) as backend_lookup_mock:
+        result = await instances_termination.terminate_instance(instance)
+        backend_lookup_mock.assert_not_called()
+
+    assert result.instance_update_map["status"] == InstanceStatus.TERMINATED
+    assert result.instance_update_map["deleted"] is True
+    assert result.instance_update_map["deleted_at"] is not None
+    assert result.instance_update_map["finished_at"] is not None
 
 
 @pytest.mark.asyncio

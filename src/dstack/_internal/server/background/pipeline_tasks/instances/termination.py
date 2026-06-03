@@ -27,7 +27,10 @@ async def terminate_instance(instance_model: InstanceModel) -> ProcessResult:
         return result
 
     job_provisioning_data = get_instance_provisioning_data(instance_model)
-    if job_provisioning_data is not None and job_provisioning_data.backend != BackendType.REMOTE:
+    if job_provisioning_data is not None and job_provisioning_data.backend not in {
+        BackendType.REGISTERED,
+        BackendType.REMOTE,
+    }:
         backend = await backends_services.get_project_backend_by_type(
             project=instance_model.project,
             backend_type=job_provisioning_data.backend,

@@ -268,6 +268,8 @@ describe('Console utils', () => {
     test('formats status labels without exposing internal codes', () => {
         expect(formatStatusLabel('running', 'zh')).toBe('运行中');
         expect(formatStatusLabel('running', 'en')).toBe('Running');
+        expect(formatStatusLabel('pending_approval', 'zh')).toBe('待审批');
+        expect(formatStatusLabel('pending_approval', 'en')).toBe('Pending approval');
         expect(formatStatusLabel('approved', 'zh')).toBe('已通过');
         expect(formatStatusLabel('idle', 'zh')).toBe('闲置');
         expect(formatStatusLabel('unknown_status', 'en')).toBe('Unknown Status');
@@ -403,6 +405,29 @@ describe('Console utils', () => {
                 fleets: ['gpu-a', 'gpu-b'],
             },
         });
+    });
+
+    test('omits zero resource values from the approval API shape', () => {
+        const params = buildRunRequestCreateParams({
+            project_name: 'research',
+            run_type: 'task',
+            name: '',
+            image: 'ubuntu:22.04',
+            commands: 'echo hello',
+            entrypoint: '',
+            working_dir: '',
+            env: [],
+            ports: [],
+            persistent_dirs: [],
+            privileged: false,
+            cpu: '0',
+            memory: '0GB',
+            gpu: '0',
+            max_duration: '4h',
+            fleets: '',
+        });
+
+        expect(params.request.resources).toBeUndefined();
     });
 
     test('summarizes request statuses for dashboards', () => {

@@ -337,10 +337,12 @@ async def stop_runner(job_model: JobModel, instance_model: InstanceModel):
     Stops the runner using a preloaded instance model.
     `instance_model.project` must be loaded because SSH key resolution uses the project keys.
     """
-    ssh_private_keys = get_instance_ssh_private_keys(instance_model)
     try:
         jpd = get_job_provisioning_data(job_model)
+        if jpd is not None and jpd.backend == BackendType.REGISTERED:
+            return
         if jpd is not None:
+            ssh_private_keys = get_instance_ssh_private_keys(instance_model)
             jrd = get_job_runtime_data(job_model)
             await run_async(_stop_runner, ssh_private_keys, jpd, jrd, job_model)
     except SSHError:

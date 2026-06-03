@@ -37,6 +37,7 @@ from dstack._internal.core.models.profiles import (
     Profile,
     TerminationPolicy,
 )
+from dstack._internal.core.models.resources import GPUSpec
 from dstack._internal.core.models.runs import JobProvisioningData, Requirements
 from dstack._internal.core.models.volumes import Volume
 from dstack._internal.core.services.profiles import get_termination
@@ -421,10 +422,48 @@ def instance_matches_constraints(
         if instance.offer is None:
             return False
         offer = InstanceOffer.__response__.parse_raw(instance.offer)
-        catalog_item = offer_to_catalog_item(offer)
-        if not gpuhunt.matches(catalog_item, q=requirements_to_query_filter(requirements)):
+        if not _offer_matches_instance_reuse_requirements(offer, requirements):
             return False
 
+    return True
+
+
+def _offer_matches_instance_reuse_requirements(
+    offer: InstanceOffer,
+    requirements: Requirements,
+) -> bool:
+    if offer.backend != BackendType.REGISTERED:
+        catalog_item = offer_to_catalog_item(offer)
+        return gpuhunt.matches(catalog_item, q=requirements_to_query_filter(requirements))
+
+    query_filter = requirements_to_query_filter(requirements)
+    catalog_item = offer_to_catalog_item(offer)
+    if requirements.resources.cpu is not None:
+        query_filter.max_cpu = None
+    if requirements.resources.memory is not None:
+        query_filter.max_memory = None
+    if requirements.resources.disk is not None:
+        query_filter.max_disk_size = None
+    if requirements.resources.gpu is not None:
+        query_filter.max_gpu_count = None
+        query_filter.max_gpu_memory = None
+        query_filter.max_total_gpu_memory = None
+    return gpuhunt.matches(catalog_item, q=query_filter) and _offer_can_fit_gpu_request(
+        offer, requirements
+    )
+
+
+def _offer_can_fit_gpu_request(offer: InstanceOffer, requirements: Requirements) -> bool:
+    gpu_spec = requirements.resources.gpu
+    if gpu_spec is None:
+        return True
+    gpu_spec = GPUSpec.parse_obj(gpu_spec)
+    if gpu_spec.count.max is not None and len(offer.instance.resources.gpus) < gpu_spec.count.max:
+        return False
+    if gpu_spec.total_memory and gpu_spec.total_memory.max is not None:
+        total_gpu_memory_gib = sum(gpu.memory_mib for gpu in offer.instance.resources.gpus) / 1024
+        if total_gpu_memory_gib < gpu_spec.total_memory.max:
+            return False
     return True
 
 
