@@ -11,7 +11,8 @@ from sqlalchemy.orm import aliased, contains_eager, joinedload, load_only
 import dstack._internal.server.background.pipeline_tasks.runs.active as active
 import dstack._internal.server.background.pipeline_tasks.runs.pending as pending
 import dstack._internal.server.background.pipeline_tasks.runs.terminating as terminating
-from dstack._internal.core.models.runs import JobStatus, RunStatus
+from dstack._internal.core.models.runs import JobStatus, RunSpec, RunStatus
+from dstack._internal.proxy.gateway.schemas.stats import PerWindowStats
 from dstack._internal.server.background.pipeline_tasks.base import (
     Fetcher,
     Heartbeater,
@@ -50,6 +51,25 @@ RUN_STATUSES_WITH_MIN_PROCESSING_INTERVAL = [RunStatus.SUBMITTED, RunStatus.TERM
 @dataclass
 class RunPipelineItem(PipelineItem):
     status: RunStatus
+
+
+@dataclass
+class _GatewayStatsFetchRequest:
+    gateway_id: uuid.UUID
+    project_name: str
+    run_name: str
+
+
+@dataclass
+class _PendingLoadResult:
+    context: pending.PendingContext
+    gateway_stats_request: Optional[_GatewayStatsFetchRequest]
+
+
+@dataclass
+class _ActiveLoadResult:
+    context: active.ActiveContext
+    gateway_stats_request: Optional[_GatewayStatsFetchRequest]
 
 
 class RunPipeline(Pipeline[RunPipelineItem]):
@@ -276,9 +296,11 @@ class RunWorker(Worker[RunPipelineItem]):
 
 async def _process_pending_item(item: RunPipelineItem) -> None:
     async with get_session_ctx() as session:
-        context = await _load_pending_context(session=session, item=item)
-        if context is None:
+        load_result = await _load_pending_context(session=session, item=item)
+        if load_result is None:
             return
+    context = load_result.context
+    context.gateway_stats = await _fetch_gateway_stats(load_result.gateway_stats_request)
 
     result = await pending.process_pending_run(context)
     if result is None:
@@ -294,7 +316,7 @@ async def _process_pending_item(item: RunPipelineItem) -> None:
 async def _load_pending_context(
     session: AsyncSession,
     item: RunPipelineItem,
-) -> Optional[pending.PendingContext]:
+) -> Optional[_PendingLoadResult]:
     locked_job_ids = await _lock_related_jobs(session=session, item=item)
     if locked_job_ids is None:
         return None
@@ -311,17 +333,14 @@ async def _load_pending_context(
     secrets = await get_project_secrets_mapping(session=session, project=run_model.project)
     run_spec = get_run_spec(run_model)
 
-    gateway_stats = None
-    if run_spec.configuration.type == "service" and run_model.gateway_id is not None:
-        _, conn = await get_or_add_gateway_connection(session, run_model.gateway_id)
-        gateway_stats = await conn.get_stats(run_model.project.name, run_model.run_name)
-
-    return pending.PendingContext(
-        run_model=run_model,
-        run_spec=run_spec,
-        secrets=secrets,
-        locked_job_ids=locked_job_ids,
-        gateway_stats=gateway_stats,
+    return _PendingLoadResult(
+        context=pending.PendingContext(
+            run_model=run_model,
+            run_spec=run_spec,
+            secrets=secrets,
+            locked_job_ids=locked_job_ids,
+        ),
+        gateway_stats_request=_build_gateway_stats_fetch_request(run_model, run_spec),
     )
 
 
@@ -463,7 +482,8 @@ async def _process_active_item(item: RunPipelineItem) -> None:
         load_result = await _load_active_context(session=session, item=item)
         if load_result is None:
             return
-        context = load_result
+    context = load_result.context
+    context.gateway_stats = await _fetch_gateway_stats(load_result.gateway_stats_request)
 
     result = await active.process_active_run(context)
     await _apply_active_result(item=item, context=context, result=result)
@@ -472,7 +492,7 @@ async def _process_active_item(item: RunPipelineItem) -> None:
 async def _load_active_context(
     session: AsyncSession,
     item: RunPipelineItem,
-) -> Optional[active.ActiveContext]:
+) -> Optional[_ActiveLoadResult]:
     """Returns None on lock mismatch (already handled).
     Returns context when processing should proceed.
     """
@@ -492,18 +512,48 @@ async def _load_active_context(
     secrets = await get_project_secrets_mapping(session=session, project=run_model.project)
     run_spec = get_run_spec(run_model)
 
-    gateway_stats = None
-    if run_spec.configuration.type == "service" and run_model.gateway_id is not None:
-        _, conn = await get_or_add_gateway_connection(session, run_model.gateway_id)
-        gateway_stats = await conn.get_stats(run_model.project.name, run_model.run_name)
-
-    return active.ActiveContext(
-        run_model=run_model,
-        run_spec=run_spec,
-        secrets=secrets,
-        locked_job_ids=locked_job_ids,
-        gateway_stats=gateway_stats,
+    return _ActiveLoadResult(
+        context=active.ActiveContext(
+            run_model=run_model,
+            run_spec=run_spec,
+            secrets=secrets,
+            locked_job_ids=locked_job_ids,
+        ),
+        gateway_stats_request=_build_gateway_stats_fetch_request(run_model, run_spec),
     )
+
+
+def _build_gateway_stats_fetch_request(
+    run_model: RunModel,
+    run_spec: RunSpec,
+) -> Optional[_GatewayStatsFetchRequest]:
+    if run_spec.configuration.type != "service" or run_model.gateway_id is None:
+        return None
+    return _GatewayStatsFetchRequest(
+        gateway_id=run_model.gateway_id,
+        project_name=run_model.project.name,
+        run_name=run_model.run_name,
+    )
+
+
+async def _fetch_gateway_stats(
+    request: Optional[_GatewayStatsFetchRequest],
+) -> Optional[PerWindowStats]:
+    if request is None:
+        return None
+    try:
+        async with get_session_ctx() as session:
+            _, conn = await get_or_add_gateway_connection(session, request.gateway_id)
+        return await conn.get_stats(request.project_name, request.run_name)
+    except Exception:
+        logger.warning(
+            "Failed to fetch gateway stats for service %s/%s via gateway %s",
+            request.project_name,
+            request.run_name,
+            request.gateway_id,
+            exc_info=True,
+        )
+        return None
 
 
 async def _refetch_locked_run_for_active(

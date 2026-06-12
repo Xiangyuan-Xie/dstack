@@ -1,15 +1,21 @@
 from contextlib import asynccontextmanager
+import json
+import os
 from itertools import chain
 from pathlib import Path
+import time
 from typing import Optional
 
 from aiorwlock import RWLock
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from dstack._internal.proxy.gateway.models import GlobalProxyConfig, ModelEntrypoint
 from dstack._internal.proxy.lib.models import ChatModel, Project, Service
 from dstack._internal.proxy.lib.repo import BaseProxyRepo
 from dstack._internal.utils.common import run_async
+from dstack._internal.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class State(BaseModel):
@@ -119,11 +125,52 @@ class GatewayProxyRepo(BaseProxyRepo):
     @staticmethod
     def load(state_file: Path) -> "GatewayProxyRepo":
         if state_file.exists():
-            state = State.parse_file(state_file)
+            try:
+                state = State.parse_file(state_file)
+            except (json.JSONDecodeError, ValidationError, ValueError) as e:
+                corrupt_file = _move_corrupt_state_file(state_file)
+                logger.error(
+                    "Gateway state file %s is corrupt and was moved to %s: %s",
+                    state_file,
+                    corrupt_file,
+                    e,
+                )
+                state = None
         else:
             state = None
         return GatewayProxyRepo(state=state, file=state_file)
 
     def save(self) -> None:
         if self._file is not None:
-            self._file.write_text(self._state.json())
+            _atomic_write_text(self._file, self._state.json())
+
+
+def _move_corrupt_state_file(state_file: Path) -> Path:
+    corrupt_file = state_file.with_name(f"{state_file.name}.corrupt.{time.time_ns()}")
+    os.replace(state_file, corrupt_file)
+    return corrupt_file
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    try:
+        with tmp_path.open("w") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+        _fsync_parent_dir(path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _fsync_parent_dir(path: Path) -> None:
+    if os.name == "nt":
+        return
+    fd = os.open(path.parent, os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)

@@ -59,3 +59,9 @@ All communication between the `dstack` server and `dstack-runner` happens via HT
 `dstack` expects a running SSH server right next to the `dstack-runner`. It provides a secure channel for communication with the runner API and forwarding any ports without listening for `0.0.0.0`. The `dstack-gateway` also uses this SSH server for forwarding requests from public endpoints.
 
 `dstack-shim` must also be running next to the SSH server. The `dstack` server connects to this SSH server for interacting with both `dstack-shim` and `dstack-runner`. The CLI uses this SSH server as a jump host because the user wants to connect to the container.
+
+The runner and shim HTTP APIs assume this SSH tunnel and the instance/container network isolation
+are the security boundary. Do not expose their listening ports directly on a public or shared
+network. In bridge mode, the shim records host port mappings for the server to reach the runner;
+changing bind defaults can break those mappings and should be tested against host and bridge
+network modes.

@@ -3,6 +3,8 @@ import type { ConfigFile } from '@rtk-query/codegen-openapi';
 
 import type { OperationDefinition } from '@rtk-query/codegen-openapi/src/types';
 
+// This config is retained as a reference only. The runtime frontend uses the handwritten
+// RTK Query services in `src/services`, and `npm run generate-api` is intentionally disabled.
 const filterEndpoint =
     (tags: string[]) =>
     (_, { operation }: OperationDefinition) => {

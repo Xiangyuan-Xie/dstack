@@ -40,7 +40,7 @@ from dstack._internal.core.models.runs import (
 )
 from dstack._internal.core.models.users import GlobalRole, ProjectRole
 from dstack._internal.core.services.diff import format_diff_fields_for_event
-from dstack._internal.server.db import get_db, is_db_postgres, is_db_sqlite
+from dstack._internal.server.db import get_db, get_session_ctx, is_db_postgres, is_db_sqlite
 from dstack._internal.server.models import (
     FleetModel,
     JobModel,
@@ -564,14 +564,13 @@ async def submit_run(
         )
     lock, _ = get_locker(get_db().dialect_name).get_lockset(lock_namespace)
     async with lock:
-        # FIXME: delete_runs commits, so Postgres lock is released too early.
         if run_spec.run_name is None:
             run_spec.run_name = await _generate_run_name(
                 session=session,
                 project=project,
             )
         else:
-            await delete_runs(
+            await _delete_runs_no_commit(
                 session=session, user=user, project=project, runs_names=[run_spec.run_name]
             )
 
@@ -613,9 +612,11 @@ async def submit_run(
             targets=[events.Target.from_model(run_model)],
         )
 
+        gateway_service_registration = None
         if run_spec.configuration.type == "service":
-            # FIXME: Register services asynchronously in the background
-            await services.register_service(session, run_model, run_spec)
+            gateway_service_registration = await services.prepare_service_registration(
+                session, run_model, run_spec
+            )
             service_config = run_spec.configuration
 
             global_replica_num = 0  # Global counter across all groups for unique replica_num
@@ -682,10 +683,56 @@ async def submit_run(
         if pipeline_hinter is not None:
             pipeline_hinter.hint_fetch(JobModel.__name__)
             pipeline_hinter.hint_fetch(RunModel.__name__)
+        if gateway_service_registration is not None:
+            try:
+                await services.register_service_in_gateway(gateway_service_registration)
+            except Exception:
+                logger.warning(
+                    "Failed to register service %s/%s in gateway",
+                    project.name,
+                    run_model.run_name,
+                    exc_info=True,
+                )
+                await _mark_run_gateway_registration_failed(
+                    run_id=run_model.id,
+                    pipeline_hinter=pipeline_hinter,
+                )
         await session.refresh(run_model)
 
         run = await get_run_by_id(session, project, run_model.id)
         return common_utils.get_or_error(run)
+
+
+async def _mark_run_gateway_registration_failed(
+    run_id: uuid.UUID,
+    pipeline_hinter: Optional[PipelineHinterProtocol],
+) -> None:
+    async with get_session_ctx() as session:
+        run_model = await _lock_run_for_gateway_registration_failure(session, run_id)
+        if run_model is not None and not run_model.status.is_finished():
+            run_model.termination_reason = RunTerminationReason.GATEWAY_ERROR
+            switch_run_status(session, run_model, RunStatus.TERMINATING)
+            # Invalidate any in-flight RunPipeline item so its guarded apply cannot overwrite
+            # this post-commit registration failure.
+            run_model.lock_expires_at = None
+            run_model.lock_token = None
+            run_model.lock_owner = None
+            run_model.skip_min_processing_interval = True
+    if pipeline_hinter is not None:
+        pipeline_hinter.hint_fetch(RunModel.__name__)
+
+
+async def _lock_run_for_gateway_registration_failure(
+    session: AsyncSession,
+    run_id: uuid.UUID,
+) -> Optional[RunModel]:
+    res = await session.execute(
+        select(RunModel)
+        .where(RunModel.id == run_id)
+        .with_for_update(key_share=True)
+        .execution_options(populate_existing=True)
+    )
+    return res.scalar_one_or_none()
 
 
 def create_job_model_for_new_submission(
@@ -770,6 +817,26 @@ async def delete_runs(
     project: ProjectModel,
     runs_names: List[str],
 ):
+    await _delete_runs_no_commit(
+        session=session,
+        user=user,
+        project=project,
+        runs_names=runs_names,
+        commit_before_lock=True,
+        commit_after_lock=True,
+    )
+
+
+async def _delete_runs_no_commit(
+    session: AsyncSession,
+    user: UserModel,
+    project: ProjectModel,
+    runs_names: List[str],
+    commit_before_lock: bool = False,
+    commit_after_lock: bool = False,
+):
+    # `submit_run()` uses this helper while holding the run-name advisory transaction lock.
+    # Do not commit there, or the same-name replacement can be interleaved by another submit.
     res = await session.execute(
         select(RunModel).where(
             RunModel.project_id == project.id,
@@ -778,7 +845,8 @@ async def delete_runs(
     )
     run_models = res.scalars().all()
     run_ids = sorted([r.id for r in run_models])
-    await session.commit()
+    if commit_before_lock:
+        await session.commit()
     async with get_locker(get_db().dialect_name).lock_ctx(RunModel.__tablename__, run_ids):
         res = await session.execute(
             select(RunModel)
@@ -801,7 +869,8 @@ async def delete_runs(
                     actor=events.UserActor.from_user(user),
                     targets=[events.Target.from_model(run_model)],
                 )
-        await session.commit()
+        if commit_after_lock:
+            await session.commit()
 
 
 def run_model_to_run(

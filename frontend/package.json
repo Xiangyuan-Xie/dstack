@@ -15,7 +15,7 @@
     "eslint-fix": "eslint ./src --ext .js,.jsx,.ts,.tsx --fix",
     "test": "jest",
     "test:update-snapshots": "jest -u",
-    "generate-api": "npx @rtk-query/codegen-openapi openapi-config.ts",
+    "generate-api": "node -e \"console.log('OpenAPI RTK generation is not wired into the runtime frontend. Handwritten services under src/services are authoritative.');\"",
     "pre-commit": "lint-staged"
   },
   "devDependencies": {

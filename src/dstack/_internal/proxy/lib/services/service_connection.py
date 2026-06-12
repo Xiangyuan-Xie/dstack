@@ -101,6 +101,7 @@ class ServiceConnectionPool:
     def __init__(self) -> None:
         # TODO(#2238): remove connections to stopped replicas in-server
         self.connections: Dict[str, ServiceConnection] = {}
+        self._locks: Dict[str, asyncio.Lock] = {}
 
     async def get(self, replica_id: str) -> Optional[ServiceConnection]:
         return self.connections.get(replica_id)
@@ -111,22 +112,23 @@ class ServiceConnectionPool:
         connection = self.connections.get(replica.id)
         if connection is not None:
             return connection
-        connection = ServiceConnection(project, service, replica)
-        self.connections[replica.id] = connection
-        try:
+        async with self._lock_for(replica.id):
+            connection = self.connections.get(replica.id)
+            if connection is not None:
+                return connection
+            connection = ServiceConnection(project, service, replica)
             await connection.open()
-        except BaseException:
-            self.connections.pop(replica.id, None)
-            raise
-        return connection
+            self.connections[replica.id] = connection
+            return connection
 
     async def remove(self, replica_id: str) -> None:
-        connection = self.connections.pop(replica_id, None)
-        if connection is not None:
-            await connection.close()
+        async with self._lock_for(replica_id):
+            connection = self.connections.pop(replica_id, None)
+            if connection is not None:
+                await connection.close()
 
     async def remove_all(self) -> None:
-        replica_ids = list(self.connections)
+        replica_ids = list(set(self.connections) | set(self._locks))
         results = await asyncio.gather(
             *(self.remove(replica_id) for replica_id in replica_ids), return_exceptions=True
         )
@@ -135,6 +137,9 @@ class ServiceConnectionPool:
                 logger.error(
                     "Error removing connection to service replica %s: %s", replica_ids[i], exc
                 )
+
+    def _lock_for(self, replica_id: str) -> asyncio.Lock:
+        return self._locks.setdefault(replica_id, asyncio.Lock())
 
 
 async def get_service_replica_client(

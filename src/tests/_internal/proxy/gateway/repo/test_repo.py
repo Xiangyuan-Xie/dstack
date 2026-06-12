@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from dstack._internal.proxy.gateway.models import ACMESettings, GlobalProxyConfig, ModelEntrypoint
-from dstack._internal.proxy.gateway.repo.repo import GatewayProxyRepo
+from dstack._internal.proxy.gateway.repo.repo import GatewayProxyRepo, State
 from dstack._internal.proxy.lib.testing.common import make_project, make_service
 from tests._internal.proxy.lib.routers.test_model_proxy import make_model
 
@@ -35,3 +35,36 @@ async def test_persist_repo(tmp_path: Path) -> None:
     assert await repo.list_entrypoints() == [entrypoint_1]
     assert set(await repo.list_services()) == {srv_1, srv_2}
     assert await repo.list_models("proj-1") == [model_1]
+
+
+@pytest.mark.parametrize(
+    "state_json",
+    [
+        "{not-json",
+        '{"services": {"proj": {"run": {"missing": "required fields"}}}}',
+    ],
+)
+def test_load_moves_corrupt_state_aside(tmp_path: Path, state_json: str) -> None:
+    file = tmp_path / "state-v2.json"
+    file.write_text(state_json)
+
+    repo = GatewayProxyRepo.load(file)
+
+    assert not file.exists()
+    corrupt_files = list(tmp_path.glob("state-v2.json.corrupt.*"))
+    assert len(corrupt_files) == 1
+    assert corrupt_files[0].read_text() == state_json
+    assert repo is not None
+
+
+def test_load_does_not_swallow_filesystem_errors(tmp_path: Path, monkeypatch) -> None:
+    file = tmp_path / "state-v2.json"
+    file.write_text("{}")
+
+    def raise_permission_error(cls, path):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(State, "parse_file", classmethod(raise_permission_error))
+
+    with pytest.raises(PermissionError, match="denied"):
+        GatewayProxyRepo.load(file)

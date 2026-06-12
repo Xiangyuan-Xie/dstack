@@ -485,7 +485,10 @@ class RunModel(PipelineModelMixin, BaseModel):
     )
     next_triggered_at: Mapped[Optional[datetime]] = mapped_column(NaiveDateTime)
     status: Mapped[RunStatus] = mapped_column(EnumAsString(RunStatus, 100), index=True)
-    """`status` must be changed only via `switch_run_status()`."""
+    """`status` must usually be changed via `switch_run_status()`.
+    Pipeline workers may also update it through guarded `id + lock_token` update maps,
+    but every status change must emit the corresponding event.
+    """
     termination_reason: Mapped[Optional[RunTerminationReason]] = mapped_column(
         EnumAsString(RunTerminationReason, 100)
     )
@@ -757,7 +760,10 @@ class JobModel(PipelineModelMixin, BaseModel):
         Boolean, default=False, server_default=false()
     )
     status: Mapped[JobStatus] = mapped_column(EnumAsString(JobStatus, 100), index=True)
-    """`status` must be changed only via `switch_job_status()`."""
+    """`status` must usually be changed via `switch_job_status()`.
+    Pipeline workers may also update it through guarded `id + lock_token` update maps,
+    but every status change must emit the corresponding event.
+    """
     termination_reason: Mapped[Optional[JobTerminationReason]] = mapped_column(
         EnumAsString(JobTerminationReason, 100)
     )

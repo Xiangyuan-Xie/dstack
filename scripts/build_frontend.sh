@@ -9,3 +9,5 @@ npm install
 npm run build
 rm -rf ../src/dstack/_internal/server/statics
 cp -a build ../src/dstack/_internal/server/statics
+cd ..
+python3 scripts/check_frontend_static.py

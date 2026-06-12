@@ -451,6 +451,8 @@ async def apply_all(
     repo: GatewayProxyRepo, nginx: Nginx, service_conn_pool: ServiceConnectionPool
 ) -> None:
     await _migrate_cors_enabled(repo)
+    services = await repo.list_services()
+    entrypoints = await repo.list_entrypoints()
     service_tasks = [
         apply_service(
             service=service,
@@ -459,15 +461,28 @@ async def apply_all(
             nginx=nginx,
             service_conn_pool=service_conn_pool,
         )
-        for service in await repo.list_services()
+        for service in services
     ]
-    entrypoint_tasks = [
-        apply_entrypoint(entrypoint, repo, nginx) for entrypoint in await repo.list_entrypoints()
-    ]
+    entrypoint_tasks = [apply_entrypoint(entrypoint, repo, nginx) for entrypoint in entrypoints]
     results = await asyncio.gather(*service_tasks, *entrypoint_tasks, return_exceptions=True)
-    for exc in results:
+    service_count = len(service_tasks)
+    for service, result in zip(services, results[:service_count]):
+        if isinstance(result, Exception):
+            logger.error("Exception restoring service %s: %s", service.fmt(), result)
+            continue
+        if result:
+            replica_failures = {replica.id: str(exc) for replica, exc in result.items()}
+            logger.warning(
+                "Replica failures restoring service %s: %s", service.fmt(), replica_failures
+            )
+    for entrypoint, exc in zip(entrypoints, results[service_count:]):
         if isinstance(exc, Exception):
-            logger.error("Exception restoring gateway: %s", exc)
+            logger.error(
+                "Exception restoring entrypoint %s/%s: %s",
+                entrypoint.project_name,
+                entrypoint.domain,
+                exc,
+            )
 
 
 def model_schema_to_format_spec(model: schemas.AnyModel) -> models.AnyModelFormat:

@@ -9,7 +9,6 @@ import { eventApi } from 'services/events';
 import { fleetApi } from 'services/fleet';
 import { gatewayApi } from 'services/gateway';
 import { instanceApi } from 'services/instance';
-import { mainApi } from 'services/mainApi';
 import { projectApi } from 'services/project';
 import { publicKeysApi } from 'services/publicKeys';
 import { repoApi } from 'services/repo';
@@ -49,7 +48,6 @@ export const store = configureStore({
         [runRequestApi.reducerPath]: runRequestApi.reducer,
         [runtimeImagesApi.reducerPath]: runtimeImagesApi.reducer,
         [repoApi.reducerPath]: repoApi.reducer,
-        [mainApi.reducerPath]: mainApi.reducer,
         [publicKeysApi.reducerPath]: publicKeysApi.reducer,
         [resourcePoolApi.reducerPath]: resourcePoolApi.reducer,
         [eventApi.reducerPath]: eventApi.reducer,
@@ -81,7 +79,6 @@ export const store = configureStore({
             .concat(eventApi.middleware)
             .concat(repoApi.middleware)
             .concat(templateApi.middleware)
-            .concat(mainApi.middleware)
             .concat(workerApi.middleware),
 });
 
